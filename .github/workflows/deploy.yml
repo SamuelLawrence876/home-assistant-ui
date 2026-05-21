@@ -1,0 +1,73 @@
+name: Deploy
+
+# Builds the Glasshouse UI and ships it to the prod S3 bucket fronted by
+# CloudFront. Bucket + distribution are provisioned by the backend CDK stack
+# in the sibling repo — values are supplied here as repo variables.
+#
+# Auth: GitHub OIDC → assume the same IAM role the backend uses. Role's
+# trust policy must allow this repo's OIDC subject (refs/heads/main).
+#
+# Required repo configuration:
+#   Secrets:
+#     AWS_DEPLOY_ROLE_ARN     — ARN of the IAM role to assume
+#   Variables:
+#     UI_BUCKET_NAME          — S3 bucket the UI is uploaded to
+#     CLOUDFRONT_DIST_ID      — CloudFront distribution to invalidate
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write   # required for AWS OIDC
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod:
+    name: Deploy — production
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Sync hashed assets (long cache)
+        run: |
+          aws s3 sync dist/ "s3://${{ vars.UI_BUCKET_NAME }}/" \
+            --delete \
+            --exclude index.html \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Upload index.html (no cache)
+        run: |
+          aws s3 cp dist/index.html "s3://${{ vars.UI_BUCKET_NAME }}/index.html" \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --content-type "text/html; charset=utf-8"
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.CLOUDFRONT_DIST_ID }}" \
+            --paths "/index.html" "/"
