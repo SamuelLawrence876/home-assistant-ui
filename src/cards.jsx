@@ -5,6 +5,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
+import { useEntity } from "./ha/useEntity.js";
+import { callService, imageUrl } from "./ha/client.js";
 
 /* ----------------------------------------------------------------
    Small helpers
@@ -162,9 +164,12 @@ export function WeatherIcon({ condition, size = 88, sunColor = "var(--accent-2)"
 }
 
 export function WeatherSunHero({ index = 0, sky, compact }) {
-  const w = GH_DATA.weather["weather.forecast_home"];
+  const live = useEntity("weather.forecast_home");
+  const w = live || GH_DATA.weather["weather.forecast_home"];
   const t = w.attributes.temperature;
-  const f = w.attributes.forecast;
+  // HA dropped the legacy `forecast` attribute in 2024 — until we wire the
+  // weather.get_forecasts service call, fall back to the mock forecast list.
+  const f = w.attributes.forecast || GH_DATA.weather["weather.forecast_home"].attributes.forecast;
   const condLabels = {
     sunny: "Sunny",
     partlycloudy: "Partly cloudy",
@@ -376,8 +381,13 @@ export function ScenesCard({ index = 0 }) {
     { id: "goodnight", nm: "Goodnight", ic: "☾", sub: "scene.goodnight" },
     { id: "all_off", nm: "All off", ic: "○", sub: "scene.all_off" },
   ];
-  function run(id) {
+  async function run(id) {
     setFiring(id);
+    try {
+      await callService("scene", "turn_on", { entity_id: `scene.${id}` });
+    } catch (e) {
+      console.warn("[scenes] failed", id, e);
+    }
     setTimeout(() => setFiring(null), 1100);
   }
   return (
@@ -401,17 +411,34 @@ export function ScenesCard({ index = 0 }) {
    Media — Spotify now playing (compact)
    ----------------------------------------------------------------*/
 export function MediaCard({ index = 0 }) {
-  const m = GH_DATA.media["media_player.spotify_samuel_lawrence"];
-  const a = m.attributes;
-  const [pos, setPos] = useState(a.media_position);
+  const live = useEntity("media_player.spotify_samuel_lawrence");
+  const m = live || GH_DATA.media["media_player.spotify_samuel_lawrence"];
+  const a = m.attributes || {};
+  const duration = a.media_duration || 1;
+  const [pos, setPos] = useState(a.media_position || 0);
   const [playing, setPlaying] = useState(m.state === "playing");
   useEffect(() => {
+    if (live) {
+      setPlaying(live.state === "playing");
+      if (live.attributes?.media_position != null) setPos(live.attributes.media_position);
+    }
+  }, [live?.state, live?.attributes?.media_position]);
+  useEffect(() => {
     if (!playing) return;
-    const id = setInterval(() => setPos((p) => (p + 1) % a.media_duration), 1000);
+    const id = setInterval(() => setPos((p) => (p + 1) % duration), 1000);
     return () => clearInterval(id);
-  }, [playing, a.media_duration]);
-  const pct = (pos / a.media_duration) * 100;
+  }, [playing, duration]);
+  const pct = (pos / duration) * 100;
   const t = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  function playPause() {
+    const next = !playing;
+    setPlaying(next);
+    callService("media_player", next ? "media_play" : "media_pause", { entity_id: "media_player.spotify_samuel_lawrence" }).catch(() => setPlaying(playing));
+  }
+  function seek(toSec) {
+    setPos(toSec);
+    callService("media_player", "media_seek", { entity_id: "media_player.spotify_samuel_lawrence", seek_position: toSec }).catch(() => {});
+  }
 
   return (
     <Card index={index} eyebrow="Spotify · samuel_lawrence" meta={playing ? "Playing" : "Paused"}>
@@ -432,11 +459,11 @@ export function MediaCard({ index = 0 }) {
         <span>-{t(Math.floor(a.media_duration - pos))}</span>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "center" }}>
-        <button className="btn icon" onClick={() => setPos(Math.max(0, pos - 15))}>⏮</button>
-        <button className="btn icon primary" onClick={() => setPlaying(!playing)}>
+        <button className="btn icon" onClick={() => seek(Math.max(0, pos - 15))}>⏮</button>
+        <button className="btn icon primary" onClick={playPause}>
           {playing ? "⏸" : "▶"}
         </button>
-        <button className="btn icon" onClick={() => setPos(Math.min(a.media_duration - 1, pos + 15))}>⏭</button>
+        <button className="btn icon" onClick={() => seek(Math.min(duration - 1, pos + 15))}>⏭</button>
       </div>
     </Card>
   );
@@ -446,27 +473,56 @@ export function MediaCard({ index = 0 }) {
    Printer — Bambu X1C
    ----------------------------------------------------------------*/
 export function PrinterCard({ index = 0, compact }) {
+  const PREFIX = "x1c_00m09d522400385";
+  const liveProg = useEntity(`sensor.${PREFIX}_print_progress`);
+  const liveStage = useEntity(`sensor.${PREFIX}_current_stage`);
+  const liveRemaining = useEntity(`sensor.${PREFIX}_remaining_time`);
+  const liveNozzle = useEntity(`sensor.${PREFIX}_nozzle_temperature`);
+  const liveBed = useEntity(`sensor.${PREFIX}_bed_temperature`);
+  const liveChamber = useEntity(`sensor.${PREFIX}_chamber_temperature`);
+  const liveAms = useEntity(`sensor.${PREFIX}_ams_1_humidity`);
+  const liveTray = useEntity(`sensor.${PREFIX}_active_tray`);
+  const liveLight = useEntity(`light.${PREFIX}_chamber_light`);
+  const liveImage = useEntity(`image.${PREFIX}_cover_image`);
+
   const p = GH_DATA.printer;
-  const prog = p["sensor.x1c_00m09d522400385_print_progress"].state;
-  const stage = p["sensor.x1c_00m09d522400385_current_stage"].state;
-  const remaining = p["sensor.x1c_00m09d522400385_remaining_time"].state;
-  const nozzle = p["sensor.x1c_00m09d522400385_nozzle_temperature"].state;
-  const bed = p["sensor.x1c_00m09d522400385_bed_temperature"].state;
-  const chamber = p["sensor.x1c_00m09d522400385_chamber_temperature"].state;
-  const ams = p["sensor.x1c_00m09d522400385_ams_1_humidity"].state;
-  const tray = p["sensor.x1c_00m09d522400385_active_tray"].state;
-  const [light, setLight] = useState(p["light.x1c_00m09d522400385_chamber_light"].state === "on");
+  const prog = Number(liveProg?.state ?? p[`sensor.${PREFIX}_print_progress`].state);
+  const stage = liveStage?.state ?? p[`sensor.${PREFIX}_current_stage`].state;
+  const remaining = Number(liveRemaining?.state ?? p[`sensor.${PREFIX}_remaining_time`].state);
+  const nozzle = Number(liveNozzle?.state ?? p[`sensor.${PREFIX}_nozzle_temperature`].state);
+  const bed = Number(liveBed?.state ?? p[`sensor.${PREFIX}_bed_temperature`].state);
+  const chamber = Number(liveChamber?.state ?? p[`sensor.${PREFIX}_chamber_temperature`].state);
+  const ams = Number(liveAms?.state ?? p[`sensor.${PREFIX}_ams_1_humidity`].state);
+  const tray = liveTray?.state ?? p[`sensor.${PREFIX}_active_tray`].state;
+  const fileName = liveProg?.attributes?.file_name || p.file;
+  const [light, setLight] = useState((liveLight?.state ?? p[`light.${PREFIX}_chamber_light`].state) === "on");
+  useEffect(() => { if (liveLight) setLight(liveLight.state === "on"); }, [liveLight?.state]);
+  function toggleLight() {
+    const next = !light;
+    setLight(next);
+    callService("light", next ? "turn_on" : "turn_off", { entity_id: `light.${PREFIX}_chamber_light` }).catch(() => setLight(light));
+  }
+  // Use last_updated as a cache-bust so the cover image refreshes when HA pushes a new frame.
+  const coverSrc = liveImage ? imageUrl(`image.${PREFIX}_cover_image`, liveImage.last_updated) : null;
 
   return (
     <Card index={index} eyebrow="3D Printer · Bambu X1C" title="Printing" meta={`stage · ${stage}`}>
       <div className="printer-body" style={compact ? { gridTemplateColumns: "120px 1fr", gap: 14 } : null}>
-        <div className="printer-tile" style={compact ? { width: 120, height: 120 } : null}>
-          <span className="live">LIVE · cover_image</span>
-          <span className="file">{p.file}</span>
+        <div
+          className="printer-tile"
+          style={{
+            ...(compact ? { width: 120, height: 120 } : null),
+            backgroundImage: coverSrc ? `url(${coverSrc})` : undefined,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        >
+          <span className="live">{coverSrc ? "LIVE · cover" : "cover_image"}</span>
+          <span className="file">{fileName}</span>
         </div>
         <div className="printer-info">
           <div>
-            <div className="printer-stage" style={{ marginBottom: 8 }}>{p.file}</div>
+            <div className="printer-stage" style={{ marginBottom: 8 }}>{fileName}</div>
             <div className="progress">
               <span style={{ "--p": `${prog}%` }} />
             </div>
@@ -509,7 +565,7 @@ export function PrinterCard({ index = 0, compact }) {
             <span className="meta">
               Filament · <b style={{ color: "var(--ink-2)" }}>{tray}</b>
             </span>
-            <button className={`chamber-btn ${light ? "on" : ""}`} onClick={() => setLight(!light)}>
+            <button className={`chamber-btn ${light ? "on" : ""}`} onClick={toggleLight}>
               <span className="sw" />
               Chamber light · {light ? "on" : "off"}
             </button>
@@ -524,16 +580,33 @@ export function PrinterCard({ index = 0, compact }) {
    Vacuum — Roborock S8 "Gregory"
    ----------------------------------------------------------------*/
 export function VacuumCard({ index = 0 }) {
+  const liveVac = useEntity("vacuum.roborock_s8");
+  const liveBat = useEntity("sensor.roborock_s8_battery");
+  const liveStatus = useEntity("sensor.roborock_s8_status");
   const v = GH_DATA.vacuum;
-  const battery = v["sensor.roborock_s8_battery"].state;
-  const status = v["sensor.roborock_s8_status"].state;
+  const battery = Number(liveBat?.state ?? v["sensor.roborock_s8_battery"].state);
+  const status = liveStatus?.state ?? v["sensor.roborock_s8_status"].state;
   const last = v["sensor.roborock_s8_last_clean_end"].state;
-  const [state, setState] = useState(v["vacuum.roborock_s8"].state);
+  const [state, setState] = useState(liveVac?.state ?? v["vacuum.roborock_s8"].state);
+  const unavailable = liveVac?.state === "unavailable";
+  useEffect(() => {
+    if (liveVac?.state) setState(liveVac.state);
+  }, [liveVac?.state]);
   const cleaning = state === "cleaning";
+  function start() {
+    setState("cleaning");
+    callService("vacuum", "start", { entity_id: "vacuum.roborock_s8" }).catch(() => setState(liveVac?.state || "docked"));
+  }
+  function dock() {
+    setState("returning");
+    callService("vacuum", "return_to_base", { entity_id: "vacuum.roborock_s8" }).catch(() => setState("cleaning"));
+  }
 
   return (
-    <Card index={index} eyebrow="Vacuum · roborock_s8" title="Gregory" meta={`Last clean · ${last}`}>
-      <div className="vacuum-state">{cleaning ? "Cleaning · main floor" : `Docked · ${status}`}</div>
+    <Card index={index} eyebrow="Vacuum · roborock_s8" title="Gregory" meta={unavailable ? "Reauth required" : `Last clean · ${last}`}>
+      <div className="vacuum-state">
+        {unavailable ? "Unavailable — reauth in HA Settings → Devices → Roborock" : (cleaning ? "Cleaning · main floor" : `Docked · ${status}`)}
+      </div>
       <div className="vacuum-map">
         <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid meet">
           <defs>
@@ -593,9 +666,9 @@ export function VacuumCard({ index = 0 }) {
           <div className="k">Action</div>
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
             {cleaning ? (
-              <button className="btn" onClick={() => setState("docked")}>Dock</button>
+              <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
             ) : (
-              <button className="btn accent" onClick={() => setState("cleaning")}>Start</button>
+              <button className="btn accent" onClick={start} disabled={unavailable}>Start</button>
             )}
           </div>
         </div>
@@ -608,12 +681,31 @@ export function VacuumCard({ index = 0 }) {
    Air purifier — Levoit Core 300S
    ----------------------------------------------------------------*/
 export function AirPurifierCard({ index = 0 }) {
+  const liveFan = useEntity("fan.core_300s_series");
+  const liveQ = useEntity("sensor.core_300s_series_air_quality");
+  const livePm = useEntity("sensor.core_300s_series_pm2_5");
+  const liveFilt = useEntity("sensor.core_300s_series_filter_lifetime");
   const a = GH_DATA.air;
-  const q = a["sensor.core_300s_series_air_quality"].state;
-  const pm = a["sensor.core_300s_series_pm2_5"].state;
-  const filt = a["sensor.core_300s_series_filter_lifetime"].state;
-  const [preset, setPreset] = useState(a["fan.core_300s_series"].attributes.preset_mode);
-  const [on, setOn] = useState(a["fan.core_300s_series"].state === "on");
+  const q = liveQ?.state ?? a["sensor.core_300s_series_air_quality"].state;
+  const pm = Number(livePm?.state ?? a["sensor.core_300s_series_pm2_5"].state);
+  const filt = Number(liveFilt?.state ?? a["sensor.core_300s_series_filter_lifetime"].state);
+  const [preset, setPreset] = useState(liveFan?.attributes?.preset_mode ?? a["fan.core_300s_series"].attributes.preset_mode);
+  const [on, setOn] = useState((liveFan?.state ?? a["fan.core_300s_series"].state) === "on");
+  useEffect(() => {
+    if (!liveFan) return;
+    setOn(liveFan.state === "on");
+    if (liveFan.attributes?.preset_mode) setPreset(liveFan.attributes.preset_mode);
+  }, [liveFan?.state, liveFan?.attributes?.preset_mode]);
+  function toggleFan() {
+    const next = !on;
+    setOn(next);
+    callService("fan", next ? "turn_on" : "turn_off", { entity_id: "fan.core_300s_series" }).catch(() => setOn(on));
+  }
+  function setFanPreset(p) {
+    setPreset(p);
+    if (!on) setOn(true);
+    callService("fan", "set_preset_mode", { entity_id: "fan.core_300s_series", preset_mode: p }).catch(() => {});
+  }
 
   const C = 2 * Math.PI * 90;
   const offset = C * (1 - filt / 100);
@@ -625,7 +717,7 @@ export function AirPurifierCard({ index = 0 }) {
       title="Air purifier"
       meta="filter · 96%"
       headRight={
-        <div className={`toggle ${on ? "on" : ""}`} onClick={() => setOn(!on)} role="switch" aria-checked={on} />
+        <div className={`toggle ${on ? "on" : ""}`} onClick={toggleFan} role="switch" aria-checked={on} />
       }
     >
       <div className="purifier-body">
@@ -651,7 +743,7 @@ export function AirPurifierCard({ index = 0 }) {
           </div>
           <div className="preset-row">
             {["sleep", "auto", "low", "medium", "high"].map((p) => (
-              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => setPreset(p)}>
+              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => setFanPreset(p)}>
                 {p}
               </button>
             ))}
@@ -666,8 +758,27 @@ export function AirPurifierCard({ index = 0 }) {
    Heater — Govee
    ----------------------------------------------------------------*/
 export function HeaterCard({ index = 0 }) {
-  const [temp, setTemp] = useState(GH_DATA.climate["input_number.govee_heater_temperature"].state);
+  const liveTemp = useEntity("input_number.govee_heater_temperature");
+  const initialTemp = Number(liveTemp?.state ?? GH_DATA.climate["input_number.govee_heater_temperature"].state);
+  const [temp, setTemp] = useState(initialTemp);
   const [on, setOn] = useState(false);
+  useEffect(() => {
+    if (liveTemp) setTemp(Number(liveTemp.state));
+  }, [liveTemp?.state]);
+  function commitTemp(v) {
+    setTemp(v);
+    callService("input_number", "set_value", { entity_id: "input_number.govee_heater_temperature", value: v }).catch(() => {});
+  }
+  function toggleHeater() {
+    const next = !on;
+    setOn(next);
+    // The Pi has rest_command.govee_heater_control wired up; signature depends on /config.
+    // Sending action: on/off as a best-guess; adjust if the rest_command expects different params.
+    callService("rest_command", "govee_heater_control", { power: next ? "on" : "off" }).catch((e) => {
+      console.warn("[heater] rest_command failed — check param names", e);
+      setOn(on);
+    });
+  }
   const angle = Math.max(0, Math.min(270, ((temp - 12) / 18) * 270));
 
   return (
@@ -687,9 +798,9 @@ export function HeaterCard({ index = 0 }) {
             Drives <b style={{ color: "var(--ink-2)" }}>input_number.govee_heater_temperature</b>
           </div>
           <div className="heater-controls">
-            <button className="heater-step" onClick={() => setTemp((t) => Math.max(12, t - 1))}>−</button>
-            <button className="heater-step" onClick={() => setTemp((t) => Math.min(30, t + 1))}>+</button>
-            <button className={`btn ${on ? "accent" : "primary"}`} onClick={() => setOn(!on)}>
+            <button className="heater-step" onClick={() => commitTemp(Math.max(12, temp - 1))}>−</button>
+            <button className="heater-step" onClick={() => commitTemp(Math.min(30, temp + 1))}>+</button>
+            <button className={`btn ${on ? "accent" : "primary"}`} onClick={toggleHeater}>
               {on ? "Turn off" : "Turn on"}
             </button>
           </div>
@@ -810,12 +921,16 @@ export function BlockedDomainsCard({ index = 0 }) {
    System — Pi health
    ----------------------------------------------------------------*/
 export function PiCard({ index = 0 }) {
+  const liveCpu = useEntity("sensor.system_monitor_processor_use");
+  const liveMem = useEntity("sensor.system_monitor_memory_use");
+  const liveTemp = useEntity("sensor.system_monitor_processor_temperature");
+  const liveDisk = useEntity("sensor.system_monitor_disk_usage_config"); // % (was disk_use_config which is bytes)
   const s = GH_DATA.system;
-  const cpu = s["sensor.system_monitor_processor_use"].state;
-  const memMiB = s["sensor.system_monitor_memory_use"].state;
+  const cpu = Number(liveCpu?.state ?? s["sensor.system_monitor_processor_use"].state);
+  const memMiB = Number(liveMem?.state ?? s["sensor.system_monitor_memory_use"].state);
   const memPct = (memMiB / 4096) * 100;
-  const temp = s["sensor.system_monitor_processor_temperature"].state;
-  const disk = s["sensor.system_monitor_disk_use_config"].state;
+  const temp = Number(liveTemp?.state ?? s["sensor.system_monitor_processor_temperature"].state);
+  const disk = Number(liveDisk?.state ?? s["sensor.system_monitor_disk_use_config"].state);
 
   return (
     <Card index={index} eyebrow="System · raspberry_pi" title="Pi health" meta="all healthy">
@@ -915,6 +1030,10 @@ export function BackupCard({ index = 0 }) {
 
 export function EntityHealthCard({ index = 0 }) {
   const h = GH_DATA.health;
+  // Live counts come from the shared socket — see useEntityCounts in ha/useEntity.js.
+  // Importing here would create a circular dep, so we read once from state in the parent
+  // via the topbar; this card keeps the curated "expected unavailable" groups list which
+  // is human knowledge, not entity state.
   return (
     <Card
       index={index}
@@ -939,15 +1058,27 @@ export function EntityHealthCard({ index = 0 }) {
 }
 
 export function ShoppingCard({ index = 0 }) {
-  const t = GH_DATA.todo["todo.shopping_list"];
+  const live = useEntity("todo.shopping_list");
+  const [items, setItems] = useState(GH_DATA.todo["todo.shopping_list"].items);
+  const count = Number(live?.state ?? GH_DATA.todo["todo.shopping_list"].count);
+  // todo lists need a service call to read items — the entity's state is just a count.
+  useEffect(() => {
+    if (!live) return;
+    callService("todo", "get_items", { entity_id: "todo.shopping_list" }, undefined)
+      .then((r) => {
+        const list = r?.service_response?.["todo.shopping_list"]?.items;
+        if (Array.isArray(list)) setItems(list.map((x) => x.summary || x.uid));
+      })
+      .catch(() => {});
+  }, [live?.state]);
   return (
-    <Card index={index} eyebrow={`Shopping · ${t.count} items`} title="Shopping list">
+    <Card index={index} eyebrow={`Shopping · ${count} items`} title="Shopping list">
       <ul className="shopping">
-        {t.items.slice(0, 6).map((it, i) => (
+        {items.slice(0, 6).map((it, i) => (
           <li key={i}>{it}</li>
         ))}
-        {t.items.length > 6 && (
-          <li style={{ color: "var(--ink-3)", borderBottom: 0 }}>… and {t.items.length - 6} more</li>
+        {items.length > 6 && (
+          <li style={{ color: "var(--ink-3)", borderBottom: 0 }}>… and {items.length - 6} more</li>
         )}
       </ul>
     </Card>
@@ -975,13 +1106,43 @@ function rgbStr(rgb) {
 }
 
 export function LightCard({ index = 0, entityId }) {
-  const e = GH_DATA.lights[entityId];
-  const initialRgb = e.attributes.rgb_color || [255, 198, 130];
+  const live = useEntity(entityId);
+  const e = live || GH_DATA.lights[entityId];
+  const placeholder = e.attributes?.placeholder;
+  const initialRgb = e.attributes?.rgb_color || [255, 198, 130];
   const [on, setOn] = useState(e.state === "on");
-  const [bright, setB] = useState(e.attributes.brightness || 180);
+  const [bright, setB] = useState(e.attributes?.brightness || 180);
   const [rgb, setRgb] = useState(initialRgb);
 
-  const placeholder = e.attributes.placeholder;
+  useEffect(() => {
+    if (!live) return;
+    setOn(live.state === "on");
+    if (live.attributes?.brightness != null) setB(live.attributes.brightness);
+    if (live.attributes?.rgb_color) setRgb(live.attributes.rgb_color);
+  }, [live?.state, live?.attributes?.brightness, live?.attributes?.rgb_color?.join(",")]);
+
+  function toggle() {
+    if (placeholder) return;
+    const next = !on;
+    setOn(next);
+    callService("light", next ? "turn_on" : "turn_off", { entity_id: entityId }).catch(() => setOn(on));
+  }
+
+  function pickColor(p) {
+    if (placeholder) return;
+    setRgb(p.rgb);
+    if (!on) setOn(true);
+    const data = { entity_id: entityId, rgb_color: p.rgb };
+    if (p.kelvin) data.color_temp_kelvin = p.kelvin;
+    callService("light", "turn_on", data).catch(() => {});
+  }
+
+  function commitBrightness(v) {
+    setB(v);
+    if (placeholder || !on) return;
+    callService("light", "turn_on", { entity_id: entityId, brightness: v }).catch(() => {});
+  }
+
   const glow = on
     ? `0 0 24px ${rgbStr([rgb[0], rgb[1], rgb[2]])}33, 0 0 80px ${rgbStr([rgb[0], rgb[1], rgb[2]])}1f`
     : "none";
@@ -1010,7 +1171,7 @@ export function LightCard({ index = 0, entityId }) {
             future
           </span>
         ) : (
-          <div className={`toggle ${on ? "on" : ""}`} onClick={() => setOn(!on)} role="switch" aria-checked={on} />
+          <div className={`toggle ${on ? "on" : ""}`} onClick={toggle} role="switch" aria-checked={on} />
         )
       }
     >
@@ -1056,6 +1217,8 @@ export function LightCard({ index = 0, entityId }) {
             value={bright}
             disabled={placeholder || !on}
             onChange={(ev) => setB(Number(ev.target.value))}
+            onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
+            onKeyUp={(ev) => commitBrightness(Number(ev.target.value))}
             className="gh-slider"
             style={{ width: "100%", accentColor: on ? rgbStr(rgb) : "var(--ink-4)" }}
           />
@@ -1071,10 +1234,7 @@ export function LightCard({ index = 0, entityId }) {
               return (
                 <button
                   key={p.id}
-                  onClick={() => {
-                    setRgb(p.rgb);
-                    if (!on) setOn(true);
-                  }}
+                  onClick={() => pickColor(p)}
                   title={p.label}
                   style={{
                     width: 28,
@@ -1101,16 +1261,29 @@ export function LightCard({ index = 0, entityId }) {
    Fan
    ----------------------------------------------------------------*/
 export function FanCard({ index = 0 }) {
-  const f = GH_DATA.fans["fan.ceiling"];
+  const live = useEntity("fan.ceiling");
+  const f = live || GH_DATA.fans["fan.ceiling"];
   const [on, setOn] = useState(f.state === "on");
-  const [pct, setPct] = useState(f.attributes.percentage || 0);
-  const presets = f.attributes.preset_modes;
-  const [preset, setPreset] = useState(f.attributes.preset_mode);
+  const [pct, setPct] = useState(f.attributes?.percentage || 0);
+  const presets = f.attributes?.preset_modes || GH_DATA.fans["fan.ceiling"].attributes.preset_modes;
+  const [preset, setPreset] = useState(f.attributes?.preset_mode);
+  useEffect(() => {
+    if (!live) return;
+    setOn(live.state === "on");
+    if (live.attributes?.percentage != null) setPct(live.attributes.percentage);
+    if (live.attributes?.preset_mode) setPreset(live.attributes.preset_mode);
+  }, [live?.state, live?.attributes?.percentage, live?.attributes?.preset_mode]);
 
+  function toggleFan() {
+    const next = !on;
+    setOn(next);
+    callService("fan", next ? "turn_on" : "turn_off", { entity_id: "fan.ceiling" }).catch(() => setOn(on));
+  }
   function pick(p) {
     setPreset(p);
     setOn(true);
     setPct(p === "sleep" ? 25 : p === "low" ? 40 : p === "medium" ? 65 : 100);
+    callService("fan", "set_preset_mode", { entity_id: "fan.ceiling", preset_mode: p }).catch(() => {});
   }
 
   return (
@@ -1119,7 +1292,7 @@ export function FanCard({ index = 0 }) {
       eyebrow="Fan · fan.ceiling"
       title="Ceiling fan"
       meta={on ? `${preset || "manual"} · ${pct}%` : "Off"}
-      headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={() => setOn(!on)} role="switch" />}
+      headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={toggleFan} role="switch" />}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 18, marginTop: 4 }}>
         <div
@@ -1192,12 +1365,21 @@ export function FanCard({ index = 0 }) {
    Quick toggles (Overview)
    ----------------------------------------------------------------*/
 function QuickToggle({ entityId }) {
-  const e = GH_DATA.lights[entityId];
-  const initRgb = e.attributes.rgb_color || [255, 198, 130];
+  const live = useEntity(entityId);
+  const e = live || GH_DATA.lights[entityId];
+  const initRgb = e.attributes?.rgb_color || [255, 198, 130];
   const [on, setOn] = useState(e.state === "on");
+  useEffect(() => {
+    if (live) setOn(live.state === "on");
+  }, [live?.state]);
+  function toggle() {
+    const next = !on;
+    setOn(next); // optimistic
+    callService("light", next ? "turn_on" : "turn_off", { entity_id: entityId }).catch(() => setOn(on));
+  }
   return (
     <button
-      onClick={() => setOn(!on)}
+      onClick={toggle}
       style={{
         background: "var(--glass-bg-2)",
         border: "1px solid var(--glass-stroke)",
@@ -1266,13 +1448,23 @@ export function QuickLightsCard({ index = 0 }) {
    Simple AdGuard
    ----------------------------------------------------------------*/
 export function AdGuardSimpleCard({ index = 0 }) {
+  const liveTotal = useEntity("sensor.adguard_home_dns_queries");
+  const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
+  const liveRatio = useEntity("sensor.adguard_home_dns_queries_blocked_ratio");
+  const liveProt = useEntity("switch.adguard_home_protection");
   const a = GH_DATA.adguard;
-  const total = a["sensor.adguard_home_dns_queries"].state;
-  const blocked = a["sensor.adguard_home_dns_queries_blocked"].state;
-  const ratio = a["sensor.adguard_home_dns_queries_blocked_ratio"].state;
-  const [prot, setProt] = useState(a["switch.adguard_home_protection"].state === "on");
+  const total = Number(liveTotal?.state ?? a["sensor.adguard_home_dns_queries"].state);
+  const blocked = Number(liveBlocked?.state ?? a["sensor.adguard_home_dns_queries_blocked"].state);
+  const ratio = Number(liveRatio?.state ?? a["sensor.adguard_home_dns_queries_blocked_ratio"].state);
+  const [prot, setProt] = useState((liveProt?.state ?? a["switch.adguard_home_protection"].state) === "on");
   const [restarting, setRestarting] = useState(false);
   const [updating, setUpdating] = useState(false);
+  useEffect(() => { if (liveProt) setProt(liveProt.state === "on"); }, [liveProt?.state]);
+  function toggleProt() {
+    const next = !prot;
+    setProt(next);
+    callService("switch", next ? "turn_on" : "turn_off", { entity_id: "switch.adguard_home_protection" }).catch(() => setProt(prot));
+  }
 
   function restart() {
     setRestarting(true);
@@ -1315,7 +1507,7 @@ export function AdGuardSimpleCard({ index = 0 }) {
             </div>
           </div>
         </div>
-        <div className={`toggle ${prot ? "on" : ""}`} onClick={() => setProt(!prot)} role="switch" />
+        <div className={`toggle ${prot ? "on" : ""}`} onClick={toggleProt} role="switch" />
       </div>
 
       <div
@@ -1345,7 +1537,8 @@ export function AdGuardSimpleCard({ index = 0 }) {
    Uptime
    ----------------------------------------------------------------*/
 export function UptimeCard({ index = 0 }) {
-  const iso = GH_DATA.system["sensor.uptime"].state;
+  const live = useEntity("sensor.uptime");
+  const iso = live?.state || GH_DATA.system["sensor.uptime"].state;
   const started = new Date(iso);
   const now = new Date();
   const diffMs = now - started;
@@ -1398,11 +1591,13 @@ export function UptimeCard({ index = 0 }) {
    Pixoo 64
    ----------------------------------------------------------------*/
 export function PixooCard({ index = 0 }) {
-  const e = GH_DATA.lights["light.divoom_pixoo_64"];
+  const live = useEntity("light.divoom_pixoo_64");
+  const e = live || GH_DATA.lights["light.divoom_pixoo_64"];
+  const notInstalled = !live; // Divoom integration is not on the Pi per the canonical config — card runs on mock as a preview.
   const [on, setOn] = useState(e.state === "on");
-  const [bright, setB] = useState(e.attributes.brightness);
-  const [channel, setChannel] = useState(e.attributes.channel);
-  const channels = e.attributes.available_channels;
+  const [bright, setB] = useState(e.attributes?.brightness ?? 200);
+  const [channel, setChannel] = useState(e.attributes?.channel ?? "Clock");
+  const channels = e.attributes?.available_channels ?? GH_DATA.lights["light.divoom_pixoo_64"].attributes.available_channels;
 
   function ChannelPreview() {
     if (!on) {
@@ -1501,9 +1696,9 @@ export function PixooCard({ index = 0 }) {
   return (
     <Card
       index={index}
-      eyebrow="Light · light.divoom_pixoo_64"
+      eyebrow={notInstalled ? "Light · light.divoom_pixoo_64 · preview" : "Light · light.divoom_pixoo_64"}
       title="Pixoo 64 · bedroom"
-      meta={on ? `${channel} · ${Math.round((bright / 255) * 100)}%` : "Off"}
+      meta={notInstalled ? "integration not installed" : on ? `${channel} · ${Math.round((bright / 255) * 100)}%` : "Off"}
       headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={() => setOn(!on)} role="switch" />}
     >
       <div style={{ display: "grid", gridTemplateColumns: "92px 1fr", gap: 18, alignItems: "center", marginTop: 4 }}>
@@ -1684,11 +1879,33 @@ export function AddonsCard({ index = 0 }) {
    MEDIA tab
    ================================================================*/
 export function NowPlayingHero({ index = 0 }) {
-  const m = GH_DATA.media["media_player.spotify_samuel_lawrence"];
-  const a = m.attributes;
-  const [pos, setPos] = useState(a.media_position);
+  const ENTITY = "media_player.spotify_samuel_lawrence";
+  const live = useEntity(ENTITY);
+  const m = live || GH_DATA.media[ENTITY];
+  const a = m.attributes || {};
+  const duration = a.media_duration || 1;
+  const [pos, setPos] = useState(a.media_position || 0);
   const [playing, setPlaying] = useState(m.state === "playing");
-  const [vol, setVol] = useState(Math.round(a.volume_level * 100));
+  const [vol, setVol] = useState(Math.round((a.volume_level || 0) * 100));
+  useEffect(() => {
+    if (!live) return;
+    setPlaying(live.state === "playing");
+    if (live.attributes?.media_position != null) setPos(live.attributes.media_position);
+    if (live.attributes?.volume_level != null) setVol(Math.round(live.attributes.volume_level * 100));
+  }, [live?.state, live?.attributes?.media_position, live?.attributes?.volume_level]);
+  function playPause() {
+    const next = !playing;
+    setPlaying(next);
+    callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY }).catch(() => setPlaying(playing));
+  }
+  function seek(toSec) {
+    setPos(toSec);
+    callService("media_player", "media_seek", { entity_id: ENTITY, seek_position: toSec }).catch(() => {});
+  }
+  function commitVolume(v) {
+    setVol(v);
+    callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 }).catch(() => {});
+  }
   useEffect(() => {
     if (!playing) return;
     const id = setInterval(() => setPos((p) => (p + 1) % a.media_duration), 1000);
@@ -1709,7 +1926,17 @@ export function NowPlayingHero({ index = 0 }) {
         className="nowplaying-grid"
         style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 24, alignItems: "center" }}
       >
-        <div className="media-art" style={{ width: 180, height: 180, borderRadius: 22 }} />
+        <div
+          className="media-art"
+          style={{
+            width: 180,
+            height: 180,
+            borderRadius: 22,
+            backgroundImage: a.entity_picture ? `url(${import.meta.env.VITE_HA_URL}${a.entity_picture})` : undefined,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        />
         <div style={{ minWidth: 0 }}>
           <div
             className="nowplaying-title"
@@ -1771,15 +1998,15 @@ export function NowPlayingHero({ index = 0 }) {
             className="nowplaying-controls"
             style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18 }}
           >
-            <button className="btn icon" onClick={() => setPos(Math.max(0, pos - 15))}>⏮</button>
+            <button className="btn icon" onClick={() => seek(Math.max(0, pos - 15))}>⏮</button>
             <button
               className="btn icon primary"
-              onClick={() => setPlaying(!playing)}
+              onClick={playPause}
               style={{ width: 48, height: 48 }}
             >
               {playing ? "⏸" : "▶"}
             </button>
-            <button className="btn icon" onClick={() => setPos(Math.min(a.media_duration - 1, pos + 15))}>⏭</button>
+            <button className="btn icon" onClick={() => seek(Math.min(duration - 1, pos + 15))}>⏭</button>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12, flex: 1, minWidth: 120 }}>
               <span
                 style={{
@@ -1798,6 +2025,8 @@ export function NowPlayingHero({ index = 0 }) {
                 max="100"
                 value={vol}
                 onChange={(e) => setVol(Number(e.target.value))}
+                onPointerUp={(e) => commitVolume(Number(e.target.value))}
+                onKeyUp={(e) => commitVolume(Number(e.target.value))}
                 className="gh-slider"
                 style={{ flex: 1, maxWidth: 200, accentColor: "var(--accent)" }}
               />

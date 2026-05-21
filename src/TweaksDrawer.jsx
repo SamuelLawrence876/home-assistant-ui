@@ -4,6 +4,8 @@
    day/night, and override the clock. Settings persist via App state. */
 
 import { useState, useEffect } from "react";
+import { getHAConfig, haConfigured } from "./ha/client.js";
+import { reconnect } from "./ha/socket.js";
 
 const LEAN_OPTIONS = [
   { value: "frosted", label: "Frosted", tag: "cool minimal" },
@@ -23,7 +25,12 @@ export function TweaksDrawer({
   onClockOverrideChange,
   onClockChange,
 }) {
-  const [open, setOpen] = useState(false);
+  // Auto-open on first visit when HA isn't configured so the user lands on the connection setup.
+  const [open, setOpen] = useState(() => !haConfigured());
+  const [haUrl, setHaUrl] = useState(() => getHAConfig().url);
+  const [haTokenInput, setHaTokenInput] = useState(() => getHAConfig().token);
+  const [showToken, setShowToken] = useState(false);
+  const [saveState, setSaveState] = useState(null); // null | "saving" | "saved"
 
   useEffect(() => {
     function onKey(e) {
@@ -32,6 +39,25 @@ export function TweaksDrawer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  function saveConnection() {
+    setSaveState("saving");
+    if (haUrl) localStorage.setItem("ha_url", haUrl.replace(/\/$/, ""));
+    else localStorage.removeItem("ha_url");
+    if (haTokenInput) localStorage.setItem("ha_token", haTokenInput);
+    else localStorage.removeItem("ha_token");
+    reconnect();
+    setSaveState("saved");
+    setTimeout(() => setSaveState(null), 1500);
+  }
+
+  function clearConnection() {
+    localStorage.removeItem("ha_url");
+    localStorage.removeItem("ha_token");
+    setHaUrl("");
+    setHaTokenInput("");
+    reconnect();
+  }
 
   const hh = String(Math.floor(clock)).padStart(2, "0");
   const mm = String(Math.round((clock - Math.floor(clock)) * 60)).padStart(2, "0");
@@ -55,10 +81,84 @@ export function TweaksDrawer({
       <aside className={`tweaks-drawer ${open ? "open" : ""}`} aria-hidden={!open}>
         <div className="tweaks-head">
           <div>
-            <div className="t">Tweaks</div>
+            <div className="t">Settings</div>
             <div className="s">Glasshouse</div>
           </div>
           <button className="x" onClick={() => setOpen(false)} aria-label="Close">×</button>
+        </div>
+
+        <div className="tweaks-section">
+          <div className="lbl">Home Assistant connection</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 6 }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.04em", textTransform: "uppercase" }}>URL</span>
+              <input
+                type="text"
+                value={haUrl}
+                onChange={(e) => setHaUrl(e.target.value)}
+                placeholder="https://ha.samuel-lawrence.com"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 12,
+                  padding: "8px 10px",
+                  background: "var(--glass-bg-2)",
+                  border: "1px solid var(--rule)",
+                  borderRadius: 8,
+                  color: "var(--ink)",
+                  outline: "none",
+                }}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                Long-Lived Access Token
+              </span>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  type={showToken ? "text" : "password"}
+                  value={haTokenInput}
+                  onChange={(e) => setHaTokenInput(e.target.value)}
+                  placeholder="eyJ0eXA…"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  style={{
+                    flex: 1,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 12,
+                    padding: "8px 10px",
+                    background: "var(--glass-bg-2)",
+                    border: "1px solid var(--rule)",
+                    borderRadius: 8,
+                    color: "var(--ink)",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  className="btn"
+                  onClick={() => setShowToken((s) => !s)}
+                  style={{ padding: "0 10px", fontSize: 11 }}
+                  aria-label={showToken ? "Hide token" : "Show token"}
+                >
+                  {showToken ? "Hide" : "Show"}
+                </button>
+              </div>
+              <span style={{ fontSize: 10, color: "var(--ink-4)", marginTop: 2 }}>
+                Generate via HA → profile → Security → Create Token.
+              </span>
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="btn primary" onClick={saveConnection} style={{ flex: 1 }}>
+                {saveState === "saved" ? "Saved ✓" : saveState === "saving" ? "Saving…" : "Save & connect"}
+              </button>
+              {haConfigured() && (
+                <button className="btn" onClick={clearConnection}>Clear</button>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="tweaks-section">

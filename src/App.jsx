@@ -12,6 +12,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { GH_DATA } from "./data.js";
 import { LEANS, skyColors, nowFractionalHour } from "./theme.js";
+import { useConnectionStatus, useEntityCounts } from "./ha/useEntity.js";
 import {
   Card,
   fmtTime,
@@ -123,6 +124,49 @@ function applyTheme(lean, mode, sky) {
   document.body.classList.add(`lean-${lean}`);
   document.body.classList.toggle("mode-night", mode === "night");
   document.body.classList.toggle("mode-day", mode !== "night");
+}
+
+function ConnectionChip() {
+  const status = useConnectionStatus();
+  const { available, total } = useEntityCounts();
+  const live = status === "ready";
+  const dotColor = live
+    ? "var(--good)"
+    : status === "disconnected"
+      ? "var(--bad)"
+      : "var(--accent-2)";
+  const label = live
+    ? `${available}/${total} live`
+    : status === "disconnected"
+      ? "offline · mock data"
+      : status === "authenticating"
+        ? "authenticating…"
+        : "connecting…";
+  return (
+    <span
+      className="chip"
+      style={{
+        background: "transparent",
+        borderColor: "var(--rule)",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+      }}
+      title={`HA WebSocket: ${status}`}
+    >
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: dotColor,
+          boxShadow: live ? `0 0 8px ${dotColor}` : "none",
+          transition: "background 0.3s, box-shadow 0.3s",
+        }}
+      />
+      {label}
+    </span>
+  );
 }
 
 function MullionGrid({ lean }) {
@@ -437,9 +481,7 @@ export default function App() {
               <span className="marker" />
               {effectiveMode === "night" ? "Night" : "Day"} · {fmtTime(now)}
             </span>
-            <span className="chip" style={{ background: "transparent", borderColor: "var(--rule)" }}>
-              {GH_DATA.health.available}/{GH_DATA.health.available + GH_DATA.health.unavailable} live
-            </span>
+            <ConnectionChip />
           </div>
         </header>
 
