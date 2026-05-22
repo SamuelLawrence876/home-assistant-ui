@@ -1,19 +1,16 @@
 /* Thin HTTP client for Home Assistant REST API.
    Reads are usually better served by the WebSocket (live state),
-   but service calls + image URLs + bootstrap go through here. */
+   but service calls + image URLs + bootstrap go through here.
 
-/* Resolution order: localStorage overrides → Vite env vars → empty.
-   localStorage wins so users of the deployed app can paste their own
-   URL + token without a rebuild. */
+   URL + token now come from the WebSocket layer, which owns the OAuth
+   flow via home-assistant-js-websocket. The library refreshes access
+   tokens automatically — callers always get a fresh one. */
+
+import { getAccessToken, getHaUrl } from "./socket.js";
+
 export const getHAConfig = () => ({
-  url:
-    (typeof localStorage !== "undefined" && localStorage.getItem("ha_url")) ||
-    import.meta.env.VITE_HA_URL ||
-    "",
-  token:
-    (typeof localStorage !== "undefined" && localStorage.getItem("ha_token")) ||
-    import.meta.env.VITE_HA_TOKEN ||
-    "",
+  url: getHaUrl(),
+  token: getAccessToken() || "",
 });
 
 export const haConfigured = () => {
