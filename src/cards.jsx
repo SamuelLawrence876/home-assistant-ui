@@ -1985,10 +1985,12 @@ export function NowPlayingHero({ index = 0 }) {
   const live = useEntity(ENTITY);
   const m = live || GH_DATA.media[ENTITY];
   const a = m.attributes || {};
-  const duration = a.media_duration || 1;
+  const duration = Number(a.media_duration) > 0 ? Number(a.media_duration) : 0;
+  const hasDuration = duration > 0;
   const [pos, setPos] = useState(a.media_position || 0);
   const [playing, setPlaying] = useState(m.state === "playing");
   const [vol, setVol] = useState(Math.round((a.volume_level || 0) * 100));
+  const idle = live && live.state !== "playing" && live.state !== "paused";
   useEffect(() => {
     if (!live) return;
     setPlaying(live.state === "playing");
@@ -2001,6 +2003,7 @@ export function NowPlayingHero({ index = 0 }) {
     callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY }).catch(() => setPlaying(playing));
   }
   function seek(toSec) {
+    if (!hasDuration) return;
     setPos(toSec);
     callService("media_player", "media_seek", { entity_id: ENTITY, seek_position: toSec }).catch(() => {});
   }
@@ -2009,20 +2012,23 @@ export function NowPlayingHero({ index = 0 }) {
     callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 }).catch(() => {});
   }
   useEffect(() => {
-    if (!playing) return;
-    const id = setInterval(() => setPos((p) => (p + 1) % a.media_duration), 1000);
+    if (!playing || !hasDuration) return;
+    const id = setInterval(() => setPos((p) => (p + 1) % duration), 1000);
     return () => clearInterval(id);
-  }, [playing, a.media_duration]);
-  const pct = (pos / a.media_duration) * 100;
-  const t = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }, [playing, duration, hasDuration]);
+  const pct = hasDuration ? (pos / duration) * 100 : 0;
+  const t = (s) => {
+    const n = Math.max(0, Math.floor(Number(s) || 0));
+    return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
+  };
 
   return (
     <Card
       index={index}
       className="weather-hero"
-      eyebrow={`Now playing · ${a.source}`}
-      title="Currently listening"
-      meta={playing ? "Playing" : "Paused"}
+      eyebrow={`Now playing · ${a.source || "Spotify"}`}
+      title={idle ? "Nothing playing" : "Currently listening"}
+      meta={idle ? "Idle" : playing ? "Playing" : "Paused"}
     >
       <div
         className="nowplaying-grid"
@@ -2034,9 +2040,14 @@ export function NowPlayingHero({ index = 0 }) {
             width: 180,
             height: 180,
             borderRadius: 22,
-            backgroundImage: a.entity_picture ? `url(${import.meta.env.VITE_HA_URL}${a.entity_picture})` : undefined,
+            backgroundImage:
+              a.entity_picture && !idle
+                ? `url(${import.meta.env.VITE_HA_URL}${a.entity_picture})`
+                : undefined,
             backgroundSize: "cover",
             backgroundPosition: "center",
+            opacity: idle ? 0.4 : 1,
+            transition: "opacity 0.3s ease",
           }}
         />
         <div style={{ minWidth: 0 }}>
@@ -2092,8 +2103,8 @@ export function NowPlayingHero({ index = 0 }) {
               marginTop: 6,
             }}
           >
-            <span>{t(Math.floor(pos))}</span>
-            <span>-{t(Math.floor(a.media_duration - pos))}</span>
+            <span>{hasDuration ? t(pos) : "—"}</span>
+            <span>{hasDuration ? `-${t(duration - pos)}` : "—"}</span>
           </div>
 
           <div
@@ -2144,101 +2155,167 @@ export function NowPlayingHero({ index = 0 }) {
 }
 
 export function CastTargetsCard({ index = 0 }) {
-  const tgts = GH_DATA.media.cast_targets;
-  const [active, setActive] = useState(tgts.find((t) => t.state === "playing")?.id || tgts[0].id);
+  const ENTITY = "media_player.spotify_samuel_lawrence";
+  const live = useEntity(ENTITY);
+  const sourceList = live?.attributes?.source_list;
+  const currentSource = live?.attributes?.source;
+  const [active, setActive] = useState(currentSource);
+  const [pending, setPending] = useState(null);
+  useEffect(() => {
+    if (currentSource) setActive(currentSource);
+  }, [currentSource]);
+
+  // Fall back to GH_DATA shape if Spotify isn't reporting devices yet.
+  const targets =
+    sourceList && sourceList.length > 0
+      ? sourceList.map((name) => ({ id: name, name, room: "Spotify Connect" }))
+      : GH_DATA.media.cast_targets.map((t) => ({ id: t.id, name: t.name, room: t.room }));
+
+  function pick(id) {
+    setPending(id);
+    setActive(id);
+    callService("media_player", "select_source", { entity_id: ENTITY, source: id })
+      .catch((e) => {
+        console.warn("[cast] select_source failed", e);
+        setActive(currentSource);
+      })
+      .finally(() => setPending(null));
+  }
+
+  const livePresent = !!sourceList;
 
   return (
-    <Card index={index} eyebrow="Cast · audio destinations" title="Send audio to">
+    <Card
+      index={index}
+      eyebrow={livePresent ? `Cast · ${targets.length} Spotify Connect` : "Cast · audio destinations"}
+      title="Send audio to"
+      meta={livePresent ? null : "preview"}
+    >
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
-        {tgts.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setActive(t.id)}
-            style={{
-              background: active === t.id ? "var(--ink)" : "var(--glass-bg-2)",
-              color: active === t.id ? "var(--sky-top, white)" : "var(--ink)",
-              border: "1px solid var(--glass-stroke)",
-              borderRadius: 14,
-              padding: "12px 14px",
-              display: "grid",
-              gridTemplateColumns: "28px 1fr auto",
-              alignItems: "center",
-              gap: 12,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              textAlign: "left",
-              transition: "background 0.3s ease, color 0.3s ease",
-            }}
-          >
-            <span
+        {targets.map((t) => {
+          const on = active === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => pick(t.id)}
+              disabled={pending && pending !== t.id}
               style={{
-                width: 18,
-                height: 18,
-                borderRadius: 4,
-                background: active === t.id ? "var(--accent)" : "color-mix(in oklch, var(--ink), transparent 88%)",
-                boxShadow: active === t.id ? `0 0 12px var(--accent)` : "none",
-                transition: "background 0.3s, box-shadow 0.3s",
+                background: on ? "var(--ink)" : "var(--glass-bg-2)",
+                color: on ? "var(--sky-top, white)" : "var(--ink)",
+                border: "1px solid var(--glass-stroke)",
+                borderRadius: 14,
+                padding: "12px 14px",
+                display: "grid",
+                gridTemplateColumns: "28px 1fr auto",
+                alignItems: "center",
+                gap: 12,
+                cursor: pending ? "wait" : "pointer",
+                fontFamily: "inherit",
+                textAlign: "left",
+                transition: "background 0.3s ease, color 0.3s ease",
               }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 500 }}>{t.name}</div>
-              <div
+            >
+              <span
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 4,
+                  background: on ? "var(--accent)" : "color-mix(in oklch, var(--ink), transparent 88%)",
+                  boxShadow: on ? `0 0 12px var(--accent)` : "none",
+                  transition: "background 0.3s, box-shadow 0.3s",
+                }}
+              />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{t.name}</div>
+                <div
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 9,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    opacity: 0.7,
+                    marginTop: 2,
+                  }}
+                >
+                  {t.room}
+                </div>
+              </div>
+              <span
                 style={{
                   fontFamily: "var(--font-mono)",
                   fontSize: 9,
-                  letterSpacing: "0.08em",
+                  letterSpacing: "0.1em",
                   textTransform: "uppercase",
                   opacity: 0.7,
-                  marginTop: 2,
                 }}
               >
-                {t.room} · {t.state}
-              </div>
-            </div>
-            <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 9,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                opacity: 0.7,
-              }}
-            >
-              {active === t.id ? "● Active" : "Send"}
-            </span>
-          </button>
-        ))}
+                {pending === t.id ? "…" : on ? "● Active" : "Send"}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </Card>
   );
 }
 
 export function TVCard({ index = 0 }) {
-  const tv = GH_DATA.media["media_player.living_room_tv_5"];
-  const [on, setOn] = useState(tv.state !== "off");
-  const [source, setSource] = useState(tv.attributes.source || tv.attributes.source_list[0]);
-  const [vol, setVol] = useState(Math.round(tv.attributes.volume_level * 100));
+  const ENTITY = "media_player.living_room_tv_5";
+  const live = useEntity(ENTITY);
+  const tv = live || GH_DATA.media[ENTITY];
+  const attrs = tv.attributes || {};
+  const sources = attrs.source_list || GH_DATA.media[ENTITY].attributes.source_list;
+  const unavailable = live?.state === "unavailable";
+  const [on, setOn] = useState(tv.state === "on" || tv.state === "playing" || tv.state === "idle");
+  const [source, setSource] = useState(attrs.source || sources[0]);
+  const [vol, setVol] = useState(Math.round((attrs.volume_level ?? 0.3) * 100));
+  useEffect(() => {
+    if (!live) return;
+    setOn(live.state === "on" || live.state === "playing" || live.state === "idle");
+    if (live.attributes?.source) setSource(live.attributes.source);
+    if (live.attributes?.volume_level != null) setVol(Math.round(live.attributes.volume_level * 100));
+  }, [live?.state, live?.attributes?.source, live?.attributes?.volume_level]);
+
+  function togglePower() {
+    const next = !on;
+    setOn(next);
+    callService("media_player", next ? "turn_on" : "turn_off", { entity_id: ENTITY }).catch(() => setOn(on));
+  }
+  function pickSource(s) {
+    setSource(s);
+    if (!on) setOn(true);
+    callService("media_player", "select_source", { entity_id: ENTITY, source: s }).catch(() => setSource(source));
+  }
+  function commitVolume(v) {
+    setVol(v);
+    callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 }).catch(() => {});
+  }
 
   return (
     <Card
       index={index}
       eyebrow="TV · living_room_tv_5"
       title="Living room TV"
-      meta={on ? `${source}` : "Off"}
-      headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={() => setOn(!on)} role="switch" />}
+      meta={unavailable ? "Unavailable" : on ? source : "Off"}
+      headRight={
+        <div
+          className={`toggle ${on ? "on" : ""}`}
+          onClick={unavailable ? undefined : togglePower}
+          role="switch"
+          aria-checked={on}
+          style={{ opacity: unavailable ? 0.4 : 1, cursor: unavailable ? "not-allowed" : "pointer" }}
+        />
+      }
     >
-      <div style={{ opacity: on ? 1 : 0.55, transition: "opacity 0.3s ease" }}>
+      <div style={{ opacity: on && !unavailable ? 1 : 0.55, transition: "opacity 0.3s ease" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Source</div>
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {tv.attributes.source_list.map((s) => (
+          {sources.map((s) => (
             <button
               key={s}
               className={`preset ${source === s ? "on" : ""}`}
-              onClick={() => {
-                setSource(s);
-                if (!on) setOn(true);
-              }}
-              disabled={!on}
+              onClick={() => pickSource(s)}
+              disabled={unavailable}
             >
               {s}
             </button>
@@ -2271,8 +2348,10 @@ export function TVCard({ index = 0 }) {
             min="0"
             max="100"
             value={vol}
-            disabled={!on}
+            disabled={!on || unavailable}
             onChange={(e) => setVol(Number(e.target.value))}
+            onPointerUp={(e) => commitVolume(Number(e.target.value))}
+            onKeyUp={(e) => commitVolume(Number(e.target.value))}
             className="gh-slider"
             style={{ flex: 1, accentColor: "var(--accent)" }}
           />
@@ -2287,8 +2366,10 @@ export function TVCard({ index = 0 }) {
 
 export function QueueCard({ index = 0 }) {
   const q = GH_DATA.media.queue;
+  // HA's Spotify integration doesn't expose the playback queue. Real fix:
+  // call Spotify Web API from the AWS Lambda backend and surface it as a sensor.
   return (
-    <Card index={index} eyebrow={`Queue · ${q.length} tracks`} title="Up next">
+    <Card index={index} eyebrow={`Queue · ${q.length} tracks`} title="Up next" meta="preview">
       <div className="domains" style={{ marginTop: 4 }}>
         {q.map((track, i) => (
           <div key={i} className="domain" style={{ gridTemplateColumns: "24px 1fr auto" }}>
@@ -2326,8 +2407,9 @@ export function QueueCard({ index = 0 }) {
 
 export function RecentCard({ index = 0 }) {
   const r = GH_DATA.media.recent;
+  // Same caveat as QueueCard — Spotify Web API only.
   return (
-    <Card index={index} eyebrow="Recent · playback history" title="Recently played">
+    <Card index={index} eyebrow="Recent · playback history" title="Recently played" meta="preview">
       <div className="domains" style={{ marginTop: 4 }}>
         {r.map((t, i) => (
           <div key={i} className="domain" style={{ gridTemplateColumns: "1fr auto" }}>
