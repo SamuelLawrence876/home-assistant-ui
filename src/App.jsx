@@ -136,12 +136,12 @@ function ConnectionChip() {
       ? "var(--bad)"
       : "var(--accent-2)";
   const label = live
-    ? `${available}/${total} live`
+    ? `Pi · ${available}/${total} live`
     : status === "disconnected"
-      ? "offline · mock data"
+      ? "Pi offline"
       : status === "authenticating"
-        ? "authenticating…"
-        : "connecting…";
+        ? "Pi · authenticating…"
+        : "Pi · connecting…";
   return (
     <span
       className="chip"
