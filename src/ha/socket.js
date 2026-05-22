@@ -53,6 +53,8 @@ function applyEntities(entities) {
   // `entities` is HassEntities: Record<entity_id, HassEntity>.
   // The library delivers diffs after the first full snapshot — each call
   // gives the new state for any entity that changed.
+  const count = Object.keys(entities).length;
+  console.info("[ha-ws] applyEntities count=", count);
   for (const [id, state] of Object.entries(entities)) {
     states.set(id, state);
     notify(id);
@@ -84,6 +86,7 @@ async function setup() {
     return;
   }
 
+  console.info("[ha-ws] setup() start, HA_URL=", HA_URL);
   setStatus("connecting");
   try {
     auth = await getAuth({
@@ -91,10 +94,9 @@ async function setup() {
       saveTokens,
       loadTokens,
     });
+    console.info("[ha-ws] getAuth resolved, wsUrl=", auth.wsUrl, "expired=", auth.expired);
   } catch (err) {
-    // getAuth either resolves with an Auth, or redirects to HA login (no resolve).
-    // We only land here on hard errors (network down, HA unreachable, etc.).
-    console.warn("[ha-ws] getAuth failed", err);
+    console.error("[ha-ws] getAuth failed", err);
     setStatus("disconnected");
     return;
   }
@@ -111,18 +113,32 @@ async function setup() {
   setStatus("authenticating");
   try {
     connection = await createConnection({ auth });
+    console.info("[ha-ws] createConnection resolved, haVersion=", connection.haVersion);
   } catch (err) {
-    console.warn("[ha-ws] createConnection failed", err);
+    console.error("[ha-ws] createConnection failed", err);
     setStatus("disconnected");
     return;
   }
 
-  connection.addEventListener("ready", () => setStatus("ready"));
-  connection.addEventListener("disconnected", () => setStatus("disconnected"));
-  // "reconnect-error" surfaces if the library can't reconnect after retries.
-  connection.addEventListener("reconnect-error", () => setStatus("disconnected"));
+  connection.addEventListener("ready", () => {
+    console.info("[ha-ws] event: ready");
+    setStatus("ready");
+  });
+  connection.addEventListener("disconnected", () => {
+    console.info("[ha-ws] event: disconnected");
+    setStatus("disconnected");
+  });
+  connection.addEventListener("reconnect-error", (_, err) => {
+    console.warn("[ha-ws] event: reconnect-error", err);
+    setStatus("disconnected");
+  });
 
-  subscribeEntities(connection, applyEntities);
+  try {
+    subscribeEntities(connection, applyEntities);
+    console.info("[ha-ws] subscribeEntities registered");
+  } catch (err) {
+    console.error("[ha-ws] subscribeEntities failed", err);
+  }
   setStatus("ready");
 }
 
