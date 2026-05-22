@@ -2485,7 +2485,9 @@ export function WeeklyCalendarCard({ index = 0 }) {
     return d;
   }, [weekStart]);
   const todayDow = (today.getDay() + 6) % 7;
-  const weekStartISO = weekStart.toISOString().slice(0, 10);
+  /* Display label only — must be local-time YYYY-MM-DD, not toISOString()
+     which would shift positive-UTC-offset locales to the previous day. */
+  const weekStartISO = `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, "0")}-${String(weekStart.getDate()).padStart(2, "0")}`;
 
   /* Discover live calendar entities (HA's calendar.* domain). */
   const calendarEntities = useEntitiesByDomain("calendar");
