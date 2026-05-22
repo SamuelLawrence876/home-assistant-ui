@@ -5,7 +5,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
-import { useEntity } from "./ha/useEntity.js";
+import { useEntity, useEntitiesByDomain } from "./ha/useEntity.js";
 import { callService, imageUrl } from "./ha/client.js";
 
 /* ----------------------------------------------------------------
@@ -1559,22 +1559,11 @@ export function AdGuardSimpleCard({ index = 0 }) {
   const blocked = Number(liveBlocked?.state ?? a["sensor.adguard_home_dns_queries_blocked"].state);
   const ratio = Number(liveRatio?.state ?? a["sensor.adguard_home_dns_queries_blocked_ratio"].state);
   const [prot, setProt] = useState((liveProt?.state ?? a["switch.adguard_home_protection"].state) === "on");
-  const [restarting, setRestarting] = useState(false);
-  const [updating, setUpdating] = useState(false);
   useEffect(() => { if (liveProt) setProt(liveProt.state === "on"); }, [liveProt?.state]);
   function toggleProt() {
     const next = !prot;
     setProt(next);
     callService("switch", next ? "turn_on" : "turn_off", { entity_id: "switch.adguard_home_protection" }).catch(() => setProt(prot));
-  }
-
-  function restart() {
-    setRestarting(true);
-    setTimeout(() => setRestarting(false), 1800);
-  }
-  function update() {
-    setUpdating(true);
-    setTimeout(() => setUpdating(false), 2400);
   }
 
   return (
@@ -1610,26 +1599,6 @@ export function AdGuardSimpleCard({ index = 0 }) {
           </div>
         </div>
         <div className={`toggle ${prot ? "on" : ""}`} onClick={toggleProt} role="switch" />
-      </div>
-
-      <div
-        style={{ display: "flex", gap: 8, marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--rule)" }}
-      >
-        <button className="btn" onClick={restart} disabled={restarting} style={{ opacity: restarting ? 0.7 : 1 }}>
-          <span
-            style={{
-              display: "inline-block",
-              transition: "transform 0.6s",
-              transform: restarting ? "rotate(360deg)" : "none",
-            }}
-          >
-            ↻
-          </span>
-          {restarting ? "Restarting…" : "Restart"}
-        </button>
-        <button className="btn" onClick={update} disabled={updating} style={{ opacity: updating ? 0.7 : 1 }}>
-          {updating ? "Updating…" : "Update deps"}
-        </button>
       </div>
     </Card>
   );
@@ -1881,39 +1850,37 @@ export function PixooCard({ index = 0 }) {
 }
 
 /* ----------------------------------------------------------------
-   Add-ons updates
+   Updates — driven by live `update.*` entities (core, add-ons, HACS, firmware, …)
    ----------------------------------------------------------------*/
 export function AddonsCard({ index = 0 }) {
-  const a = GH_DATA.addons;
-  const [pending, setPending] = useState(a.list);
-  const [updatingId, setUpdatingId] = useState(null);
-  const [allUpdating, setAllUpdating] = useState(false);
+  const updates = useEntitiesByDomain("update");
+  const pending = updates.filter((u) => u.state === "on");
+  const [installingId, setInstallingId] = useState(null);
+  const [installingAll, setInstallingAll] = useState(false);
 
-  function updateOne(slug) {
-    setUpdatingId(slug);
-    setTimeout(() => {
-      setPending((list) => list.filter((x) => x.slug !== slug));
-      setUpdatingId(null);
-    }, 1400);
+  function installOne(entityId) {
+    setInstallingId(entityId);
+    callService("update", "install", { entity_id: entityId })
+      .catch(() => {})
+      .finally(() => setInstallingId(null));
   }
-  function updateAll() {
-    setAllUpdating(true);
-    setTimeout(() => {
-      setPending([]);
-      setAllUpdating(false);
-    }, 2400);
+  function installAll() {
+    setInstallingAll(true);
+    Promise.allSettled(
+      pending.map((u) => callService("update", "install", { entity_id: u.entity_id })),
+    ).finally(() => setInstallingAll(false));
   }
 
   return (
     <Card
       index={index}
-      eyebrow={`Add-ons · ${a.all_addons} installed`}
+      eyebrow={`Updates · ${updates.length} tracked`}
       title={pending.length ? `${pending.length} update${pending.length > 1 ? "s" : ""} available` : "All up to date"}
       meta={pending.length ? "supervisor" : "✓ current"}
       headRight={
-        pending.length > 0 && (
-          <button className="btn primary" disabled={allUpdating} onClick={updateAll}>
-            {allUpdating ? "Updating all…" : "Update all"}
+        pending.length > 1 && (
+          <button className="btn primary" disabled={installingAll} onClick={installAll}>
+            {installingAll ? "Installing all…" : "Install all"}
           </button>
         )
       }
@@ -1928,49 +1895,48 @@ export function AddonsCard({ index = 0 }) {
             padding: "8px 0",
           }}
         >
-          All {a.all_addons} add-ons are at the latest version. Next supervisor scan in ~1h.
+          {updates.length
+            ? `All ${updates.length} tracked components are at the latest version.`
+            : "Waiting for update entities…"}
         </div>
       ) : (
         <div className="domains" style={{ marginTop: 4 }}>
-          {pending.map((p) => (
-            <div key={p.slug} className="domain" style={{ gridTemplateColumns: "1fr auto auto", gap: 14 }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)", letterSpacing: "-0.005em" }}>
-                  {p.name}
-                </div>
-                <div
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 10,
-                    color: "var(--ink-3)",
-                    letterSpacing: "0.04em",
-                    marginTop: 2,
-                  }}
-                >
-                  <span style={{ color: "var(--ink-4)" }}>{p.current}</span>
-                  {" → "}
-                  <span style={{ color: "var(--good)" }}>{p.next}</span>
-                  {" · "}
-                  <span
+          {pending.map((u) => {
+            const attrs = u.attributes || {};
+            const name = attrs.title || attrs.friendly_name || u.entity_id;
+            const current = attrs.installed_version || "—";
+            const next = attrs.latest_version || "—";
+            const busy = installingId === u.entity_id || installingAll;
+            return (
+              <div key={u.entity_id} className="domain" style={{ gridTemplateColumns: "1fr auto auto", gap: 14 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)", letterSpacing: "-0.005em" }}>
+                    {name}
+                  </div>
+                  <div
                     style={{
-                      textTransform: "uppercase",
-                      letterSpacing: "0.1em",
-                      color: p.severity === "minor" ? "var(--accent-2)" : "var(--ink-4)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      color: "var(--ink-3)",
+                      letterSpacing: "0.04em",
+                      marginTop: 2,
                     }}
                   >
-                    {p.severity}
-                  </span>
+                    <span style={{ color: "var(--ink-4)" }}>{current}</span>
+                    {" → "}
+                    <span style={{ color: "var(--good)" }}>{next}</span>
+                  </div>
                 </div>
+                <button
+                  className="btn"
+                  disabled={busy}
+                  onClick={() => installOne(u.entity_id)}
+                >
+                  {installingId === u.entity_id ? "…" : "Install"}
+                </button>
               </div>
-              <button
-                className="btn"
-                disabled={updatingId === p.slug || allUpdating}
-                onClick={() => updateOne(p.slug)}
-              >
-                {updatingId === p.slug ? "…" : "Update"}
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Card>

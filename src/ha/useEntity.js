@@ -2,6 +2,7 @@
 
    useEntity("light.bedroom")        -> current state object, re-renders on changes
    useEntities(["light.a", "light.b"]) -> Record<entityId, state>
+   useEntitiesByDomain("update")     -> array of state objects whose entity_id starts with "update."
    useConnectionStatus()             -> "connecting" | "authenticating" | "ready" | "disconnected"
    useEntityCounts()                 -> { available, unavailable, total } */
 
@@ -37,6 +38,16 @@ export function useEntities(entityIds) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return snapshot;
+}
+
+export function useEntitiesByDomain(domain) {
+  const prefix = `${domain}.`;
+  const [tick, setTick] = useState(0);
+  useEffect(() => onStatesChanged(() => setTick((t) => t + 1)), []);
+  return useMemo(() => {
+    return getAllStates().filter((s) => s.entity_id.startsWith(prefix));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefix, tick]);
 }
 
 export function useConnectionStatus() {
