@@ -9,6 +9,7 @@ import { useEffect, useState, useMemo } from "react";
 import {
   subscribe,
   onConnectionChange,
+  onStatesChanged,
   getAllStates,
   getEntity,
   getConnectionStatus,
@@ -46,6 +47,10 @@ export function useConnectionStatus() {
 
 export function useEntityCounts() {
   const status = useConnectionStatus();
+  // Re-tick whenever the entity set changes so the count actually updates
+  // after the WS delivers the initial 290-entity snapshot.
+  const [tick, setTick] = useState(0);
+  useEffect(() => onStatesChanged(() => setTick((t) => t + 1)), []);
   return useMemo(() => {
     const all = getAllStates();
     let available = 0;
@@ -56,5 +61,5 @@ export function useEntityCounts() {
     }
     return { available, unavailable, total: all.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [status, tick]);
 }

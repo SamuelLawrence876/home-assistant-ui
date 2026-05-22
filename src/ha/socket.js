@@ -32,6 +32,7 @@ const TOKENS_KEY = "ha_tokens";
 const states = new Map();              // entity_id -> state object
 const subscribers = new Map();         // entity_id -> Set<callback>
 const connectionListeners = new Set(); // callbacks for connection status
+const statesListeners = new Set();     // callbacks for "states set changed" (size/keys)
 let connection = null;
 let auth = null;
 let connectionStatus = "disconnected"; // "disconnected" | "connecting" | "authenticating" | "ready"
@@ -42,26 +43,24 @@ function setStatus(next) {
   connectionListeners.forEach((cb) => cb(next));
 }
 
-let _notifiedCount = 0;
 function notify(entityId) {
   const subs = subscribers.get(entityId);
   if (!subs) return;
   const state = states.get(entityId);
   subs.forEach((cb) => cb(state));
-  _notifiedCount++;
-  if (_notifiedCount <= 5) console.info("[ha-ws] notify", entityId, "subs=", subs.size);
 }
 
 function applyEntities(entities) {
   // `entities` is HassEntities: Record<entity_id, HassEntity>.
   // The library delivers diffs after the first full snapshot — each call
   // gives the new state for any entity that changed.
-  const count = Object.keys(entities).length;
-  console.info("[ha-ws] applyEntities count=", count);
   for (const [id, state] of Object.entries(entities)) {
     states.set(id, state);
     notify(id);
   }
+  // Wake up listeners that track "how many entities exist" — chiefly the
+  // topbar chip's useEntityCounts. Fires once per batch, not per entity.
+  statesListeners.forEach((cb) => cb());
 }
 
 const saveTokens = (data) => {
@@ -89,7 +88,6 @@ async function setup() {
     return;
   }
 
-  console.info("[ha-ws] setup() start, HA_URL=", HA_URL);
   setStatus("connecting");
   try {
     auth = await getAuth({
@@ -97,9 +95,10 @@ async function setup() {
       saveTokens,
       loadTokens,
     });
-    console.info("[ha-ws] getAuth resolved, wsUrl=", auth.wsUrl, "expired=", auth.expired);
   } catch (err) {
-    console.error("[ha-ws] getAuth failed", err);
+    // getAuth either resolves with an Auth, or redirects to HA login (no resolve).
+    // We only land here on hard errors (network down, HA unreachable, etc.).
+    console.warn("[ha-ws] getAuth failed", err);
     setStatus("disconnected");
     return;
   }
@@ -116,32 +115,17 @@ async function setup() {
   setStatus("authenticating");
   try {
     connection = await createConnection({ auth });
-    console.info("[ha-ws] createConnection resolved, haVersion=", connection.haVersion);
   } catch (err) {
-    console.error("[ha-ws] createConnection failed", err);
+    console.warn("[ha-ws] createConnection failed", err);
     setStatus("disconnected");
     return;
   }
 
-  connection.addEventListener("ready", () => {
-    console.info("[ha-ws] event: ready");
-    setStatus("ready");
-  });
-  connection.addEventListener("disconnected", () => {
-    console.info("[ha-ws] event: disconnected");
-    setStatus("disconnected");
-  });
-  connection.addEventListener("reconnect-error", (_, err) => {
-    console.warn("[ha-ws] event: reconnect-error", err);
-    setStatus("disconnected");
-  });
+  connection.addEventListener("ready", () => setStatus("ready"));
+  connection.addEventListener("disconnected", () => setStatus("disconnected"));
+  connection.addEventListener("reconnect-error", () => setStatus("disconnected"));
 
-  try {
-    subscribeEntities(connection, applyEntities);
-    console.info("[ha-ws] subscribeEntities registered");
-  } catch (err) {
-    console.error("[ha-ws] subscribeEntities failed", err);
-  }
+  subscribeEntities(connection, applyEntities);
   setStatus("ready");
 }
 
@@ -155,12 +139,9 @@ export function getAllStates() {
   return Array.from(states.values());
 }
 
-let _subCount = 0;
 export function subscribe(entityId, callback) {
   if (!subscribers.has(entityId)) subscribers.set(entityId, new Set());
   subscribers.get(entityId).add(callback);
-  _subCount++;
-  if (_subCount <= 10) console.info("[ha-ws] subscribe", entityId, "statesHas=", states.has(entityId), "statesSize=", states.size);
   if (states.has(entityId)) callback(states.get(entityId));
   return () => {
     const subs = subscribers.get(entityId);
@@ -175,6 +156,14 @@ export function onConnectionChange(callback) {
   connectionListeners.add(callback);
   callback(connectionStatus);
   return () => connectionListeners.delete(callback);
+}
+
+/* Fires once per applyEntities batch — listeners use this to recompute
+   aggregates (e.g. the topbar's available/total count) without subscribing
+   to every entity individually. */
+export function onStatesChanged(callback) {
+  statesListeners.add(callback);
+  return () => statesListeners.delete(callback);
 }
 
 export function getConnectionStatus() {
