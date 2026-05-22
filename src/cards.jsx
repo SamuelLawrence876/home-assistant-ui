@@ -8,6 +8,7 @@ import { nowFractionalHour } from "./theme.js";
 import { useEntity, useEntitiesByDomain } from "./ha/useEntity.js";
 import { callService, imageUrl } from "./ha/client.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
+import { useTodoLists } from "./ha/useTodoLists.js";
 
 /* ----------------------------------------------------------------
    Small helpers
@@ -2121,54 +2122,86 @@ export function NowPlayingHero({ index = 0 }) {
   );
 }
 
+/* Multi-room audio destinations. Spotify's source_list only ever surfaces
+   Spotify Connect devices (just SAM_PC here), so we list the full
+   media_player domain instead. Music Assistant entities show up naturally;
+   the Spotify source itself and the Chromecast TV (already on TVCard) are
+   filtered out. Each row's button calls media_player.media_play_pause on
+   that target — universal across cast / MA / airplay / etc. */
+const CAST_TARGETS_EXCLUDE = new Set([
+  "media_player.spotify_samuel_lawrence",
+  "media_player.living_room_tv",
+  "media_player.living_room_tv_2", // dlna duplicate of the cast TV
+]);
+
 export function CastTargetsCard({ index = 0 }) {
-  const ENTITY = "media_player.spotify_samuel_lawrence";
-  const live = useEntity(ENTITY);
-  const sourceList = live?.attributes?.source_list;
-  const currentSource = live?.attributes?.source;
-  const [active, setActive] = useState(currentSource);
+  const all = useEntitiesByDomain("media_player");
   const [pending, setPending] = useState(null);
-  useEffect(() => {
-    if (currentSource) setActive(currentSource);
-  }, [currentSource]);
 
-  // Fall back to GH_DATA shape if Spotify isn't reporting devices yet.
-  const targets =
-    sourceList && sourceList.length > 0
-      ? sourceList.map((name) => ({ id: name, name, room: "Spotify Connect" }))
-      : GH_DATA.media.cast_targets.map((t) => ({ id: t.id, name: t.name, room: t.room }));
-
-  function pick(id) {
-    setPending(id);
-    setActive(id);
-    callService("media_player", "select_source", { entity_id: ENTITY, source: id })
-      .catch((e) => {
-        console.warn("[cast] select_source failed", e);
-        setActive(currentSource);
+  const targets = useMemo(() => {
+    return all
+      .filter((s) => s && !CAST_TARGETS_EXCLUDE.has(s.entity_id))
+      .map((s) => {
+        const a = s.attributes || {};
+        const name = a.friendly_name || s.entity_id.replace(/^media_player\./, "");
+        const playing = s.state === "playing";
+        const paused = s.state === "paused";
+        const unavailable = s.state === "unavailable" || s.state === "unknown";
+        const off = s.state === "off";
+        const title = playing || paused ? a.media_title : null;
+        const artist = playing || paused ? a.media_artist : null;
+        const subtitle = unavailable
+          ? "offline"
+          : off
+            ? "off"
+            : title
+              ? artist
+                ? `${title} · ${artist}`
+                : title
+              : s.state || "idle";
+        return {
+          id: s.entity_id,
+          name,
+          subtitle,
+          playing,
+          unavailable,
+          off,
+        };
       })
+      .sort((a, b) => {
+        // playing first, then idle/paused, then off/unavailable
+        const rank = (t) => (t.playing ? 0 : t.unavailable || t.off ? 2 : 1);
+        return rank(a) - rank(b) || a.name.localeCompare(b.name);
+      });
+  }, [all]);
+
+  function toggle(id) {
+    setPending(id);
+    callService("media_player", "media_play_pause", { entity_id: id })
+      .catch((e) => console.warn("[cast] media_play_pause failed", e))
       .finally(() => setPending(null));
   }
 
-  const livePresent = !!sourceList;
+  const playingCount = targets.filter((t) => t.playing).length;
 
   return (
     <Card
       index={index}
-      eyebrow={livePresent ? `Cast · ${targets.length} Spotify Connect` : "Cast · audio destinations"}
-      title="Send audio to"
-      meta={livePresent ? null : "preview"}
+      eyebrow={`Speakers · ${targets.length} destinations`}
+      title="Multi-room audio"
+      meta={playingCount > 0 ? `${playingCount} playing` : null}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
         {targets.map((t) => {
-          const on = active === t.id;
+          const dimmed = t.unavailable || t.off;
           return (
             <button
               key={t.id}
-              onClick={() => pick(t.id)}
-              disabled={pending && pending !== t.id}
+              onClick={() => toggle(t.id)}
+              disabled={dimmed || (pending && pending !== t.id)}
               style={{
-                background: on ? "var(--ink)" : "var(--glass-bg-2)",
-                color: on ? "var(--sky-top, white)" : "var(--ink)",
+                background: t.playing ? "var(--ink)" : "var(--glass-bg-2)",
+                color: t.playing ? "var(--sky-top, white)" : "var(--ink)",
                 border: "1px solid var(--glass-stroke)",
                 borderRadius: 14,
                 padding: "12px 14px",
@@ -2176,10 +2209,11 @@ export function CastTargetsCard({ index = 0 }) {
                 gridTemplateColumns: "28px 1fr auto",
                 alignItems: "center",
                 gap: 12,
-                cursor: pending ? "wait" : "pointer",
+                cursor: dimmed ? "not-allowed" : pending ? "wait" : "pointer",
+                opacity: dimmed ? 0.45 : 1,
                 fontFamily: "inherit",
                 textAlign: "left",
-                transition: "background 0.3s ease, color 0.3s ease",
+                transition: "background 0.3s ease, color 0.3s ease, opacity 0.3s ease",
               }}
             >
               <span
@@ -2187,13 +2221,23 @@ export function CastTargetsCard({ index = 0 }) {
                   width: 18,
                   height: 18,
                   borderRadius: 4,
-                  background: on ? "var(--accent)" : "color-mix(in oklch, var(--ink), transparent 88%)",
-                  boxShadow: on ? `0 0 12px var(--accent)` : "none",
+                  background: t.playing ? "var(--accent)" : "color-mix(in oklch, var(--ink), transparent 88%)",
+                  boxShadow: t.playing ? `0 0 12px var(--accent)` : "none",
                   transition: "background 0.3s, box-shadow 0.3s",
                 }}
               />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{t.name}</div>
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {t.name}
+                </div>
                 <div
                   style={{
                     fontFamily: "var(--font-mono)",
@@ -2202,9 +2246,12 @@ export function CastTargetsCard({ index = 0 }) {
                     textTransform: "uppercase",
                     opacity: 0.7,
                     marginTop: 2,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  {t.room}
+                  {t.subtitle}
                 </div>
               </div>
               <span
@@ -2216,41 +2263,70 @@ export function CastTargetsCard({ index = 0 }) {
                   opacity: 0.7,
                 }}
               >
-                {pending === t.id ? "…" : on ? "● Active" : "Send"}
+                {pending === t.id ? "…" : t.playing ? "⏸ Pause" : dimmed ? "—" : "▶ Play"}
               </span>
             </button>
           );
         })}
+        {targets.length === 0 && (
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--ink-3)",
+              padding: "12px 4px",
+            }}
+          >
+            No media destinations reported yet.
+          </div>
+        )}
       </div>
     </Card>
   );
 }
 
 export function TVCard({ index = 0 }) {
-  const ENTITY = "media_player.living_room_tv_5";
+  const ENTITY = "media_player.living_room_tv";
   const live = useEntity(ENTITY);
-  const tv = live || GH_DATA.media[ENTITY];
-  const attrs = tv.attributes || {};
-  const sources = attrs.source_list || GH_DATA.media[ENTITY].attributes.source_list;
-  const unavailable = live?.state === "unavailable";
-  const [on, setOn] = useState(tv.state === "on" || tv.state === "playing" || tv.state === "idle");
-  const [source, setSource] = useState(attrs.source || sources[0]);
-  const [vol, setVol] = useState(Math.round((attrs.volume_level ?? 0.3) * 100));
+  const attrs = live?.attributes || {};
+  const unavailable = !live || live.state === "unavailable" || live.state === "unknown";
+  const isOff = live?.state === "off";
+  const isOn = !unavailable && !isOff;
+  const sources = Array.isArray(attrs.source_list) ? attrs.source_list : [];
+  const hasSources = sources.length > 0;
+
+  const [on, setOn] = useState(isOn);
+  const [source, setSource] = useState(attrs.source ?? null);
+  const [vol, setVol] = useState(Math.round((attrs.volume_level ?? 0) * 100));
   useEffect(() => {
     if (!live) return;
-    setOn(live.state === "on" || live.state === "playing" || live.state === "idle");
-    if (live.attributes?.source) setSource(live.attributes.source);
+    setOn(live.state !== "off" && live.state !== "unavailable" && live.state !== "unknown");
+    if (live.attributes?.source !== undefined) setSource(live.attributes.source);
     if (live.attributes?.volume_level != null) setVol(Math.round(live.attributes.volume_level * 100));
   }, [live?.state, live?.attributes?.source, live?.attributes?.volume_level]);
 
+  const appName = attrs.app_name || null;
+  const mediaTitle = attrs.media_title || null;
+  const statusLabel = unavailable
+    ? "Off"
+    : isOff
+      ? "Off"
+      : appName
+        ? appName
+        : live?.state === "playing"
+          ? "Playing"
+          : live?.state === "paused"
+            ? "Paused"
+            : "Idle";
+
   function togglePower() {
+    if (unavailable) return;
     const next = !on;
     setOn(next);
     callService("media_player", next ? "turn_on" : "turn_off", { entity_id: ENTITY }).catch(() => setOn(on));
   }
   function pickSource(s) {
     setSource(s);
-    if (!on) setOn(true);
     callService("media_player", "select_source", { entity_id: ENTITY, source: s }).catch(() => setSource(source));
   }
   function commitVolume(v) {
@@ -2258,12 +2334,14 @@ export function TVCard({ index = 0 }) {
     callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 }).catch(() => {});
   }
 
+  const disabled = unavailable || isOff;
+
   return (
     <Card
       index={index}
-      eyebrow="TV · living_room_tv_5"
+      eyebrow="TV · living_room_tv"
       title="Living room TV"
-      meta={unavailable ? "Unavailable" : on ? source : "Off"}
+      meta={statusLabel}
       headRight={
         <div
           className={`toggle ${on ? "on" : ""}`}
@@ -2274,20 +2352,45 @@ export function TVCard({ index = 0 }) {
         />
       }
     >
-      <div style={{ opacity: on && !unavailable ? 1 : 0.55, transition: "opacity 0.3s ease" }}>
-        <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Source</div>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {sources.map((s) => (
-            <button
-              key={s}
-              className={`preset ${source === s ? "on" : ""}`}
-              onClick={() => pickSource(s)}
-              disabled={unavailable}
-            >
-              {s}
-            </button>
-          ))}
+      <div style={{ opacity: disabled ? 0.55 : 1, transition: "opacity 0.3s ease" }}>
+        <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>
+          {hasSources ? "Source" : "Now showing"}
         </div>
+        {hasSources ? (
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+            {sources.map((s) => (
+              <button
+                key={s}
+                className={`preset ${source === s ? "on" : ""}`}
+                onClick={() => pickSource(s)}
+                disabled={disabled}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 500,
+              color: "var(--ink-2)",
+              minHeight: 32,
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            {unavailable
+              ? "TV is off the network"
+              : isOff
+                ? "TV is off"
+                : appName
+                  ? mediaTitle
+                    ? `${appName} · ${mediaTitle}`
+                    : appName
+                  : "Idle"}
+          </div>
+        )}
 
         <div
           style={{
@@ -2315,7 +2418,7 @@ export function TVCard({ index = 0 }) {
             min="0"
             max="100"
             value={vol}
-            disabled={!on || unavailable}
+            disabled={disabled}
             onChange={(e) => setVol(Number(e.target.value))}
             onPointerUp={(e) => commitVolume(Number(e.target.value))}
             onKeyUp={(e) => commitVolume(Number(e.target.value))}
@@ -2333,8 +2436,11 @@ export function TVCard({ index = 0 }) {
 
 export function QueueCard({ index = 0 }) {
   const q = GH_DATA.media.queue;
-  // HA's Spotify integration doesn't expose the playback queue. Real fix:
-  // call Spotify Web API from the AWS Lambda backend and surface it as a sensor.
+  // Still mock. HA's Spotify integration doesn't expose the queue. Music
+  // Assistant (installed on the Pi) holds queues internally but doesn't
+  // surface them as HA entities — only as `music_assistant.get_queue`
+  // service calls that need WS-with-response handling. Either path is
+  // a real piece of work; left as mock until prioritised.
   return (
     <Card index={index} eyebrow={`Queue · ${q.length} tracks`} title="Up next" meta="preview">
       <div className="domains" style={{ marginTop: 4 }}>
@@ -2374,7 +2480,10 @@ export function QueueCard({ index = 0 }) {
 
 export function RecentCard({ index = 0 }) {
   const r = GH_DATA.media.recent;
-  // Same caveat as QueueCard — Spotify Web API only.
+  // Same caveat as QueueCard — no native entity. Music Assistant exposes
+  // a "favorite current song" button per player but not a play history.
+  // Real history would come from HA's recorder API (state changes on
+  // media_player.spotify_*) or MA's library service.
   return (
     <Card index={index} eyebrow="Recent · playback history" title="Recently played" meta="preview">
       <div className="domains" style={{ marginTop: 4 }}>
@@ -2837,31 +2946,129 @@ export function WeeklyCalendarCard({ index = 0 }) {
 }
 
 /* ----------------------------------------------------------------
-   Kanban — 4 columns, HTML5 DnD
+   Kanban — adaptive: one column per live todo.* entity (excluding
+   todo.shopping_list which the dashboard uses elsewhere). Falls back
+   to GH_DATA mock if no real todo entities exist yet.
    ----------------------------------------------------------------*/
+
+const MOCK_KANBAN_COLS = ["todo.backlog", "todo.today", "todo.doing", "todo.done"];
+
+function KanbanAddInput({ onSubmit }) {
+  const [active, setActive] = useState(false);
+  const [value, setValue] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (active) inputRef.current?.focus();
+  }, [active]);
+
+  async function commit() {
+    const text = value.trim();
+    if (!text) {
+      setActive(false);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onSubmit(text);
+      setValue("");
+      setActive(false);
+    } catch (e) {
+      console.warn("[kanban-add] failed", e);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!active) {
+    return (
+      <button className="kanban-add" onClick={() => setActive(true)} disabled={submitting}>
+        + Add
+      </button>
+    );
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      className="kanban-add"
+      style={{ textAlign: "left", textTransform: "none", letterSpacing: 0 }}
+      type="text"
+      value={value}
+      placeholder="What needs doing?"
+      disabled={submitting}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        } else if (e.key === "Escape") {
+          setValue("");
+          setActive(false);
+        }
+      }}
+    />
+  );
+}
+
 export function KanbanBoardCard({ index = 0 }) {
-  const COLS = ["todo.backlog", "todo.today", "todo.doing", "todo.done"];
-  const [lists, setLists] = useState(() => {
+  /* Discover live todo.* entities, excluding shopping list. */
+  const todoEntities = useEntitiesByDomain("todo");
+  const liveTodoEntities = useMemo(
+    () =>
+      todoEntities
+        .filter((e) => e.entity_id !== "todo.shopping_list")
+        .sort((a, b) => a.entity_id.localeCompare(b.entity_id)),
+    [todoEntities],
+  );
+  const liveTodoIds = useMemo(
+    () => liveTodoEntities.map((e) => e.entity_id),
+    [liveTodoEntities],
+  );
+  const liveMode = liveTodoIds.length > 0;
+
+  const { lists: liveLists, add, move } = useTodoLists(liveTodoIds);
+
+  /* Mock fallback — same shape as before. */
+  const [mockLists] = useState(() => {
     const out = {};
-    for (const id of COLS) out[id] = GH_DATA.todo_lists[id].items.slice();
+    for (const id of MOCK_KANBAN_COLS) out[id] = GH_DATA.todo_lists[id].items.slice();
     return out;
   });
+  const [mockState, setMockState] = useState(mockLists);
+
   const [dragOver, setDragOver] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
 
-  function moveCard(uid, fromCol, toCol) {
-    if (fromCol === toCol) return;
-    setLists((cur) => {
-      const next = { ...cur };
-      next[fromCol] = cur[fromCol].filter((c) => c.uid !== uid);
-      const card = cur[fromCol].find((c) => c.uid === uid);
-      if (card) next[toCol] = [card, ...cur[toCol]];
-      return next;
-    });
+  /* Unified column shape for the renderer:
+       { id, label, items: [{uid, summary, status?, tag?, due?}] } */
+  const cols = useMemo(() => {
+    if (liveMode) {
+      return liveTodoEntities.map((e) => ({
+        id: e.entity_id,
+        label: (e.attributes?.friendly_name || e.entity_id.replace(/^todo\./, "")).replace(/\s*⚠️\s*$/, ""),
+        items: (liveLists[e.entity_id]?.items || []).map((it) => ({
+          uid: it.uid,
+          summary: it.summary,
+          status: it.status,
+        })),
+      }));
+    }
+    return MOCK_KANBAN_COLS.map((id) => ({
+      id,
+      label: GH_DATA.todo_lists[id].label,
+      items: mockState[id],
+    }));
+  }, [liveMode, liveTodoEntities, liveLists, mockState]);
+
+  function isDoneCol(col) {
+    return /done$/i.test(col.id) || /^done$/i.test(col.label);
   }
 
-  function onDragStart(ev, uid, col) {
-    ev.dataTransfer.setData("text/plain", JSON.stringify({ uid, col }));
+  function onDragStart(ev, uid, summary, col) {
+    ev.dataTransfer.setData("text/plain", JSON.stringify({ uid, summary, col }));
     ev.dataTransfer.effectAllowed = "move";
     setDraggingId(uid);
   }
@@ -2874,56 +3081,89 @@ export function KanbanBoardCard({ index = 0 }) {
     ev.dataTransfer.dropEffect = "move";
     setDragOver(col);
   }
-  function onDrop(ev, col) {
+  async function onDrop(ev, toCol) {
     ev.preventDefault();
-    try {
-      const { uid, col: fromCol } = JSON.parse(ev.dataTransfer.getData("text/plain"));
-      moveCard(uid, fromCol, col);
-    } catch {}
     setDragOver(null);
     setDraggingId(null);
+    let payload;
+    try {
+      payload = JSON.parse(ev.dataTransfer.getData("text/plain"));
+    } catch {
+      return;
+    }
+    const { uid, summary, col: fromCol } = payload;
+    if (fromCol === toCol) return;
+    if (liveMode) {
+      try {
+        await move(uid, summary, fromCol, toCol);
+      } catch (e) {
+        console.warn("[kanban] move failed", e);
+      }
+    } else {
+      setMockState((cur) => {
+        const next = { ...cur };
+        const card = cur[fromCol].find((c) => c.uid === uid);
+        next[fromCol] = cur[fromCol].filter((c) => c.uid !== uid);
+        if (card) next[toCol] = [card, ...cur[toCol]];
+        return next;
+      });
+    }
   }
 
+  async function onAdd(colId, text) {
+    if (liveMode) {
+      await add(colId, text);
+    } else {
+      setMockState((cur) => ({
+        ...cur,
+        [colId]: [{ uid: `local-${Date.now()}`, summary: text, tag: "dev" }, ...cur[colId]],
+      }));
+    }
+  }
+
+  const eyebrowText = liveMode
+    ? `Kanban · ${cols.length} list${cols.length === 1 ? "" : "s"} · iCloud Reminders`
+    : "Kanban · todo.backlog · today · doing · done";
+  const metaText = liveMode ? "drag cards between columns" : "drag cards between columns · mock";
+
   return (
-    <Card
-      index={index}
-      eyebrow="Kanban · todo.backlog · today · doing · done"
-      title="Project board"
-      meta="drag cards between columns"
-    >
-      <div className="kanban">
-        {COLS.map((id) => {
-          const meta = GH_DATA.todo_lists[id];
-          const items = lists[id];
-          const isDone = id === "todo.done";
+    <Card index={index} eyebrow={eyebrowText} title="Project board" meta={metaText}>
+      <div
+        className="kanban"
+        style={{ gridTemplateColumns: `repeat(${Math.max(cols.length, 1)}, 1fr)` }}
+      >
+        {cols.map((col) => {
+          const isDone = isDoneCol(col);
           return (
             <div
-              key={id}
-              className={`kanban-col ${dragOver === id ? "drag-over" : ""}`}
-              onDragOver={(ev) => onDragOver(ev, id)}
-              onDragLeave={() => setDragOver((cur) => (cur === id ? null : cur))}
-              onDrop={(ev) => onDrop(ev, id)}
+              key={col.id}
+              className={`kanban-col ${dragOver === col.id ? "drag-over" : ""}`}
+              onDragOver={(ev) => onDragOver(ev, col.id)}
+              onDragLeave={() => setDragOver((cur) => (cur === col.id ? null : cur))}
+              onDrop={(ev) => onDrop(ev, col.id)}
             >
               <div className="kanban-col-head">
-                <span className="label">{meta.label}</span>
-                <span className="count">{items.length}</span>
+                <span className="label">{col.label}</span>
+                <span className="count">{col.items.length}</span>
               </div>
-              {items.map((c) => (
+              {col.items.map((c) => (
                 <div
                   key={c.uid}
                   className={`kanban-card ${isDone ? "done" : ""} ${draggingId === c.uid ? "dragging" : ""}`}
                   draggable
-                  onDragStart={(ev) => onDragStart(ev, c.uid, id)}
+                  onDragStart={(ev) => onDragStart(ev, c.uid, c.summary, col.id)}
                   onDragEnd={onDragEnd}
                 >
                   <div className="summary">{c.summary}</div>
-                  <div className="meta">
-                    <span className={`tag tag-${c.tag}`}>{c.tag}</span>
-                    {c.due && <span className="due">due · {c.due}</span>}
-                  </div>
+                  {(c.tag || c.due) && (
+                    <div className="meta">
+                      {c.tag && <span className={`tag tag-${c.tag}`}>{c.tag}</span>}
+                      {c.due && <span className="due">due · {c.due}</span>}
+                    </div>
+                  )}
                 </div>
               ))}
-              <button className="kanban-add">+ Add</button>
+              <KanbanAddInput onSubmit={(text) => onAdd(col.id, text)} />
             </div>
           );
         })}
