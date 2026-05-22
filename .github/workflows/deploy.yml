@@ -13,6 +13,7 @@ name: Deploy
 #   Variables:
 #     UI_BUCKET_NAME          — S3 bucket the UI is uploaded to
 #     CLOUDFRONT_DIST_ID      — CloudFront distribution to invalidate
+#     VITE_HA_URL             — Home Assistant base URL (embedded in bundle at build time)
 
 on:
   push:
@@ -45,6 +46,8 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          VITE_HA_URL: ${{ vars.VITE_HA_URL }}
         run: npm run build
 
       - name: Configure AWS credentials (OIDC)
