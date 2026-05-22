@@ -1680,6 +1680,7 @@ body.mode-night {
 
 .weekcal-col {
   position: relative;
+  overflow: hidden;
   border-left: 1px solid var(--rule);
   /* horizontal hour lines via repeating gradient */
   background: repeating-linear-gradient(
@@ -1741,6 +1742,30 @@ body.mode-night {
   padding: 3px 6px;
 }
 .weekcal-event.short .w { display: none; }
+
+/* Off-grid events — all-day, or fully outside the 07:00–22:00 visible
+   window. Render as a thin compact pill at top (before/all-day) or
+   bottom (after) of the day column. */
+.weekcal-offgrid {
+  position: absolute;
+  left: 4px; right: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--cal-color), transparent 82%);
+  border-left: 2px solid var(--cal-color);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  z-index: 2;
+}
+.weekcal-offgrid.before { top: 2px; }
+.weekcal-offgrid.after { bottom: 2px; }
+.weekcal-offgrid:hover { color: var(--ink); z-index: 6; }
 
 .weekcal-now {
   position: absolute;

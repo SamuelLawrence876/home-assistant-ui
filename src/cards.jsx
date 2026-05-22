@@ -2909,16 +2909,46 @@ export function WeeklyCalendarCard({ index = 0 }) {
             >
               {day === todayDow && showNow && <div className="weekcal-now" style={{ top: nowOffset }} />}
               {dayEvents.map((e) => {
-                const top = (e.start - startHour) * slotsPerHour * slotPx;
-                const h = (e.end - e.start) * slotsPerHour * slotPx;
-                const short = h < 36;
                 const calVar = calendars[e.cal]?.color || CAL_PALETTE[0];
+                const tooltip = `${e.title}\n${eventTimeLabel(e.start, e.end, e.allDay)}${e.where ? `\n${e.where}` : ""}`;
+
+                /* All-day and events fully outside the visible 07:00–22:00
+                   window become a thin pill at the top (before / all-day)
+                   or bottom (after) of the column. */
+                if (e.allDay) {
+                  return (
+                    <div key={e.id} className="weekcal-offgrid before" style={{ "--cal-color": calVar }} title={tooltip}>
+                      ⛶ {e.title}
+                    </div>
+                  );
+                }
+                if (e.end <= startHour) {
+                  return (
+                    <div key={e.id} className="weekcal-offgrid before" style={{ "--cal-color": calVar }} title={tooltip}>
+                      ↑ {eventTimeLabel(e.start, e.end)} · {e.title}
+                    </div>
+                  );
+                }
+                if (e.start >= endHour + 1) {
+                  return (
+                    <div key={e.id} className="weekcal-offgrid after" style={{ "--cal-color": calVar }} title={tooltip}>
+                      ↓ {eventTimeLabel(e.start, e.end)} · {e.title}
+                    </div>
+                  );
+                }
+
+                /* Partially or fully inside the visible range — clip to bounds. */
+                const visibleStart = Math.max(e.start, startHour);
+                const visibleEnd = Math.min(e.end, endHour + 1);
+                const top = (visibleStart - startHour) * slotsPerHour * slotPx;
+                const h = (visibleEnd - visibleStart) * slotsPerHour * slotPx;
+                const short = h < 36;
                 return (
                   <div
                     key={e.id}
                     className={`weekcal-event ${short ? "short" : ""}`}
                     style={{ top, height: h, "--cal-color": calVar }}
-                    title={`${e.title}\n${eventTimeLabel(e.start, e.end, e.allDay)}${e.where ? `\n${e.where}` : ""}`}
+                    title={tooltip}
                   >
                     <div className="t">{e.title}</div>
                     <div className="w">
