@@ -2544,38 +2544,39 @@ function ymd(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function NewEventDialog({ open, onClose, calendars, defaultCalendarId, onCreated }) {
+/* Mounted on demand by the parent — initial values are read once on mount,
+   so opening the dialog from a clicked time slot pre-fills date + time. */
+function NewEventDialog({ onClose, calendars, defaultCalendarId, initial, onCreated }) {
   const today = useMemo(() => new Date(), []);
-  const [title, setTitle] = useState("");
-  const [calendarId, setCalendarId] = useState(defaultCalendarId || "");
-  const [date, setDate] = useState(() => ymd(today));
-  const [allDay, setAllDay] = useState(false);
-  const [startTime, setStartTime] = useState(() => {
+  const defaultStart = useMemo(() => {
     const h = today.getHours();
     return `${String(Math.min(h + 1, 23)).padStart(2, "0")}:00`;
-  });
-  const [endTime, setEndTime] = useState(() => {
+  }, [today]);
+  const defaultEnd = useMemo(() => {
     const h = today.getHours();
     return `${String(Math.min(h + 2, 23)).padStart(2, "0")}:00`;
-  });
+  }, [today]);
+  const [title, setTitle] = useState("");
+  const [calendarId, setCalendarId] = useState(defaultCalendarId || "");
+  const [date, setDate] = useState(() => initial?.date || ymd(today));
+  const [allDay, setAllDay] = useState(false);
+  const [startTime, setStartTime] = useState(() => initial?.startTime || defaultStart);
+  const [endTime, setEndTime] = useState(() => initial?.endTime || defaultEnd);
   const [location, setLocation] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (open && !calendarId && defaultCalendarId) setCalendarId(defaultCalendarId);
-  }, [open, defaultCalendarId, calendarId]);
+    if (!calendarId && defaultCalendarId) setCalendarId(defaultCalendarId);
+  }, [defaultCalendarId, calendarId]);
 
   useEffect(() => {
-    if (!open) return;
     function onKey(e) {
       if (e.key === "Escape") onClose();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
+  }, [onClose]);
 
   const canSubmit = title.trim() && calendarId && !submitting;
 
@@ -2788,7 +2789,10 @@ export function WeeklyCalendarCard({ index = 0 }) {
     weekEnd.toISOString(),
   );
 
-  const [dialogOpen, setDialogOpen] = useState(false);
+  /* Dialog uses mount/unmount: `dialog === null` means closed.
+     `{ initial: { date, startTime, endTime } | null }` means open with
+     those pre-fills (null = today + next hour defaults). */
+  const [dialog, setDialog] = useState(null);
   const dialogCalendars = useMemo(
     () =>
       Object.entries(calendars).map(([entity_id, c]) => ({
@@ -2797,6 +2801,28 @@ export function WeeklyCalendarCard({ index = 0 }) {
       })),
     [calendars],
   );
+
+  /* Click anywhere in a day column → snap to nearest 30-min slot and
+     open the new-event dialog pre-filled with that day/time. */
+  function onColClick(ev, day) {
+    if (!liveMode) return;
+    const rect = ev.currentTarget.getBoundingClientRect();
+    const y = ev.clientY - rect.top;
+    const hourFloat = startHour + y / (slotsPerHour * slotPx);
+    const snapped = Math.floor(hourFloat * slotsPerHour) / slotsPerHour; // round down to 30 min
+    const start = Math.max(startHour, Math.min(snapped, endHour));
+    const end = Math.min(start + 1, 23.5);
+    const fmt = (h) => {
+      const hh = Math.floor(h);
+      const mm = Math.round((h - hh) * 60);
+      return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    };
+    const dayDate = new Date(weekStart);
+    dayDate.setDate(weekStart.getDate() + day);
+    setDialog({
+      initial: { date: ymd(dayDate), startTime: fmt(start), endTime: fmt(end) },
+    });
+  }
 
   /* Transform HA events → grid-positioned events the renderer expects. */
   const events = useMemo(() => {
@@ -2857,7 +2883,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
         liveMode ? (
           <button
             className="add-btn-mini"
-            onClick={() => setDialogOpen(true)}
+            onClick={() => setDialog({ initial: null })}
             aria-label="Add event"
           >
             + Add event
@@ -2865,13 +2891,15 @@ export function WeeklyCalendarCard({ index = 0 }) {
         ) : null
       }
     >
-      <NewEventDialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        calendars={dialogCalendars}
-        defaultCalendarId={calendarIds[0]}
-        onCreated={refresh}
-      />
+      {dialog && (
+        <NewEventDialog
+          onClose={() => setDialog(null)}
+          calendars={dialogCalendars}
+          defaultCalendarId={calendarIds[0]}
+          initial={dialog.initial}
+          onCreated={refresh}
+        />
+      )}
       <div className="weekcal">
         <div className="weekcal-head">
           <div className="corner" />
@@ -2900,12 +2928,13 @@ export function WeeklyCalendarCard({ index = 0 }) {
           return (
             <div
               key={day}
-              className={`weekcal-col ${day === todayDow ? "today" : ""}`}
+              className={`weekcal-col ${day === todayDow ? "today" : ""} ${liveMode ? "clickable" : ""}`}
               style={{
                 gridColumn: day + 2,
                 gridRow: "2 / span 1",
                 height: ((endHour - startHour) * slotsPerHour + 1) * slotPx,
               }}
+              onClick={(ev) => onColClick(ev, day)}
             >
               {day === todayDow && showNow && <div className="weekcal-now" style={{ top: nowOffset }} />}
               {dayEvents.map((e) => {
@@ -2915,23 +2944,27 @@ export function WeeklyCalendarCard({ index = 0 }) {
                 /* All-day and events fully outside the visible 07:00–22:00
                    window become a thin pill at the top (before / all-day)
                    or bottom (after) of the column. */
+                /* Existing-event divs swallow the click so the underlying
+                   column doesn't open the new-event dialog. */
+                const stop = (ev) => ev.stopPropagation();
+
                 if (e.allDay) {
                   return (
-                    <div key={e.id} className="weekcal-offgrid before" style={{ "--cal-color": calVar }} title={tooltip}>
+                    <div key={e.id} className="weekcal-offgrid before" style={{ "--cal-color": calVar }} title={tooltip} onClick={stop}>
                       ⛶ {e.title}
                     </div>
                   );
                 }
                 if (e.end <= startHour) {
                   return (
-                    <div key={e.id} className="weekcal-offgrid before" style={{ "--cal-color": calVar }} title={tooltip}>
+                    <div key={e.id} className="weekcal-offgrid before" style={{ "--cal-color": calVar }} title={tooltip} onClick={stop}>
                       ↑ {eventTimeLabel(e.start, e.end)} · {e.title}
                     </div>
                   );
                 }
                 if (e.start >= endHour + 1) {
                   return (
-                    <div key={e.id} className="weekcal-offgrid after" style={{ "--cal-color": calVar }} title={tooltip}>
+                    <div key={e.id} className="weekcal-offgrid after" style={{ "--cal-color": calVar }} title={tooltip} onClick={stop}>
                       ↓ {eventTimeLabel(e.start, e.end)} · {e.title}
                     </div>
                   );
@@ -2949,6 +2982,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
                     className={`weekcal-event ${short ? "short" : ""}`}
                     style={{ top, height: h, "--cal-color": calVar }}
                     title={tooltip}
+                    onClick={stop}
                   >
                     <div className="t">{e.title}</div>
                     <div className="w">
@@ -3059,7 +3093,7 @@ export function KanbanBoardCard({ index = 0 }) {
   );
   const liveMode = liveTodoIds.length > 0;
 
-  const { lists: liveLists, add, move } = useTodoLists(liveTodoIds);
+  const { lists: liveLists, add, move, remove } = useTodoLists(liveTodoIds);
 
   /* Mock fallback — same shape as before. */
   const [mockLists] = useState(() => {
@@ -3072,6 +3106,16 @@ export function KanbanBoardCard({ index = 0 }) {
   const [dragOver, setDragOver] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
 
+  /* Apple seeds new/legacy Reminders lists with two placeholder VTODOs
+     that aren't real tasks. Filter them out so they don't pollute the
+     kanban — user has no reason to see them. */
+  function isAppleSystemItem(it) {
+    if (it.description?.includes("support.apple.com/HT210220")) return true;
+    if (it.summary === "Where are my reminders?") return true;
+    if (it.summary === "The creator of this list has upgraded these reminders.") return true;
+    return false;
+  }
+
   /* Unified column shape for the renderer:
        { id, label, items: [{uid, summary, status?, tag?, due?}] } */
   const cols = useMemo(() => {
@@ -3079,11 +3123,13 @@ export function KanbanBoardCard({ index = 0 }) {
       return liveTodoEntities.map((e) => ({
         id: e.entity_id,
         label: (e.attributes?.friendly_name || e.entity_id.replace(/^todo\./, "")).replace(/\s*⚠️\s*$/, ""),
-        items: (liveLists[e.entity_id]?.items || []).map((it) => ({
-          uid: it.uid,
-          summary: it.summary,
-          status: it.status,
-        })),
+        items: (liveLists[e.entity_id]?.items || [])
+          .filter((it) => !isAppleSystemItem(it))
+          .map((it) => ({
+            uid: it.uid,
+            summary: it.summary,
+            status: it.status,
+          })),
       }));
     }
     return MOCK_KANBAN_COLS.map((id) => ({
@@ -3151,6 +3197,21 @@ export function KanbanBoardCard({ index = 0 }) {
     }
   }
 
+  async function onRemove(colId, uid) {
+    if (liveMode) {
+      try {
+        await remove(colId, uid);
+      } catch (e) {
+        console.warn("[kanban] remove failed", e);
+      }
+    } else {
+      setMockState((cur) => ({
+        ...cur,
+        [colId]: cur[colId].filter((c) => c.uid !== uid),
+      }));
+    }
+  }
+
   const eyebrowText = liveMode
     ? `Kanban · ${cols.length} list${cols.length === 1 ? "" : "s"} · iCloud Reminders`
     : "Kanban · todo.backlog · today · doing · done";
@@ -3184,6 +3245,17 @@ export function KanbanBoardCard({ index = 0 }) {
                   onDragStart={(ev) => onDragStart(ev, c.uid, c.summary, col.id)}
                   onDragEnd={onDragEnd}
                 >
+                  <button
+                    className="kanban-card-x"
+                    aria-label="Delete"
+                    title="Delete"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      onRemove(col.id, c.uid);
+                    }}
+                  >
+                    ×
+                  </button>
                   <div className="summary">{c.summary}</div>
                   {(c.tag || c.due) && (
                     <div className="meta">

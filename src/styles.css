@@ -1691,6 +1691,27 @@ body.mode-night {
     var(--rule) var(--col-h)
   );
 }
+.weekcal-col.clickable {
+  cursor: copy;
+}
+.weekcal-col.clickable:hover::before {
+  content: "+ click to add event";
+  position: absolute;
+  top: 6px; left: 6px; right: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  animation: weekcal-hint-fade 0.2s ease forwards;
+  z-index: 1;
+}
+@keyframes weekcal-hint-fade {
+  to { opacity: 0.7; }
+}
 .weekcal-col.today {
   background:
     linear-gradient(180deg, color-mix(in oklch, var(--accent), transparent 96%), color-mix(in oklch, var(--accent), transparent 98%)),
@@ -1862,6 +1883,26 @@ body.mode-night {
 .kanban-card:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+}
+.kanban-card-x {
+  position: absolute;
+  top: 4px; right: 4px;
+  width: 20px; height: 20px;
+  padding: 0; line-height: 1;
+  background: transparent;
+  border: 0;
+  color: var(--ink-3);
+  font-size: 16px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.kanban-card:hover .kanban-card-x { opacity: 1; }
+.kanban-card-x:hover {
+  color: var(--ink);
+  background: var(--rule);
 }
 .kanban-card .summary {
   font-size: 13px;
