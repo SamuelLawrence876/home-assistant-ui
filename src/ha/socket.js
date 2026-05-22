@@ -42,11 +42,14 @@ function setStatus(next) {
   connectionListeners.forEach((cb) => cb(next));
 }
 
+let _notifiedCount = 0;
 function notify(entityId) {
   const subs = subscribers.get(entityId);
   if (!subs) return;
   const state = states.get(entityId);
   subs.forEach((cb) => cb(state));
+  _notifiedCount++;
+  if (_notifiedCount <= 5) console.info("[ha-ws] notify", entityId, "subs=", subs.size);
 }
 
 function applyEntities(entities) {
@@ -152,9 +155,12 @@ export function getAllStates() {
   return Array.from(states.values());
 }
 
+let _subCount = 0;
 export function subscribe(entityId, callback) {
   if (!subscribers.has(entityId)) subscribers.set(entityId, new Set());
   subscribers.get(entityId).add(callback);
+  _subCount++;
+  if (_subCount <= 10) console.info("[ha-ws] subscribe", entityId, "statesHas=", states.has(entityId), "statesSize=", states.size);
   if (states.has(entityId)) callback(states.get(entityId));
   return () => {
     const subs = subscribers.get(entityId);
