@@ -201,8 +201,10 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
   const sunY = cy - r * Math.sin(angle);
   const sunOnArc = phase >= 0 && phase <= 1;
 
-  const sunrise = GH_DATA.sun["sensor.sun_next_rising"].state;
-  const sunset = GH_DATA.sun["sensor.sun_next_setting"].state;
+  const liveRising = useEntity("sensor.sun_next_rising");
+  const liveSetting = useEntity("sensor.sun_next_setting");
+  const sunrise = liveRising?.state || GH_DATA.sun["sensor.sun_next_rising"].state;
+  const sunset = liveSetting?.state || GH_DATA.sun["sensor.sun_next_setting"].state;
 
   return (
     <Card
@@ -349,20 +351,26 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
    Presence
    ----------------------------------------------------------------*/
 export function PresenceCard({ index = 0 }) {
-  const p = GH_DATA.presence["person.samuel_lawrence"];
-  const dev = GH_DATA.presence["device_tracker.sams_iphone"];
+  const livePerson = useEntity("person.samuel_lawrence");
+  const liveDev = useEntity("device_tracker.sams_iphone");
+  const p = livePerson || GH_DATA.presence["person.samuel_lawrence"];
+  const dev = liveDev || GH_DATA.presence["device_tracker.sams_iphone"];
+  const home = p.state === "home";
+  const battery = dev.attributes?.battery_level;
   return (
     <Card index={index} eyebrow="Presence · person.samuel_lawrence">
       <div className="presence-row">
         <div className="presence-avatar">S</div>
         <div className="presence-info">
-          <div className="nm">Samuel</div>
-          <div className="where">{p.state === "home" ? "Home · iPhone in range" : "Away"}</div>
+          <div className="nm">{p.attributes?.friendly_name || "Samuel"}</div>
+          <div className="where">
+            {home ? "Home · iPhone in range" : p.state === "not_home" ? "Away" : p.state}
+          </div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div className="eyebrow" style={{ fontSize: 9 }}>Battery</div>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 15, marginTop: 4 }}>
-            {dev.attributes.battery_level}%
+            {battery != null ? `${battery}%` : "—"}
           </div>
         </div>
       </div>
@@ -583,10 +591,14 @@ export function VacuumCard({ index = 0 }) {
   const liveVac = useEntity("vacuum.roborock_s8");
   const liveBat = useEntity("sensor.roborock_s8_battery");
   const liveStatus = useEntity("sensor.roborock_s8_status");
+  const liveLast = useEntity("sensor.roborock_s8_last_clean_end");
+  const liveMap = useEntity("select.roborock_s8_selected_map");
   const v = GH_DATA.vacuum;
   const battery = Number(liveBat?.state ?? v["sensor.roborock_s8_battery"].state);
   const status = liveStatus?.state ?? v["sensor.roborock_s8_status"].state;
-  const last = v["sensor.roborock_s8_last_clean_end"].state;
+  const last = formatRelativeIso(liveLast?.state) || v["sensor.roborock_s8_last_clean_end"].state;
+  const mapOptions = liveMap?.attributes?.options || [];
+  const currentMap = liveMap?.state;
   const [state, setState] = useState(liveVac?.state ?? v["vacuum.roborock_s8"].state);
   const unavailable = liveVac?.state === "unavailable";
   useEffect(() => {
@@ -600,6 +612,13 @@ export function VacuumCard({ index = 0 }) {
   function dock() {
     setState("returning");
     callService("vacuum", "return_to_base", { entity_id: "vacuum.roborock_s8" }).catch(() => setState("cleaning"));
+  }
+  function fullClean() {
+    setState("cleaning");
+    callService("button", "press", { entity_id: "button.roborock_s8_full_cleaning" }).catch(() => setState(liveVac?.state || "docked"));
+  }
+  function pickMap(opt) {
+    callService("select", "select_option", { entity_id: "select.roborock_s8_selected_map", option: opt }).catch(() => {});
   }
 
   return (
@@ -664,15 +683,33 @@ export function VacuumCard({ index = 0 }) {
         </div>
         <div>
           <div className="k">Action</div>
-          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+          <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
             {cleaning ? (
               <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
             ) : (
-              <button className="btn accent" onClick={start} disabled={unavailable}>Start</button>
+              <>
+                <button className="btn accent" onClick={start} disabled={unavailable}>Start</button>
+                <button className="btn" onClick={fullClean} disabled={unavailable}>Full</button>
+              </>
             )}
           </div>
         </div>
       </div>
+      {mapOptions.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <span className="eyebrow" style={{ fontSize: 9 }}>Map</span>
+          {mapOptions.map((opt) => (
+            <button
+              key={opt}
+              className={`preset ${currentMap === opt ? "on" : ""}`}
+              onClick={() => pickMap(opt)}
+              disabled={unavailable}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
@@ -2551,5 +2588,92 @@ export function StatBox({ index = 0, eyebrow, value, unit, caption, pct, color }
         </div>
       )}
     </Card>
+  );
+}
+
+/* Live-wired StatBox variants for Overview. Each subscribes to its own
+   entities so a single tile updating doesn't re-render the others. */
+
+export function BambuStatBox({ index = 0 }) {
+  const PREFIX = "x1c_00m09d522400385";
+  const liveProg = useEntity(`sensor.${PREFIX}_print_progress`);
+  const liveRem = useEntity(`sensor.${PREFIX}_remaining_time`);
+  const liveStage = useEntity(`sensor.${PREFIX}_current_stage`);
+  const p = GH_DATA.printer;
+  const prog = Number(liveProg?.state ?? p[`sensor.${PREFIX}_print_progress`].state);
+  const rem = Number(liveRem?.state ?? p[`sensor.${PREFIX}_remaining_time`].state);
+  const file = liveProg?.attributes?.file_name || p.file;
+  const stage = liveStage?.state ?? p[`sensor.${PREFIX}_current_stage`].state;
+  const idle = !rem && (stage === "idle" || stage === "unknown");
+  return (
+    <StatBox
+      index={index}
+      eyebrow="Bambu X1C"
+      value={idle ? "idle" : prog}
+      unit={idle ? null : "%"}
+      caption={idle ? stage : `${(file || "").slice(0, 16)} · ${rem}m`}
+      pct={idle ? 0 : prog}
+      color="var(--accent-2)"
+    />
+  );
+}
+
+export function LevoitStatBox({ index = 0 }) {
+  const liveQ = useEntity("sensor.core_300s_series_air_quality");
+  const livePm = useEntity("sensor.core_300s_series_pm2_5");
+  const a = GH_DATA.air;
+  const q = liveQ?.state ?? a["sensor.core_300s_series_air_quality"].state;
+  const pm = Number(livePm?.state ?? a["sensor.core_300s_series_pm2_5"].state);
+  // PM2.5 to a 0-100 "goodness" score: 0µg=100, 35µg=0 (WHO unhealthy).
+  const pct = Math.max(0, Math.min(100, Math.round(100 - (pm / 35) * 100)));
+  return (
+    <StatBox
+      index={index}
+      eyebrow="Levoit · air"
+      value={q}
+      caption={`PM 2.5 · ${pm} µg`}
+      pct={pct}
+      color={pm < 12 ? "var(--good)" : pm < 35 ? "var(--accent-2)" : "var(--bad)"}
+    />
+  );
+}
+
+export function VacuumStatBox({ index = 0 }) {
+  const liveBat = useEntity("sensor.roborock_s8_battery");
+  const liveStatus = useEntity("sensor.roborock_s8_status");
+  const v = GH_DATA.vacuum;
+  const bat = Number(liveBat?.state ?? v["sensor.roborock_s8_battery"].state);
+  const status = liveStatus?.state ?? v["sensor.roborock_s8_status"].state;
+  return (
+    <StatBox
+      index={index}
+      eyebrow="Gregory · vacuum"
+      value={bat}
+      unit="%"
+      caption={status ? `${status[0].toUpperCase()}${status.slice(1)}` : "Docked"}
+      pct={bat}
+      color={bat >= 90 ? "var(--good)" : bat >= 30 ? "var(--accent-2)" : "var(--bad)"}
+    />
+  );
+}
+
+export function AdGuardStatBox({ index = 0 }) {
+  const liveRatio = useEntity("sensor.adguard_home_dns_queries_blocked_ratio");
+  const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
+  const liveTotal = useEntity("sensor.adguard_home_dns_queries");
+  const a = GH_DATA.adguard;
+  const ratio = Number(liveRatio?.state ?? a["sensor.adguard_home_dns_queries_blocked_ratio"].state);
+  const blocked = Number(liveBlocked?.state ?? a["sensor.adguard_home_dns_queries_blocked"].state);
+  const total = Number(liveTotal?.state ?? a["sensor.adguard_home_dns_queries"].state);
+  return (
+    <StatBox
+      index={index}
+      eyebrow="AdGuard"
+      value={ratio.toFixed(1)}
+      unit="%"
+      caption={`${blocked.toLocaleString()} / ${total.toLocaleString()}`}
+      pct={ratio}
+      color="var(--bad)"
+    />
   );
 }

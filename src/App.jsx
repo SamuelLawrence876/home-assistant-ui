@@ -30,6 +30,10 @@ import {
   EntityHealthCard,
   ShoppingCard,
   StatBox,
+  BambuStatBox,
+  LevoitStatBox,
+  VacuumStatBox,
+  AdGuardStatBox,
   LightCard,
   FanCard,
   QuickLightsCard,
@@ -189,9 +193,6 @@ function MullionGrid({ lean }) {
    Views (tab content)
    ----------------------------------------------------------------*/
 function OverviewView({ viewport, sky }) {
-  const adg = GH_DATA.adguard;
-  const air = GH_DATA.air;
-  const printer = GH_DATA.printer;
   return (
     <div className="grid">
       <div className="col-8">
@@ -212,49 +213,10 @@ function OverviewView({ viewport, sky }) {
         <ShoppingCard index={5} />
       </div>
 
-      <div className="col-3">
-        <StatBox
-          index={6}
-          eyebrow="Bambu X1C"
-          value={printer["sensor.x1c_00m09d522400385_print_progress"].state}
-          unit="%"
-          caption={`${printer.file.slice(0, 16)} · ${printer["sensor.x1c_00m09d522400385_remaining_time"].state}m`}
-          pct={printer["sensor.x1c_00m09d522400385_print_progress"].state}
-          color="var(--accent-2)"
-        />
-      </div>
-      <div className="col-3">
-        <StatBox
-          index={7}
-          eyebrow="Levoit · air"
-          value="excellent"
-          caption={`PM 2.5 · ${air["sensor.core_300s_series_pm2_5"].state} µg`}
-          pct={96}
-          color="var(--good)"
-        />
-      </div>
-      <div className="col-3">
-        <StatBox
-          index={8}
-          eyebrow="Gregory · vacuum"
-          value={GH_DATA.vacuum["sensor.roborock_s8_battery"].state}
-          unit="%"
-          caption="Docked · charging"
-          pct={100}
-          color="var(--good)"
-        />
-      </div>
-      <div className="col-3">
-        <StatBox
-          index={9}
-          eyebrow="AdGuard"
-          value={adg["sensor.adguard_home_dns_queries_blocked_ratio"].state.toFixed(1)}
-          unit="%"
-          caption={`${adg["sensor.adguard_home_dns_queries_blocked"].state} / ${adg["sensor.adguard_home_dns_queries"].state}`}
-          pct={adg["sensor.adguard_home_dns_queries_blocked_ratio"].state}
-          color="var(--bad)"
-        />
-      </div>
+      <div className="col-3"><BambuStatBox index={6} /></div>
+      <div className="col-3"><LevoitStatBox index={7} /></div>
+      <div className="col-3"><VacuumStatBox index={8} /></div>
+      <div className="col-3"><AdGuardStatBox index={9} /></div>
     </div>
   );
 }
@@ -266,10 +228,9 @@ function LightsView() {
       <div className="col-6"><LightCard index={1} entityId="light.bedroom" /></div>
       <div className="col-6"><LightCard index={2} entityId="light.desk_strip" /></div>
       <div className="col-6"><PixooCard index={3} /></div>
-      <div className="col-12"><FanCard index={4} /></div>
 
       <div className="col-12">
-        <Card index={5} eyebrow="Future · 4 flood lights" title="Flood lights · coming soon" meta="placeholder">
+        <Card index={4} eyebrow="Future · 4 flood lights" title="Flood lights · coming soon" meta="placeholder">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
             {["light.flood_1", "light.flood_2", "light.flood_3", "light.flood_4"].map((id) => {
               const l = GH_DATA.lights[id];
@@ -339,7 +300,8 @@ function ClimateView({ sky }) {
     <div className="grid">
       <div className="col-7"><AirPurifierCard index={0} /></div>
       <div className="col-5"><HeaterCard index={1} /></div>
-      <div className="col-12"><WeatherSunHero index={2} sky={sky} /></div>
+      <div className="col-12"><FanCard index={2} /></div>
+      <div className="col-12"><WeatherSunHero index={3} sky={sky} /></div>
     </div>
   );
 }
