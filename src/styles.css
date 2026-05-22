@@ -1907,6 +1907,91 @@ body.viewport-phone .kanban-col { scroll-snap-align: start; }
 body.viewport-phone .weekcal {
   --col-h: 22px;
 }
+/* ----------------------------------------------------------------
+   Modal — simple centered dialog (used by NewEventDialog).
+   ----------------------------------------------------------------*/
+.modal-scrim {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.modal {
+  background: var(--glass-bg);
+  border: 1px solid var(--rule);
+  border-radius: 16px;
+  width: min(440px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+.modal h3 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.modal-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.modal-row .lbl {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.modal-row input, .modal-row select {
+  background: var(--glass-bg-2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.modal-row input:focus, .modal-row select:focus {
+  border-color: var(--ink-3);
+}
+.modal-row.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.modal-row.two > div { display: flex; flex-direction: column; gap: 4px; }
+.modal-toggle-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px;
+  font-size: 12px; color: var(--ink-2);
+}
+.modal-toggle-row input { width: 16px; height: 16px; accent-color: var(--ink); }
+.modal-actions {
+  display: flex; justify-content: flex-end; gap: 10px;
+  margin-top: 14px;
+}
+.modal-error {
+  font-size: 11px;
+  color: oklch(0.62 0.16 25);
+  margin-top: 4px;
+  font-family: var(--font-mono);
+}
+
+/* Small "+ Add" affordance reused in card eyebrow area */
+.add-btn-mini {
+  background: transparent;
+  border: 1px dashed var(--rule);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+.add-btn-mini:hover { color: var(--ink); border-color: var(--ink-3); }
+
 .gh-slider {
   -webkit-appearance: none;
   appearance: none;

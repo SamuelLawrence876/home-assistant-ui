@@ -2419,6 +2419,164 @@ export function RecentCard({ index = 0 }) {
    ================================================================*/
 const DOWS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/* "2026-05-22T14:30:00+01:00" style — HA accepts ISO with offset and
+   stores the absolute instant correctly. Avoid bare local strings since
+   HA's interpretation depends on the calendar's TZ. */
+function toLocalISOWithOffset(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const offMin = -d.getTimezoneOffset();
+  const sign = offMin >= 0 ? "+" : "-";
+  const absOff = Math.abs(offMin);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${sign}${pad(Math.floor(absOff / 60))}:${pad(absOff % 60)}`;
+}
+
+function ymd(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function NewEventDialog({ open, onClose, calendars, defaultCalendarId, onCreated }) {
+  const today = useMemo(() => new Date(), []);
+  const [title, setTitle] = useState("");
+  const [calendarId, setCalendarId] = useState(defaultCalendarId || "");
+  const [date, setDate] = useState(() => ymd(today));
+  const [allDay, setAllDay] = useState(false);
+  const [startTime, setStartTime] = useState(() => {
+    const h = today.getHours();
+    return `${String(Math.min(h + 1, 23)).padStart(2, "0")}:00`;
+  });
+  const [endTime, setEndTime] = useState(() => {
+    const h = today.getHours();
+    return `${String(Math.min(h + 2, 23)).padStart(2, "0")}:00`;
+  });
+  const [location, setLocation] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (open && !calendarId && defaultCalendarId) setCalendarId(defaultCalendarId);
+  }, [open, defaultCalendarId, calendarId]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const canSubmit = title.trim() && calendarId && !submitting;
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const data = { summary: title.trim() };
+      if (location.trim()) data.location = location.trim();
+      if (allDay) {
+        data.start_date = date;
+        const d = new Date(`${date}T00:00:00`);
+        d.setDate(d.getDate() + 1);
+        data.end_date = ymd(d);
+      } else {
+        const [sh, sm] = startTime.split(":").map(Number);
+        const [eh, em] = endTime.split(":").map(Number);
+        const sd = new Date(`${date}T00:00:00`);
+        sd.setHours(sh, sm, 0, 0);
+        const ed = new Date(`${date}T00:00:00`);
+        ed.setHours(eh, em, 0, 0);
+        if (ed <= sd) {
+          setError("End time must be after start time.");
+          setSubmitting(false);
+          return;
+        }
+        data.start_date_time = toLocalISOWithOffset(sd);
+        data.end_date_time = toLocalISOWithOffset(ed);
+      }
+      await callService("calendar", "create_event", data, { entity_id: calendarId });
+      setTitle("");
+      setLocation("");
+      onCreated?.();
+      onClose();
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="modal-scrim" onMouseDown={onClose}>
+      <form className="modal" onSubmit={handleSubmit} onMouseDown={(e) => e.stopPropagation()}>
+        <h3>New event</h3>
+
+        <div className="modal-row">
+          <span className="lbl">Title</span>
+          <input
+            autoFocus
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Coffee with Alex"
+            required
+          />
+        </div>
+
+        <div className="modal-row">
+          <span className="lbl">Calendar</span>
+          <select value={calendarId} onChange={(e) => setCalendarId(e.target.value)} required>
+            {calendars.map((c) => (
+              <option key={c.entity_id} value={c.entity_id}>{c.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <label className="modal-toggle-row">
+          <input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} />
+          All-day
+        </label>
+
+        <div className="modal-row">
+          <span className="lbl">Date</span>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+        </div>
+
+        {!allDay && (
+          <div className="modal-row two">
+            <div>
+              <span className="lbl">Start</span>
+              <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
+            </div>
+            <div>
+              <span className="lbl">End</span>
+              <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
+            </div>
+          </div>
+        )}
+
+        <div className="modal-row">
+          <span className="lbl">Location (optional)</span>
+          <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} />
+        </div>
+
+        {error && <div className="modal-error">{error}</div>}
+
+        <div className="modal-actions">
+          <button type="button" className="btn" onClick={onClose} disabled={submitting}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={!canSubmit}>
+            {submitting ? "Saving…" : "Create event"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /* 4-var palette defined in styles.css — cycled per live calendar entity */
 const CAL_PALETTE = [
   "var(--cal-work)",
@@ -2515,10 +2673,20 @@ export function WeeklyCalendarCard({ index = 0 }) {
   }, [liveMode, calendarEntities, mock.calendars]);
 
   /* Fetch this week's events from HA's REST calendar API. */
-  const { events: liveEventsRaw, loading } = useCalendarEvents(
+  const { events: liveEventsRaw, loading, refresh } = useCalendarEvents(
     liveMode ? calendarIds : [],
     weekStart.toISOString(),
     weekEnd.toISOString(),
+  );
+
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const dialogCalendars = useMemo(
+    () =>
+      Object.entries(calendars).map(([entity_id, c]) => ({
+        entity_id,
+        label: c.label,
+      })),
+    [calendars],
   );
 
   /* Transform HA events → grid-positioned events the renderer expects. */
@@ -2576,7 +2744,25 @@ export function WeeklyCalendarCard({ index = 0 }) {
       eyebrow={`Calendar · week of ${weekStartISO}`}
       title="This week"
       meta={metaText}
+      headRight={
+        liveMode ? (
+          <button
+            className="add-btn-mini"
+            onClick={() => setDialogOpen(true)}
+            aria-label="Add event"
+          >
+            + Add event
+          </button>
+        ) : null
+      }
     >
+      <NewEventDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        calendars={dialogCalendars}
+        defaultCalendarId={calendarIds[0]}
+        onCreated={refresh}
+      />
       <div className="weekcal">
         <div className="weekcal-head">
           <div className="corner" />
