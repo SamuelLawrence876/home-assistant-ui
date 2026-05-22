@@ -3066,6 +3066,21 @@ export function WeeklyCalendarCard({ index = 0 }) {
 
 const MOCK_KANBAN_COLS = ["todo.backlog", "todo.today", "todo.doing", "todo.done"];
 
+/* Canonical kanban columns. Always rendered, in this order. If an iCloud
+   Reminders list with a matching name (case-insensitive) exists, its
+   contents fill the column; otherwise the column shows a placeholder
+   with instructions to create that list on the iPhone. */
+const CANONICAL_KANBAN_COLS = [
+  { label: "Backlog", aliases: ["backlog"] },
+  { label: "Today", aliases: ["today"] },
+  { label: "Doing", aliases: ["doing", "in progress", "in-progress"] },
+  { label: "Done", aliases: ["done", "completed"] },
+];
+
+function normalizeListName(s) {
+  return (s || "").toLowerCase().replace(/\s*⚠️\s*$/, "").trim();
+}
+
 function KanbanAddInput({ onSubmit }) {
   const [active, setActive] = useState(false);
   const [value, setValue] = useState("");
@@ -3166,20 +3181,51 @@ export function KanbanBoardCard({ index = 0 }) {
   }
 
   /* Unified column shape for the renderer:
-       { id, label, items: [{uid, summary, status?, tag?, due?}] } */
+       { id, label, items, isPlaceholder?, isExtra? }
+     Live mode ALWAYS includes the 4 canonical columns; missing ones
+     render as placeholders. Any other iCloud lists the user has show
+     up as extra columns after the canonical four. */
   const cols = useMemo(() => {
     if (liveMode) {
-      return liveTodoEntities.map((e) => ({
-        id: e.entity_id,
-        label: (e.attributes?.friendly_name || e.entity_id.replace(/^todo\./, "")).replace(/\s*⚠️\s*$/, ""),
-        items: (liveLists[e.entity_id]?.items || [])
-          .filter((it) => !isAppleSystemItem(it))
-          .map((it) => ({
-            uid: it.uid,
-            summary: it.summary,
-            status: it.status,
-          })),
-      }));
+      const matchedIds = new Set();
+      const out = [];
+      for (const canonical of CANONICAL_KANBAN_COLS) {
+        const match = liveTodoEntities.find((e) => {
+          const name = normalizeListName(e.attributes?.friendly_name || e.entity_id.replace(/^todo\./, ""));
+          return canonical.aliases.includes(name);
+        });
+        if (match) {
+          matchedIds.add(match.entity_id);
+          out.push({
+            id: match.entity_id,
+            label: canonical.label,
+            items: (liveLists[match.entity_id]?.items || [])
+              .filter((it) => !isAppleSystemItem(it))
+              .map((it) => ({ uid: it.uid, summary: it.summary, status: it.status })),
+          });
+        } else {
+          out.push({
+            id: `placeholder:${canonical.label.toLowerCase()}`,
+            label: canonical.label,
+            items: [],
+            isPlaceholder: true,
+          });
+        }
+      }
+      /* Anything the user has that wasn't matched to a canonical (e.g. their
+         default "Reminders" list) — keep it visible to the right. */
+      for (const e of liveTodoEntities) {
+        if (matchedIds.has(e.entity_id)) continue;
+        out.push({
+          id: e.entity_id,
+          label: (e.attributes?.friendly_name || e.entity_id.replace(/^todo\./, "")).replace(/\s*⚠️\s*$/, ""),
+          isExtra: true,
+          items: (liveLists[e.entity_id]?.items || [])
+            .filter((it) => !isAppleSystemItem(it))
+            .map((it) => ({ uid: it.uid, summary: it.summary, status: it.status })),
+        });
+      }
+      return out;
     }
     return MOCK_KANBAN_COLS.map((id) => ({
       id,
@@ -3261,8 +3307,11 @@ export function KanbanBoardCard({ index = 0 }) {
     }
   }
 
+  const placeholderCount = cols.filter((c) => c.isPlaceholder).length;
   const eyebrowText = liveMode
-    ? `Kanban · ${cols.length} list${cols.length === 1 ? "" : "s"} · iCloud Reminders`
+    ? placeholderCount > 0
+      ? `Kanban · ${cols.length - placeholderCount}/${CANONICAL_KANBAN_COLS.length} canonical lists wired · iCloud Reminders`
+      : `Kanban · iCloud Reminders`
     : "Kanban · todo.backlog · today · doing · done";
   const metaText = liveMode ? "drag cards between columns" : "drag cards between columns · mock";
 
@@ -3274,10 +3323,26 @@ export function KanbanBoardCard({ index = 0 }) {
       >
         {cols.map((col) => {
           const isDone = isDoneCol(col);
+          if (col.isPlaceholder) {
+            return (
+              <div key={col.id} className="kanban-col placeholder">
+                <div className="kanban-col-head">
+                  <span className="label">{col.label}</span>
+                  <span className="count">—</span>
+                </div>
+                <div className="kanban-placeholder-body">
+                  <div className="kanban-placeholder-icon">+</div>
+                  <div className="kanban-placeholder-msg">
+                    Create a list named <strong>{col.label}</strong> in the iPhone Reminders app to wire this column.
+                  </div>
+                </div>
+              </div>
+            );
+          }
           return (
             <div
               key={col.id}
-              className={`kanban-col ${dragOver === col.id ? "drag-over" : ""}`}
+              className={`kanban-col ${col.isExtra ? "extra" : ""} ${dragOver === col.id ? "drag-over" : ""}`}
               onDragOver={(ev) => onDragOver(ev, col.id)}
               onDragLeave={() => setDragOver((cur) => (cur === col.id ? null : cur))}
               onDrop={(ev) => onDrop(ev, col.id)}

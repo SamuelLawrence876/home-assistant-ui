@@ -1958,6 +1958,54 @@ body.mode-night {
 .tag-integration { --tag-color: oklch(0.55 0.12 80); }
 .tag-automation  { --tag-color: oklch(0.50 0.15 200); }
 
+/* Placeholder column shown when an iCloud Reminders list with the
+   canonical name hasn't been created yet. Visually muted so it reads
+   as "waiting" rather than "active." */
+.kanban-col.placeholder {
+  background: transparent;
+  border: 1px dashed var(--rule);
+}
+.kanban-col.placeholder .kanban-col-head {
+  opacity: 0.55;
+}
+.kanban-placeholder-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+  padding: 20px 12px;
+  color: var(--ink-3);
+  min-height: 140px;
+}
+.kanban-placeholder-icon {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px dashed var(--rule);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  color: var(--ink-4);
+}
+.kanban-placeholder-msg {
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  max-width: 18ch;
+}
+.kanban-placeholder-msg strong {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+/* "Extra" columns — user's other iCloud lists that aren't one of the
+   canonical four. Visually de-emphasized header so the canonical four
+   stay the focal point. */
+.kanban-col.extra .kanban-col-head .label {
+  font-style: italic;
+  opacity: 0.85;
+}
+
 /* Add-card affordance at bottom of column */
 .kanban-add {
   width: 100%;
