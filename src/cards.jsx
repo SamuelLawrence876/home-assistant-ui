@@ -7,6 +7,7 @@ import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
 import { useEntity, useEntitiesByDomain } from "./ha/useEntity.js";
 import { callService, imageUrl } from "./ha/client.js";
+import { useCalendarEvents } from "./ha/useCalendarEvents.js";
 
 /* ----------------------------------------------------------------
    Small helpers
@@ -2418,16 +2419,126 @@ export function RecentCard({ index = 0 }) {
    ================================================================*/
 const DOWS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/* 4-var palette defined in styles.css — cycled per live calendar entity */
+const CAL_PALETTE = [
+  "var(--cal-work)",
+  "var(--cal-personal)",
+  "var(--cal-home)",
+  "var(--cal-family)",
+];
+
+/* HA event → { day, start, end } in the visible week's local time.
+   `start`/`end` are floats (hours, e.g. 14.5 = 2:30pm).
+   `day` is 0-6 where 0 = Monday. Events outside [0,6] are dropped. */
+function haEventToGridPos(ev, weekStartLocal) {
+  const isAllDay = !ev.start?.dateTime;
+  const startStr = ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00` : null);
+  const endStr = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00` : null);
+  if (!startStr || !endStr) return null;
+  const sd = new Date(startStr);
+  const ed = new Date(endStr);
+  if (isNaN(sd) || isNaN(ed)) return null;
+
+  // Day index relative to Monday-of-week, in local time.
+  const dayMs = 24 * 3600 * 1000;
+  const sLocalMidnight = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate()).getTime();
+  const wsMidnight = weekStartLocal.getTime();
+  const day = Math.round((sLocalMidnight - wsMidnight) / dayMs);
+  if (day < 0 || day > 6) return null;
+
+  if (isAllDay) {
+    // Render all-day events as a thin top-of-day bar so they're visible
+    // without dominating the column.
+    return { day, start: 0, end: 0.5, allDay: true };
+  }
+  const start = sd.getHours() + sd.getMinutes() / 60;
+  const sameDay =
+    ed.getFullYear() === sd.getFullYear() &&
+    ed.getMonth() === sd.getMonth() &&
+    ed.getDate() === sd.getDate();
+  const end = sameDay ? ed.getHours() + ed.getMinutes() / 60 : 24;
+  return { day, start, end, allDay: false };
+}
+
 export function WeeklyCalendarCard({ index = 0 }) {
-  const s = GH_DATA.schedule;
+  const mock = GH_DATA.schedule;
   const startHour = 7;
   const endHour = 22;
   const slotsPerHour = 2;
   const slotPx = 26;
 
-  const weekStart = new Date(s.week_start_iso + "T00:00:00");
-  const today = new Date(s.today_iso + "T00:00:00");
+  /* Today / this-week boundaries, computed live (not from mock today_iso). */
+  const today = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+  const weekStart = useMemo(() => {
+    const d = new Date(today);
+    const dow = (d.getDay() + 6) % 7; // Mon=0
+    d.setDate(d.getDate() - dow);
+    return d;
+  }, [today]);
+  const weekEnd = useMemo(() => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + 7);
+    return d;
+  }, [weekStart]);
   const todayDow = (today.getDay() + 6) % 7;
+  const weekStartISO = weekStart.toISOString().slice(0, 10);
+
+  /* Discover live calendar entities (HA's calendar.* domain). */
+  const calendarEntities = useEntitiesByDomain("calendar");
+  const calendarIds = useMemo(
+    () => calendarEntities.map((e) => e.entity_id).sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [calendarEntities.length, calendarEntities.map((e) => e.entity_id).join(",")],
+  );
+  const liveMode = calendarIds.length > 0;
+
+  /* Color + label map: cycle the 4-var palette across whatever calendars exist. */
+  const calendars = useMemo(() => {
+    if (!liveMode) return mock.calendars;
+    const out = {};
+    calendarEntities
+      .slice()
+      .sort((a, b) => a.entity_id.localeCompare(b.entity_id))
+      .forEach((e, i) => {
+        out[e.entity_id] = {
+          color: CAL_PALETTE[i % CAL_PALETTE.length],
+          label: e.attributes?.friendly_name || e.entity_id.replace(/^calendar\./, ""),
+        };
+      });
+    return out;
+  }, [liveMode, calendarEntities, mock.calendars]);
+
+  /* Fetch this week's events from HA's REST calendar API. */
+  const { events: liveEventsRaw, loading } = useCalendarEvents(
+    liveMode ? calendarIds : [],
+    weekStart.toISOString(),
+    weekEnd.toISOString(),
+  );
+
+  /* Transform HA events → grid-positioned events the renderer expects. */
+  const events = useMemo(() => {
+    if (!liveMode) return mock.events;
+    const out = [];
+    for (const ev of liveEventsRaw) {
+      const pos = haEventToGridPos(ev, weekStart);
+      if (!pos) continue;
+      out.push({
+        id: ev.uid || `${ev.cal_entity_id}-${ev.summary}-${ev.start?.dateTime || ev.start?.date}`,
+        cal: ev.cal_entity_id,
+        day: pos.day,
+        start: pos.start,
+        end: pos.end,
+        allDay: pos.allDay,
+        title: ev.summary || "(untitled)",
+        where: ev.location || "",
+      });
+    }
+    return out;
+  }, [liveMode, liveEventsRaw, weekStart, mock.events]);
 
   const now = useNow();
   const nowOffset = (now - startHour) * 2 * slotPx;
@@ -2438,7 +2549,8 @@ export function WeeklyCalendarCard({ index = 0 }) {
     return `${String(hh).padStart(2, "0")}:00`;
   }
 
-  function eventTimeLabel(start, end) {
+  function eventTimeLabel(start, end, allDay) {
+    if (allDay) return "All day";
     const fmt = (h) => {
       const hh = Math.floor(h);
       const mm = Math.round((h - hh) * 60);
@@ -2450,12 +2562,18 @@ export function WeeklyCalendarCard({ index = 0 }) {
   const hours = [];
   for (let h = startHour; h <= endHour; h++) hours.push(h);
 
+  const metaText = liveMode
+    ? loading && events.length === 0
+      ? "loading…"
+      : `${events.length} events`
+    : `${mock.events.length} events · mock`;
+
   return (
     <Card
       index={index}
-      eyebrow={`Calendar · week of ${s.week_start_iso}`}
+      eyebrow={`Calendar · week of ${weekStartISO}`}
       title="This week"
-      meta={`${s.events.length} events`}
+      meta={metaText}
     >
       <div className="weekcal">
         <div className="weekcal-head">
@@ -2481,7 +2599,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
         </div>
 
         {DOWS.map((_, day) => {
-          const dayEvents = s.events.filter((e) => e.day === day);
+          const dayEvents = events.filter((e) => e.day === day);
           return (
             <div
               key={day}
@@ -2497,17 +2615,18 @@ export function WeeklyCalendarCard({ index = 0 }) {
                 const top = (e.start - startHour) * slotsPerHour * slotPx;
                 const h = (e.end - e.start) * slotsPerHour * slotPx;
                 const short = h < 36;
-                const calVar = s.calendars[e.cal].color;
+                const calVar = calendars[e.cal]?.color || CAL_PALETTE[0];
                 return (
                   <div
                     key={e.id}
                     className={`weekcal-event ${short ? "short" : ""}`}
                     style={{ top, height: h, "--cal-color": calVar }}
-                    title={`${e.title}\n${eventTimeLabel(e.start, e.end)}\n${e.where}`}
+                    title={`${e.title}\n${eventTimeLabel(e.start, e.end, e.allDay)}${e.where ? `\n${e.where}` : ""}`}
                   >
                     <div className="t">{e.title}</div>
                     <div className="w">
-                      {eventTimeLabel(e.start, e.end)} · {e.where}
+                      {eventTimeLabel(e.start, e.end, e.allDay)}
+                      {e.where ? ` · ${e.where}` : ""}
                     </div>
                   </div>
                 );
@@ -2518,7 +2637,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
       </div>
 
       <div className="cal-legend">
-        {Object.entries(s.calendars).map(([id, c]) => (
+        {Object.entries(calendars).map(([id, c]) => (
           <span key={id} className="item">
             <span className="sw" style={{ "--cal-color": c.color }} />
             {c.label}
