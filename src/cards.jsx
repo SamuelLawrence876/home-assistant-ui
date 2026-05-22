@@ -203,8 +203,15 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
 
   const liveRising = useEntity("sensor.sun_next_rising");
   const liveSetting = useEntity("sensor.sun_next_setting");
-  const sunrise = liveRising?.state || GH_DATA.sun["sensor.sun_next_rising"].state;
-  const sunset = liveSetting?.state || GH_DATA.sun["sensor.sun_next_setting"].state;
+  const fmtSun = (s) => {
+    if (!s) return "—";
+    const d = new Date(s);
+    return isNaN(d.getTime())
+      ? s
+      : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  };
+  const sunrise = fmtSun(liveRising?.state || GH_DATA.sun["sensor.sun_next_rising"].state);
+  const sunset = fmtSun(liveSetting?.state || GH_DATA.sun["sensor.sun_next_setting"].state);
 
   return (
     <Card
