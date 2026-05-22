@@ -920,20 +920,34 @@ export function BlockedDomainsCard({ index = 0 }) {
 /* ----------------------------------------------------------------
    System — Pi health
    ----------------------------------------------------------------*/
+// Pi 4 hardware constants used to render % bars. HA's system_monitor
+// integration exposes used (GiB) but not %, so we compute from these.
+const PI_RAM_MIB = 4096;     // Pi 4 model B has 4 GB RAM
+const PI_DISK_GIB = 220;     // 220 GB SSD (df -h /  →  219.4G total)
+
 export function PiCard({ index = 0 }) {
   const liveCpu = useEntity("sensor.system_monitor_processor_use");
   const liveMem = useEntity("sensor.system_monitor_memory_use");
   const liveTemp = useEntity("sensor.system_monitor_processor_temperature");
-  const liveDisk = useEntity("sensor.system_monitor_disk_usage_config"); // % (was disk_use_config which is bytes)
+  const liveDisk = useEntity("sensor.system_monitor_disk_use_config");
   const s = GH_DATA.system;
   const cpu = Number(liveCpu?.state ?? s["sensor.system_monitor_processor_use"].state);
   const memMiB = Number(liveMem?.state ?? s["sensor.system_monitor_memory_use"].state);
-  const memPct = (memMiB / 4096) * 100;
+  const memPct = (memMiB / PI_RAM_MIB) * 100;
   const temp = Number(liveTemp?.state ?? s["sensor.system_monitor_processor_temperature"].state);
-  const disk = Number(liveDisk?.state ?? s["sensor.system_monitor_disk_use_config"].state);
+  const diskGiB = Number(liveDisk?.state ?? s["sensor.system_monitor_disk_use_config"].state);
+  const diskPct = (diskGiB / PI_DISK_GIB) * 100;
+
+  // Health summary derived from the worst metric.
+  const health =
+    temp >= 75 || cpu >= 90 || memPct >= 90 || diskPct >= 90
+      ? "degraded"
+      : temp >= 65 || cpu >= 70 || memPct >= 75 || diskPct >= 80
+        ? "warm"
+        : "all healthy";
 
   return (
-    <Card index={index} eyebrow="System · raspberry_pi" title="Pi health" meta="all healthy">
+    <Card index={index} eyebrow="System · raspberry_pi" title="Pi health" meta={health}>
       <div className="pi-rows">
         <div className="pi-row">
           <span className="k">CPU</span>
@@ -945,32 +959,71 @@ export function PiCard({ index = 0 }) {
           <div className="bar"><span style={{ "--p": `${memPct}%` }} /></div>
           <span className="v">{memMiB.toFixed(0)} MiB</span>
         </div>
-        <div className="pi-row warn">
+        <div className={`pi-row ${temp >= 65 ? "warn" : ""}`}>
           <span className="k">Temp</span>
           <div className="bar"><span style={{ "--p": `${(temp / 80) * 100}%` }} /></div>
           <span className="v">{temp}°C</span>
         </div>
         <div className="pi-row">
           <span className="k">Disk</span>
-          <div className="bar"><span style={{ "--p": `${disk}%` }} /></div>
-          <span className="v">{disk}%</span>
+          <div className="bar"><span style={{ "--p": `${diskPct}%` }} /></div>
+          <span className="v">{diskGiB.toFixed(1)} GiB</span>
         </div>
       </div>
     </Card>
   );
 }
 
+// Returns "today · 15:30", "yesterday · 04:00", "in 2 days · 03:47", etc.
+// Falls back to the raw string if it isn't parseable (so mock strings still render).
+function formatRelativeIso(iso) {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return iso;
+  const now = new Date();
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(date) - startOfDay(now)) / (24 * 3600 * 1000));
+  const time = date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  let day;
+  if (diffDays === 0) day = "today";
+  else if (diffDays === -1) day = "yesterday";
+  else if (diffDays === 1) day = "tomorrow";
+  else if (diffDays < 0) day = `${-diffDays} days ago`;
+  else day = `in ${diffDays} days`;
+  return `${day} · ${time}`;
+}
+
+function formatMiB(mib) {
+  const n = Number(mib);
+  if (!Number.isFinite(n)) return "—";
+  if (n >= 1024) return `${(n / 1024).toFixed(2)} GiB`;
+  return `${n.toFixed(0)} MiB`;
+}
+
 export function BackupCard({ index = 0 }) {
+  const liveLast = useEntity("sensor.backup_last_successful_automatic_backup");
+  const liveNext = useEntity("sensor.backup_next_scheduled_automatic_backup");
+  const liveState = useEntity("sensor.backup_backup_manager_state");
+  const liveSize = useEntity("sensor.bucket_sam_ha_backups_total_size_of_backups");
   const b = GH_DATA.backup;
+
+  const lastDisplay = formatRelativeIso(liveLast?.state || b["sensor.backup_last_successful_automatic_backup"].state);
+  const nextDisplay = formatRelativeIso(liveNext?.state || b["sensor.backup_next_scheduled_automatic_backup"].state);
+  const managerState = liveState?.state || "idle";
+  const sizeDisplay = liveSize ? formatMiB(liveSize.state) : b.last_size;
+  const liveRunning = managerState !== "idle" && managerState !== "unknown" && managerState !== "unavailable";
+
+  // Local optimistic progress bar — the real backup runs server-side via
+  // backup.create_automatic; we don't wait for it. The manager_state sensor
+  // reflects actual progress and is shown in the "Status" row.
   const [running, setRunning] = useState(false);
   const [pct, setPct] = useState(0);
-  const [lastResult, setLastResult] = useState(null);
 
   function runBackup() {
-    if (running) return;
+    if (running || liveRunning) return;
+    callService("backup", "create_automatic", {}).catch(() => {});
     setRunning(true);
     setPct(0);
-    setLastResult(null);
     let p = 0;
     const id = setInterval(() => {
       p += 4 + Math.random() * 6;
@@ -980,7 +1033,6 @@ export function BackupCard({ index = 0 }) {
         setPct(100);
         setTimeout(() => {
           setRunning(false);
-          setLastResult({ at: "just now", size: "1.43 GB" });
           setPct(0);
         }, 600);
       } else {
@@ -989,6 +1041,13 @@ export function BackupCard({ index = 0 }) {
     }, 220);
   }
 
+  const buttonRunning = running || liveRunning;
+  const buttonLabel = liveRunning
+    ? `Backup ${managerState}`
+    : running
+      ? `Backing up · ${Math.round(pct)}%`
+      : "Backup now";
+
   return (
     <Card
       index={index}
@@ -996,12 +1055,12 @@ export function BackupCard({ index = 0 }) {
       title="Backups"
       headRight={
         <button
-          className={`btn ${running ? "" : "primary"}`}
+          className={`btn ${buttonRunning ? "" : "primary"}`}
           onClick={runBackup}
-          disabled={running}
-          style={{ opacity: running ? 0.7 : 1 }}
+          disabled={buttonRunning}
+          style={{ opacity: buttonRunning ? 0.7 : 1 }}
         >
-          {running ? `Backing up · ${Math.round(pct)}%` : "Backup now"}
+          {buttonLabel}
         </button>
       }
     >
@@ -1012,17 +1071,13 @@ export function BackupCard({ index = 0 }) {
       )}
       <div className="kv">
         <span className="k">Last</span>
-        <span className="v">
-          {lastResult
-            ? `just now · ${lastResult.size}`
-            : `${b["sensor.backup_last_successful_automatic_backup"].state} · ${b.last_size}`}
-        </span>
+        <span className="v">{lastDisplay}</span>
         <span className="k">Next</span>
-        <span className="v">{b["sensor.backup_next_scheduled_automatic_backup"].state}</span>
-        <span className="k">Method</span>
-        <span className="v">{b.method}</span>
-        <span className="k">Retention</span>
-        <span className="v">{b.retention_days} days</span>
+        <span className="v">{nextDisplay}</span>
+        <span className="k">Status</span>
+        <span className="v">{managerState}</span>
+        <span className="k">Total stored</span>
+        <span className="v">{sizeDisplay}</span>
       </div>
     </Card>
   );
@@ -1030,14 +1085,17 @@ export function BackupCard({ index = 0 }) {
 
 export function EntityHealthCard({ index = 0 }) {
   const h = GH_DATA.health;
-  // Live counts come from the shared socket — see useEntityCounts in ha/useEntity.js.
-  // Importing here would create a circular dep, so we read once from state in the parent
-  // via the topbar; this card keeps the curated "expected unavailable" groups list which
-  // is human knowledge, not entity state.
+  // Live counts from the template sensors Samuel set up in configuration.yaml.
+  // The curated groups list stays in GH_DATA — it's human knowledge about
+  // *why* things are unavailable, not entity state.
+  const liveAvail = useEntity("sensor.available_entities_count");
+  const liveUnavail = useEntity("sensor.unavailable_entities_count");
+  const available = Number(liveAvail?.state ?? h.available);
+  const unavailable = Number(liveUnavail?.state ?? h.unavailable);
   return (
     <Card
       index={index}
-      eyebrow={`Entity registry · ${h.available} online · ${h.unavailable} unavailable`}
+      eyebrow={`Entity registry · ${available} online · ${unavailable} unavailable`}
       title="Unavailable groups"
       meta="known, expected"
     >
