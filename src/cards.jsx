@@ -8,7 +8,6 @@ import { nowFractionalHour } from "./theme.js";
 import { useEntity, useEntitiesByDomain } from "./ha/useEntity.js";
 import { callService, imageUrl } from "./ha/client.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
-import { useTodoLists } from "./ha/useTodoLists.js";
 
 /* ----------------------------------------------------------------
    Small helpers
@@ -3059,187 +3058,32 @@ export function WeeklyCalendarCard({ index = 0 }) {
 }
 
 /* ----------------------------------------------------------------
-   Kanban — adaptive: one column per live todo.* entity (excluding
-   todo.shopping_list which the dashboard uses elsewhere). Falls back
-   to GH_DATA mock if no real todo entities exist yet.
+   Kanban — 4 columns, HTML5 DnD (mock-only). Restored 2026-05-22 to
+   the pre-Phase-3 version at the user's request.
    ----------------------------------------------------------------*/
-
-const MOCK_KANBAN_COLS = ["todo.backlog", "todo.today", "todo.doing", "todo.done"];
-
-/* Canonical kanban columns. Always rendered, in this order. If an iCloud
-   Reminders list with a matching name (case-insensitive) exists, its
-   contents fill the column; otherwise the column shows a placeholder
-   with instructions to create that list on the iPhone. */
-const CANONICAL_KANBAN_COLS = [
-  { label: "Backlog", aliases: ["backlog"] },
-  { label: "Today", aliases: ["today"] },
-  { label: "Doing", aliases: ["doing", "in progress", "in-progress"] },
-  { label: "Done", aliases: ["done", "completed"] },
-];
-
-function normalizeListName(s) {
-  return (s || "").toLowerCase().replace(/\s*⚠️\s*$/, "").trim();
-}
-
-function KanbanAddInput({ onSubmit }) {
-  const [active, setActive] = useState(false);
-  const [value, setValue] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const inputRef = useRef(null);
-
-  useEffect(() => {
-    if (active) inputRef.current?.focus();
-  }, [active]);
-
-  async function commit() {
-    const text = value.trim();
-    if (!text) {
-      setActive(false);
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await onSubmit(text);
-      setValue("");
-      setActive(false);
-    } catch (e) {
-      console.warn("[kanban-add] failed", e);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (!active) {
-    return (
-      <button className="kanban-add" onClick={() => setActive(true)} disabled={submitting}>
-        + Add
-      </button>
-    );
-  }
-
-  return (
-    <input
-      ref={inputRef}
-      className="kanban-add"
-      style={{ textAlign: "left", textTransform: "none", letterSpacing: 0 }}
-      type="text"
-      value={value}
-      placeholder="What needs doing?"
-      disabled={submitting}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-        } else if (e.key === "Escape") {
-          setValue("");
-          setActive(false);
-        }
-      }}
-    />
-  );
-}
-
 export function KanbanBoardCard({ index = 0 }) {
-  /* Discover live todo.* entities, excluding shopping list. */
-  const todoEntities = useEntitiesByDomain("todo");
-  const liveTodoEntities = useMemo(
-    () =>
-      todoEntities
-        .filter((e) => e.entity_id !== "todo.shopping_list")
-        .sort((a, b) => a.entity_id.localeCompare(b.entity_id)),
-    [todoEntities],
-  );
-  const liveTodoIds = useMemo(
-    () => liveTodoEntities.map((e) => e.entity_id),
-    [liveTodoEntities],
-  );
-  const liveMode = liveTodoIds.length > 0;
-
-  const { lists: liveLists, add, move, remove } = useTodoLists(liveTodoIds);
-
-  /* Mock fallback — same shape as before. */
-  const [mockLists] = useState(() => {
+  const COLS = ["todo.backlog", "todo.today", "todo.doing", "todo.done"];
+  const [lists, setLists] = useState(() => {
     const out = {};
-    for (const id of MOCK_KANBAN_COLS) out[id] = GH_DATA.todo_lists[id].items.slice();
+    for (const id of COLS) out[id] = GH_DATA.todo_lists[id].items.slice();
     return out;
   });
-  const [mockState, setMockState] = useState(mockLists);
-
   const [dragOver, setDragOver] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
 
-  /* Apple seeds new/legacy Reminders lists with two placeholder VTODOs
-     that aren't real tasks. Filter them out so they don't pollute the
-     kanban — user has no reason to see them. */
-  function isAppleSystemItem(it) {
-    if (it.description?.includes("support.apple.com/HT210220")) return true;
-    if (it.summary === "Where are my reminders?") return true;
-    if (it.summary === "The creator of this list has upgraded these reminders.") return true;
-    return false;
+  function moveCard(uid, fromCol, toCol) {
+    if (fromCol === toCol) return;
+    setLists((cur) => {
+      const next = { ...cur };
+      next[fromCol] = cur[fromCol].filter((c) => c.uid !== uid);
+      const card = cur[fromCol].find((c) => c.uid === uid);
+      if (card) next[toCol] = [card, ...cur[toCol]];
+      return next;
+    });
   }
 
-  /* Unified column shape for the renderer:
-       { id, label, items, isPlaceholder?, isExtra? }
-     Live mode ALWAYS includes the 4 canonical columns; missing ones
-     render as placeholders. Any other iCloud lists the user has show
-     up as extra columns after the canonical four. */
-  const cols = useMemo(() => {
-    if (liveMode) {
-      const matchedIds = new Set();
-      const out = [];
-      for (const canonical of CANONICAL_KANBAN_COLS) {
-        const match = liveTodoEntities.find((e) => {
-          const name = normalizeListName(e.attributes?.friendly_name || e.entity_id.replace(/^todo\./, ""));
-          return canonical.aliases.includes(name);
-        });
-        if (match) {
-          matchedIds.add(match.entity_id);
-          out.push({
-            id: match.entity_id,
-            label: canonical.label,
-            items: (liveLists[match.entity_id]?.items || [])
-              .filter((it) => !isAppleSystemItem(it))
-              .map((it) => ({ uid: it.uid, summary: it.summary, status: it.status })),
-          });
-        } else {
-          out.push({
-            id: `placeholder:${canonical.label.toLowerCase()}`,
-            label: canonical.label,
-            items: [],
-            isPlaceholder: true,
-          });
-        }
-      }
-      /* Anything the user has that wasn't matched to a canonical (e.g. their
-         default "Reminders" list) — keep it visible to the right. */
-      for (const e of liveTodoEntities) {
-        if (matchedIds.has(e.entity_id)) continue;
-        out.push({
-          id: e.entity_id,
-          label: (e.attributes?.friendly_name || e.entity_id.replace(/^todo\./, "")).replace(/\s*⚠️\s*$/, ""),
-          isExtra: true,
-          items: (liveLists[e.entity_id]?.items || [])
-            .filter((it) => !isAppleSystemItem(it))
-            .map((it) => ({ uid: it.uid, summary: it.summary, status: it.status })),
-        });
-      }
-      return out;
-    }
-    return MOCK_KANBAN_COLS.map((id) => ({
-      id,
-      label: GH_DATA.todo_lists[id].label,
-      items: mockState[id],
-    }));
-  }, [liveMode, liveTodoEntities, liveLists, mockState]);
-
-  function isDoneCol(col) {
-    return /done$/i.test(col.id) || /^done$/i.test(col.label);
-  }
-
-  function onDragStart(ev, uid, summary, col) {
-    ev.dataTransfer.setData("text/plain", JSON.stringify({ uid, summary, col }));
+  function onDragStart(ev, uid, col) {
+    ev.dataTransfer.setData("text/plain", JSON.stringify({ uid, col }));
     ev.dataTransfer.effectAllowed = "move";
     setDraggingId(uid);
   }
@@ -3252,135 +3096,56 @@ export function KanbanBoardCard({ index = 0 }) {
     ev.dataTransfer.dropEffect = "move";
     setDragOver(col);
   }
-  async function onDrop(ev, toCol) {
+  function onDrop(ev, col) {
     ev.preventDefault();
+    try {
+      const { uid, col: fromCol } = JSON.parse(ev.dataTransfer.getData("text/plain"));
+      moveCard(uid, fromCol, col);
+    } catch {}
     setDragOver(null);
     setDraggingId(null);
-    let payload;
-    try {
-      payload = JSON.parse(ev.dataTransfer.getData("text/plain"));
-    } catch {
-      return;
-    }
-    const { uid, summary, col: fromCol } = payload;
-    if (fromCol === toCol) return;
-    if (liveMode) {
-      try {
-        await move(uid, summary, fromCol, toCol);
-      } catch (e) {
-        console.warn("[kanban] move failed", e);
-      }
-    } else {
-      setMockState((cur) => {
-        const next = { ...cur };
-        const card = cur[fromCol].find((c) => c.uid === uid);
-        next[fromCol] = cur[fromCol].filter((c) => c.uid !== uid);
-        if (card) next[toCol] = [card, ...cur[toCol]];
-        return next;
-      });
-    }
   }
-
-  async function onAdd(colId, text) {
-    if (liveMode) {
-      await add(colId, text);
-    } else {
-      setMockState((cur) => ({
-        ...cur,
-        [colId]: [{ uid: `local-${Date.now()}`, summary: text, tag: "dev" }, ...cur[colId]],
-      }));
-    }
-  }
-
-  async function onRemove(colId, uid) {
-    if (liveMode) {
-      try {
-        await remove(colId, uid);
-      } catch (e) {
-        console.warn("[kanban] remove failed", e);
-      }
-    } else {
-      setMockState((cur) => ({
-        ...cur,
-        [colId]: cur[colId].filter((c) => c.uid !== uid),
-      }));
-    }
-  }
-
-  const placeholderCount = cols.filter((c) => c.isPlaceholder).length;
-  const wiredCanonical = CANONICAL_KANBAN_COLS.length - placeholderCount;
-  const eyebrowText = liveMode
-    ? placeholderCount > 0
-      ? `Kanban · ${wiredCanonical}/${CANONICAL_KANBAN_COLS.length} canonical lists wired · iCloud Reminders`
-      : `Kanban · iCloud Reminders`
-    : "Kanban · todo.backlog · today · doing · done";
-  const metaText = liveMode ? "drag cards between columns" : "drag cards between columns · mock";
 
   return (
-    <Card index={index} eyebrow={eyebrowText} title="Project board" meta={metaText}>
-      <div
-        className="kanban"
-        style={{ gridTemplateColumns: `repeat(${Math.max(cols.length, 1)}, 1fr)` }}
-      >
-        {cols.map((col) => {
-          const isDone = isDoneCol(col);
-          if (col.isPlaceholder) {
-            return (
-              <div key={col.id} className="kanban-col placeholder">
-                <div className="kanban-col-head">
-                  <span className="label">{col.label}</span>
-                  <span className="count">—</span>
-                </div>
-                <div className="kanban-placeholder-body">
-                  <div className="kanban-placeholder-icon">+</div>
-                  <div className="kanban-placeholder-msg">
-                    Create a list named <strong>{col.label}</strong> in the iPhone Reminders app to wire this column.
-                  </div>
-                </div>
-              </div>
-            );
-          }
+    <Card
+      index={index}
+      eyebrow="Kanban · todo.backlog · today · doing · done"
+      title="Project board"
+      meta="drag cards between columns"
+    >
+      <div className="kanban">
+        {COLS.map((id) => {
+          const meta = GH_DATA.todo_lists[id];
+          const items = lists[id];
+          const isDone = id === "todo.done";
           return (
             <div
-              key={col.id}
-              className={`kanban-col ${col.isExtra ? "extra" : ""} ${dragOver === col.id ? "drag-over" : ""}`}
-              onDragOver={(ev) => onDragOver(ev, col.id)}
-              onDragLeave={() => setDragOver((cur) => (cur === col.id ? null : cur))}
-              onDrop={(ev) => onDrop(ev, col.id)}
+              key={id}
+              className={`kanban-col ${dragOver === id ? "drag-over" : ""}`}
+              onDragOver={(ev) => onDragOver(ev, id)}
+              onDragLeave={() => setDragOver((cur) => (cur === id ? null : cur))}
+              onDrop={(ev) => onDrop(ev, id)}
             >
               <div className="kanban-col-head">
-                <span className="label">{col.label}</span>
-                <span className="count">{col.items.length}</span>
+                <span className="label">{meta.label}</span>
+                <span className="count">{items.length}</span>
               </div>
-              {col.items.map((c) => (
+              {items.map((c) => (
                 <div
                   key={c.uid}
                   className={`kanban-card ${isDone ? "done" : ""} ${draggingId === c.uid ? "dragging" : ""}`}
                   draggable
-                  onDragStart={(ev) => onDragStart(ev, c.uid, c.summary, col.id)}
+                  onDragStart={(ev) => onDragStart(ev, c.uid, id)}
                   onDragEnd={onDragEnd}
                 >
-                  <button
-                    className="kanban-card-x"
-                    aria-label="Delete"
-                    title="Delete"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      onRemove(col.id, c.uid);
-                    }}
-                  >
-                    ×
-                  </button>
                   <div className="summary">{c.summary}</div>
-                  {(c.tag || c.due) && (
-                    <div className="meta">
-                      {c.tag && <span className={`tag tag-${c.tag}`}>{c.tag}</span>}
-                      {c.due && <span className="due">due · {c.due}</span>}
-                    </div>
-                  )}
+                  <div className="meta">
+                    <span className={`tag tag-${c.tag}`}>{c.tag}</span>
+                    {c.due && <span className="due">due · {c.due}</span>}
+                  </div>
                 </div>
               ))}
-              <KanbanAddInput onSubmit={(text) => onAdd(col.id, text)} />
+              <button className="kanban-add">+ Add</button>
             </div>
           );
         })}
