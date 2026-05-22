@@ -3308,9 +3308,10 @@ export function KanbanBoardCard({ index = 0 }) {
   }
 
   const placeholderCount = cols.filter((c) => c.isPlaceholder).length;
+  const wiredCanonical = CANONICAL_KANBAN_COLS.length - placeholderCount;
   const eyebrowText = liveMode
     ? placeholderCount > 0
-      ? `Kanban · ${cols.length - placeholderCount}/${CANONICAL_KANBAN_COLS.length} canonical lists wired · iCloud Reminders`
+      ? `Kanban · ${wiredCanonical}/${CANONICAL_KANBAN_COLS.length} canonical lists wired · iCloud Reminders`
       : `Kanban · iCloud Reminders`
     : "Kanban · todo.backlog · today · doing · done";
   const metaText = liveMode ? "drag cards between columns" : "drag cards between columns · mock";
