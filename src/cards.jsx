@@ -2687,6 +2687,39 @@ function NewEventDialog({ onClose, calendars, defaultCalendarId, initial, onCrea
   );
 }
 
+/* Greedy lane layout for one day's in-grid events. Each event gets a
+   `lane` index and a `totalLanes` count for its overlap group so that
+   events sharing a time slot render side-by-side instead of stacking. */
+function layoutEventsInDay(events) {
+  const sorted = [...events].sort((a, b) => a.start - b.start || a.end - b.end);
+  const laneEnds = []; // last `end` per lane
+  const out = [];
+  for (const ev of sorted) {
+    let lane = laneEnds.findIndex((end) => end <= ev.start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(ev.end);
+    } else {
+      laneEnds[lane] = ev.end;
+    }
+    out.push({ ...ev, _lane: lane });
+  }
+  /* totalLanes for each event = (max lane index of any directly-overlapping
+     event in the same day) + 1. Direct overlaps only — but because lanes
+     are reused greedily, this correctly handles disjoint overlap groups. */
+  for (const ev of out) {
+    let maxLane = ev._lane;
+    for (const other of out) {
+      if (other === ev) continue;
+      if (other.start < ev.end && other.end > ev.start) {
+        if (other._lane > maxLane) maxLane = other._lane;
+      }
+    }
+    ev._totalLanes = maxLane + 1;
+  }
+  return out;
+}
+
 /* 4-var palette defined in styles.css — cycled per live calendar entity */
 const CAL_PALETTE = [
   "var(--cal-work)",
@@ -2961,6 +2994,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
           const dayInGrid = events.filter(
             (e) => e.day === day && !e.allDay && e.end > startHour && e.start < endHour + 1,
           );
+          const laidOut = layoutEventsInDay(dayInGrid);
           return (
             <div
               key={day}
@@ -2971,7 +3005,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
               onClick={(ev) => onColClick(ev, day)}
             >
               {day === todayDow && showNow && <div className="weekcal-now" style={{ top: nowOffset }} />}
-              {dayInGrid.map((e) => {
+              {laidOut.map((e) => {
                 const calVar = calendars[e.cal]?.color || CAL_PALETTE[0];
                 const tooltip = `${e.title}\n${eventTimeLabel(e.start, e.end, e.allDay)}${e.where ? `\n${e.where}` : ""}`;
                 const visibleStart = Math.max(e.start, startHour);
@@ -2979,11 +3013,23 @@ export function WeeklyCalendarCard({ index = 0 }) {
                 const top = (visibleStart - startHour) * slotsPerHour * slotPx;
                 const h = (visibleEnd - visibleStart) * slotsPerHour * slotPx;
                 const short = h < 36;
+                /* Lane-based horizontal split. Inline left + width override
+                   the CSS defaults of left:4px right:4px so overlapping
+                   events sit next to each other with a small gutter. */
+                const widthPct = 100 / e._totalLanes;
+                const leftPct = e._lane * widthPct;
+                const positioning = e._totalLanes > 1
+                  ? {
+                      left: `calc(${leftPct}% + 2px)`,
+                      width: `calc(${widthPct}% - 4px)`,
+                      right: "auto",
+                    }
+                  : null;
                 return (
                   <div
                     key={e.id}
                     className={`weekcal-event ${short ? "short" : ""}`}
-                    style={{ top, height: h, "--cal-color": calVar }}
+                    style={{ top, height: h, "--cal-color": calVar, ...positioning }}
                     title={tooltip}
                     onClick={(ev) => ev.stopPropagation()}
                   >
