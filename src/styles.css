@@ -1635,7 +1635,6 @@ body.mode-night {
 .weekcal-head .corner { /* empty top-left */ }
 .weekcal-head .dow {
   padding: 10px 8px 8px;
-  border-bottom: 1px solid var(--rule);
   border-left: 1px solid var(--rule);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -1646,6 +1645,27 @@ body.mode-night {
   position: sticky; top: 0;
   background: var(--glass-bg);
   z-index: 1;
+}
+
+/* Dedicated off-grid row: holds all-day + before-grid + after-grid pills.
+   Sits between the day-header row and the timed grid so off-grid events
+   don't render inside the column where they'd look like they're floating
+   in the header. display:contents lets each cell drop into its day's grid
+   column directly. */
+.weekcal-offgrid-row { display: contents; }
+.weekcal-offgrid-row .corner { border-bottom: 1px solid var(--rule); }
+.weekcal-offgrid-row .cell {
+  border-left: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  min-height: 22px;
+  padding: 3px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: color-mix(in oklch, var(--glass-bg-2), transparent 60%);
+}
+.weekcal-offgrid-row .cell.today {
+  background: color-mix(in oklch, var(--accent), transparent 92%);
 }
 .weekcal-head .dow .num {
   font-family: var(--font-display);
@@ -1764,17 +1784,14 @@ body.mode-night {
 }
 .weekcal-event.short .w { display: none; }
 
-/* Off-grid events — all-day, or fully outside the 07:00–22:00 visible
-   window. Render as a thin compact pill at top (before/all-day) or
-   bottom (after) of the day column. */
+/* Off-grid pills — all-day or events fully outside the visible time
+   range. Rendered inside the dedicated .weekcal-offgrid-row cells. */
 .weekcal-offgrid {
-  position: absolute;
-  left: 4px; right: 4px;
   font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.03em;
-  padding: 3px 6px;
-  border-radius: 6px;
+  padding: 2px 6px;
+  border-radius: 5px;
   background: color-mix(in oklch, var(--cal-color), transparent 82%);
   border-left: 2px solid var(--cal-color);
   color: var(--ink-2);
@@ -1782,11 +1799,8 @@ body.mode-night {
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
-  z-index: 2;
 }
-.weekcal-offgrid.before { top: 2px; }
-.weekcal-offgrid.after { bottom: 2px; }
-.weekcal-offgrid:hover { color: var(--ink); z-index: 6; }
+.weekcal-offgrid:hover { color: var(--ink); }
 
 .weekcal-now {
   position: absolute;

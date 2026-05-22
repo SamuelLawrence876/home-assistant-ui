@@ -2730,7 +2730,7 @@ function haEventToGridPos(ev, weekStartLocal) {
 
 export function WeeklyCalendarCard({ index = 0 }) {
   const mock = GH_DATA.schedule;
-  const startHour = 7;
+  const startHour = 8;
   const endHour = 22;
   const slotsPerHour = 2;
   const slotPx = 26;
@@ -2915,6 +2915,40 @@ export function WeeklyCalendarCard({ index = 0 }) {
           })}
         </div>
 
+        {/* Dedicated off-grid row sits between the day header and the
+            timed grid — holds all-day, before-grid, and after-grid pills
+            so they don't render inside the column where they'd read as
+            floating in the day-header strip. */}
+        <div className="weekcal-offgrid-row">
+          <div className="corner" />
+          {DOWS.map((_, day) => {
+            const dayOffgrid = events.filter(
+              (e) => e.day === day && (e.allDay || e.end <= startHour || e.start >= endHour + 1),
+            );
+            return (
+              <div key={day} className={`cell ${day === todayDow ? "today" : ""}`}>
+                {dayOffgrid.map((e) => {
+                  const calVar = calendars[e.cal]?.color || CAL_PALETTE[0];
+                  const tooltip = `${e.title}\n${eventTimeLabel(e.start, e.end, e.allDay)}${e.where ? `\n${e.where}` : ""}`;
+                  const prefix = e.allDay ? "⛶" : e.end <= startHour ? "↑" : "↓";
+                  const timeBit = e.allDay ? "" : ` ${eventTimeLabel(e.start, e.end)} ·`;
+                  return (
+                    <div
+                      key={e.id}
+                      className="weekcal-offgrid"
+                      style={{ "--cal-color": calVar }}
+                      title={tooltip}
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      {prefix}{timeBit} {e.title}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+
         <div className="weekcal-times">
           {hours.map((h) => (
             <div key={h} className="h">
@@ -2924,53 +2958,22 @@ export function WeeklyCalendarCard({ index = 0 }) {
         </div>
 
         {DOWS.map((_, day) => {
-          const dayEvents = events.filter((e) => e.day === day);
+          const dayInGrid = events.filter(
+            (e) => e.day === day && !e.allDay && e.end > startHour && e.start < endHour + 1,
+          );
           return (
             <div
               key={day}
               className={`weekcal-col ${day === todayDow ? "today" : ""} ${liveMode ? "clickable" : ""}`}
               style={{
-                gridColumn: day + 2,
-                gridRow: "2 / span 1",
                 height: ((endHour - startHour) * slotsPerHour + 1) * slotPx,
               }}
               onClick={(ev) => onColClick(ev, day)}
             >
               {day === todayDow && showNow && <div className="weekcal-now" style={{ top: nowOffset }} />}
-              {dayEvents.map((e) => {
+              {dayInGrid.map((e) => {
                 const calVar = calendars[e.cal]?.color || CAL_PALETTE[0];
                 const tooltip = `${e.title}\n${eventTimeLabel(e.start, e.end, e.allDay)}${e.where ? `\n${e.where}` : ""}`;
-
-                /* All-day and events fully outside the visible 07:00–22:00
-                   window become a thin pill at the top (before / all-day)
-                   or bottom (after) of the column. */
-                /* Existing-event divs swallow the click so the underlying
-                   column doesn't open the new-event dialog. */
-                const stop = (ev) => ev.stopPropagation();
-
-                if (e.allDay) {
-                  return (
-                    <div key={e.id} className="weekcal-offgrid before" style={{ "--cal-color": calVar }} title={tooltip} onClick={stop}>
-                      ⛶ {e.title}
-                    </div>
-                  );
-                }
-                if (e.end <= startHour) {
-                  return (
-                    <div key={e.id} className="weekcal-offgrid before" style={{ "--cal-color": calVar }} title={tooltip} onClick={stop}>
-                      ↑ {eventTimeLabel(e.start, e.end)} · {e.title}
-                    </div>
-                  );
-                }
-                if (e.start >= endHour + 1) {
-                  return (
-                    <div key={e.id} className="weekcal-offgrid after" style={{ "--cal-color": calVar }} title={tooltip} onClick={stop}>
-                      ↓ {eventTimeLabel(e.start, e.end)} · {e.title}
-                    </div>
-                  );
-                }
-
-                /* Partially or fully inside the visible range — clip to bounds. */
                 const visibleStart = Math.max(e.start, startHour);
                 const visibleEnd = Math.min(e.end, endHour + 1);
                 const top = (visibleStart - startHour) * slotsPerHour * slotPx;
@@ -2982,7 +2985,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
                     className={`weekcal-event ${short ? "short" : ""}`}
                     style={{ top, height: h, "--cal-color": calVar }}
                     title={tooltip}
-                    onClick={stop}
+                    onClick={(ev) => ev.stopPropagation()}
                   >
                     <div className="t">{e.title}</div>
                     <div className="w">
