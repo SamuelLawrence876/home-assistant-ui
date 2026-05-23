@@ -5,8 +5,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
-import { useEntity, useEntitiesByDomain } from "./ha/useEntity.js";
-import { callService, imageUrl } from "./ha/client.js";
+import { useEntity, useEntitiesByDomain, useConnectionStatus } from "./ha/useEntity.js";
+import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
 
 /* ----------------------------------------------------------------
@@ -168,9 +168,14 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
   const live = useEntity("weather.forecast_home");
   const w = live || GH_DATA.weather["weather.forecast_home"];
   const t = w.attributes.temperature;
-  // HA dropped the legacy `forecast` attribute in 2024 — until we wire the
-  // weather.get_forecasts service call, fall back to the mock forecast list.
-  const f = w.attributes.forecast || GH_DATA.weather["weather.forecast_home"].attributes.forecast;
+  const [forecast, setForecast] = useState(GH_DATA.weather["weather.forecast_home"].attributes.forecast);
+  useEffect(() => {
+    if (!live) return;
+    getForecast("weather.forecast_home", "daily")
+      .then((fc) => { if (fc.length) setForecast(fc); })
+      .catch(() => {});
+  }, [live?.last_updated]);
+  const f = forecast;
   const condLabels = {
     sunny: "Sunny",
     partlycloudy: "Partly cloudy",
@@ -340,16 +345,22 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
       </div>
 
       <div className="forecast">
-        {f.slice(0, 5).map((d, i) => (
-          <div key={i} className="day">
-            <div className="d">{["Tomorrow", "Sat", "Sun", "Mon", "Tue"][i] || `+${i + 1}d`}</div>
-            <div style={{ marginTop: 4, marginBottom: 4 }}>
-              <WeatherIcon condition={d.condition} size={42} />
+        {f.slice(0, 5).map((d, i) => {
+          const dt = d.datetime ? new Date(d.datetime) : null;
+          const dayLabel = dt && !isNaN(dt)
+            ? dt.toLocaleDateString("en-GB", { weekday: "short" })
+            : `+${i + 1}d`;
+          return (
+            <div key={i} className="day">
+              <div className="d">{dayLabel}</div>
+              <div style={{ marginTop: 4, marginBottom: 4 }}>
+                <WeatherIcon condition={d.condition} size={42} />
+              </div>
+              <div className="t">{d.temperature}°</div>
+              <div className="lo">↓ {d.templow}°</div>
             </div>
-            <div className="t">{d.temperature}°</div>
-            <div className="lo">↓ {d.templow}°</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
@@ -731,6 +742,7 @@ export function AirPurifierCard({ index = 0 }) {
   const livePm = useEntity("sensor.core_300s_series_pm2_5");
   const liveFilt = useEntity("sensor.core_300s_series_filter_lifetime");
   const a = GH_DATA.air;
+  const unavailable = liveFan?.state === "unavailable" || liveFan?.state === "unknown";
   const q = liveQ?.state ?? a["sensor.core_300s_series_air_quality"].state;
   const pm = Number(livePm?.state ?? a["sensor.core_300s_series_pm2_5"].state);
   const filt = Number(liveFilt?.state ?? a["sensor.core_300s_series_filter_lifetime"].state);
@@ -742,6 +754,7 @@ export function AirPurifierCard({ index = 0 }) {
     if (liveFan.attributes?.preset_mode) setPreset(liveFan.attributes.preset_mode);
   }, [liveFan?.state, liveFan?.attributes?.preset_mode]);
   function toggleFan() {
+    if (unavailable) return;
     const next = !on;
     setOn(next);
     callService("fan", next ? "turn_on" : "turn_off", { entity_id: "fan.core_300s_series" }).catch(() => setOn(on));
@@ -760,9 +773,9 @@ export function AirPurifierCard({ index = 0 }) {
       index={index}
       eyebrow="Air · core_300s_series"
       title="Air purifier"
-      meta="filter · 96%"
+      meta={unavailable ? "Unavailable" : `filter · ${filt}%`}
       headRight={
-        <div className={`toggle ${on ? "on" : ""}`} onClick={toggleFan} role="switch" aria-checked={on} />
+        <div className={`toggle ${on && !unavailable ? "on" : ""}`} onClick={toggleFan} role="switch" aria-checked={on} style={unavailable ? { opacity: 0.4 } : undefined} />
       }
     >
       <div className="purifier-body">
@@ -788,7 +801,7 @@ export function AirPurifierCard({ index = 0 }) {
           </div>
           <div className="preset-row">
             {["sleep", "auto", "low", "medium", "high"].map((p) => (
-              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => setFanPreset(p)}>
+              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => setFanPreset(p)} disabled={unavailable}>
                 {p}
               </button>
             ))}
@@ -1167,9 +1180,8 @@ export function ShoppingCard({ index = 0 }) {
   // todo lists need a service call to read items — the entity's state is just a count.
   useEffect(() => {
     if (!live) return;
-    callService("todo", "get_items", { entity_id: "todo.shopping_list" }, undefined)
-      .then((r) => {
-        const list = r?.service_response?.["todo.shopping_list"]?.items;
+    getTodoItems("todo.shopping_list")
+      .then((list) => {
         if (Array.isArray(list)) setItems(list.map((x) => x.summary || x.uid));
       })
       .catch(() => {});
@@ -1212,6 +1224,7 @@ export function LightCard({ index = 0, entityId }) {
   const live = useEntity(entityId);
   const e = live || GH_DATA.lights[entityId];
   const placeholder = e.attributes?.placeholder;
+  const unavailable = live?.state === "unavailable" || live?.state === "unknown";
   const initialRgb = e.attributes?.rgb_color || [255, 198, 130];
   const [on, setOn] = useState(e.state === "on");
   const [bright, setB] = useState(e.attributes?.brightness || 180);
@@ -1225,14 +1238,14 @@ export function LightCard({ index = 0, entityId }) {
   }, [live?.state, live?.attributes?.brightness, live?.attributes?.rgb_color?.join(",")]);
 
   function toggle() {
-    if (placeholder) return;
+    if (placeholder || unavailable) return;
     const next = !on;
     setOn(next);
     callService("light", next ? "turn_on" : "turn_off", { entity_id: entityId }).catch(() => setOn(on));
   }
 
   function pickColor(p) {
-    if (placeholder) return;
+    if (placeholder || unavailable) return;
     setRgb(p.rgb);
     if (!on) setOn(true);
     const data = { entity_id: entityId, rgb_color: p.rgb };
@@ -1242,7 +1255,7 @@ export function LightCard({ index = 0, entityId }) {
 
   function commitBrightness(v) {
     setB(v);
-    if (placeholder || !on) return;
+    if (placeholder || unavailable || !on) return;
     callService("light", "turn_on", { entity_id: entityId, brightness: v }).catch(() => {});
   }
 
@@ -1255,7 +1268,7 @@ export function LightCard({ index = 0, entityId }) {
       index={index}
       eyebrow={`Light · ${entityId}`}
       title={e.attributes.friendly_name}
-      meta={placeholder ? "Not yet added" : on ? `On · ${Math.round((bright / 255) * 100)}%` : "Off"}
+      meta={placeholder ? "Not yet added" : unavailable ? "Unavailable" : on ? `On · ${Math.round((bright / 255) * 100)}%` : "Off"}
       headRight={
         placeholder ? (
           <span
@@ -1273,6 +1286,8 @@ export function LightCard({ index = 0, entityId }) {
           >
             future
           </span>
+        ) : unavailable ? (
+          <span className="pill" style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--bad)", padding: "4px 10px", borderRadius: 999, border: "1px solid var(--bad)" }}>offline</span>
         ) : (
           <div className={`toggle ${on ? "on" : ""}`} onClick={toggle} role="switch" aria-checked={on} />
         )
@@ -1285,7 +1300,7 @@ export function LightCard({ index = 0, entityId }) {
           gap: 18,
           alignItems: "center",
           marginTop: 4,
-          opacity: placeholder ? 0.5 : 1,
+          opacity: placeholder || unavailable ? 0.5 : 1,
         }}
       >
         <div
@@ -1318,7 +1333,7 @@ export function LightCard({ index = 0, entityId }) {
             max="255"
             step="1"
             value={bright}
-            disabled={placeholder || !on}
+            disabled={placeholder || unavailable || !on}
             onChange={(ev) => setB(Number(ev.target.value))}
             onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
             onKeyUp={(ev) => commitBrightness(Number(ev.target.value))}
@@ -1328,7 +1343,7 @@ export function LightCard({ index = 0, entityId }) {
         </div>
       </div>
 
-      {!placeholder && (
+      {!placeholder && !unavailable && (
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1366,6 +1381,7 @@ export function LightCard({ index = 0, entityId }) {
 export function FanCard({ index = 0 }) {
   const live = useEntity("fan.ceiling");
   const f = live || GH_DATA.fans["fan.ceiling"];
+  const unavailable = !live || live.state === "unavailable" || live.state === "unknown";
   const [on, setOn] = useState(f.state === "on");
   const [pct, setPct] = useState(f.attributes?.percentage || 0);
   const presets = f.attributes?.preset_modes || GH_DATA.fans["fan.ceiling"].attributes.preset_modes;
@@ -1378,11 +1394,13 @@ export function FanCard({ index = 0 }) {
   }, [live?.state, live?.attributes?.percentage, live?.attributes?.preset_mode]);
 
   function toggleFan() {
+    if (unavailable) return;
     const next = !on;
     setOn(next);
     callService("fan", next ? "turn_on" : "turn_off", { entity_id: "fan.ceiling" }).catch(() => setOn(on));
   }
   function pick(p) {
+    if (unavailable) return;
     setPreset(p);
     setOn(true);
     setPct(p === "sleep" ? 25 : p === "low" ? 40 : p === "medium" ? 65 : 100);
@@ -1394,8 +1412,8 @@ export function FanCard({ index = 0 }) {
       index={index}
       eyebrow="Fan · fan.ceiling"
       title="Ceiling fan"
-      meta={on ? `${preset || "manual"} · ${pct}%` : "Off"}
-      headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={toggleFan} role="switch" />}
+      meta={unavailable ? "Entity not found" : on ? `${preset || "manual"} · ${pct}%` : "Off"}
+      headRight={<div className={`toggle ${on && !unavailable ? "on" : ""}`} onClick={toggleFan} role="switch" style={unavailable ? { opacity: 0.4 } : undefined} />}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 18, marginTop: 4 }}>
         <div
@@ -1453,7 +1471,7 @@ export function FanCard({ index = 0 }) {
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Speed</div>
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {presets.map((p) => (
-              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => pick(p)}>
+              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => pick(p)} disabled={unavailable}>
                 {p}
               </button>
             ))}
@@ -1470,19 +1488,22 @@ export function FanCard({ index = 0 }) {
 function QuickToggle({ entityId }) {
   const live = useEntity(entityId);
   const e = live || GH_DATA.lights[entityId];
+  const unavailable = live?.state === "unavailable" || live?.state === "unknown";
   const initRgb = e.attributes?.rgb_color || [255, 198, 130];
   const [on, setOn] = useState(e.state === "on");
   useEffect(() => {
     if (live) setOn(live.state === "on");
   }, [live?.state]);
   function toggle() {
+    if (unavailable) return;
     const next = !on;
-    setOn(next); // optimistic
+    setOn(next);
     callService("light", next ? "turn_on" : "turn_off", { entity_id: entityId }).catch(() => setOn(on));
   }
   return (
     <button
       onClick={toggle}
+      disabled={unavailable}
       style={{
         background: "var(--glass-bg-2)",
         border: "1px solid var(--glass-stroke)",
@@ -1527,10 +1548,10 @@ function QuickToggle({ entityId }) {
             marginTop: 2,
           }}
         >
-          {on ? "On" : "Off"}
+          {unavailable ? "Unavailable" : on ? "On" : "Off"}
         </div>
       </div>
-      <div className={`toggle ${on ? "on" : ""}`} style={{ transform: "scale(0.8)", transformOrigin: "right center" }} />
+      <div className={`toggle ${on && !unavailable ? "on" : ""}`} style={{ transform: "scale(0.8)", transformOrigin: "right center", opacity: unavailable ? 0.4 : 1 }} />
     </button>
   );
 }
@@ -3058,28 +3079,188 @@ export function WeeklyCalendarCard({ index = 0 }) {
 }
 
 /* ----------------------------------------------------------------
-   Kanban — 4 columns, HTML5 DnD (mock-only). Restored 2026-05-22 to
-   the pre-Phase-3 version at the user's request.
+   Kanban — live iCloud Reminders via HA CalDAV todo entities.
+   Columns: Backlog (todo.reminders) → Next (todo.today) →
+   In Progress (todo.doing) → Done (completed items across all lists).
+   Tags stored as #tag in description. Due dates optional.
    ----------------------------------------------------------------*/
-export function KanbanBoardCard({ index = 0 }) {
-  const COLS = ["todo.backlog", "todo.today", "todo.doing", "todo.done"];
-  const [lists, setLists] = useState(() => {
+const KANBAN_COLS = [
+  { id: "todo.reminders", label: "Backlog" },
+  { id: "todo.today",     label: "Next" },
+  { id: "todo.doing",     label: "In Progress" },
+  { id: "__done__",        label: "Done" },
+];
+const KANBAN_ENTITY_IDS = KANBAN_COLS.filter((c) => c.id !== "__done__").map((c) => c.id);
+
+function parseTags(description) {
+  if (!description) return { tags: [], text: "" };
+  const tags = [];
+  const text = description.replace(/#(\w[\w-]*)/g, (_, t) => { tags.push(t); return ""; }).trim();
+  return { tags, text };
+}
+
+function buildDescription(tags, text) {
+  const parts = [];
+  if (tags.length) parts.push(tags.map((t) => `#${t}`).join(" "));
+  if (text) parts.push(text);
+  return parts.join(" ") || undefined;
+}
+
+function fmtDue(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + "T00:00:00");
+  const now = new Date();
+  const diff = Math.round((d - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+  if (diff < 0) return "overdue";
+  if (diff === 0) return "today";
+  if (diff === 1) return "tomorrow";
+  return d.toLocaleDateString("en-GB", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function useKanbanItems(entityIds) {
+  const connStatus = useConnectionStatus();
+  const [columns, setColumns] = useState(() => {
     const out = {};
-    for (const id of COLS) out[id] = GH_DATA.todo_lists[id].items.slice();
+    for (const id of entityIds) out[id] = [];
+    out.__done__ = [];
     return out;
   });
+  const [loading, setLoading] = useState(true);
+  const [fetchTick, setFetchTick] = useState(0);
+
+  useEffect(() => {
+    if (connStatus !== "ready") return;
+    let cancelled = false;
+    (async () => {
+      const out = {};
+      const done = [];
+      for (const id of entityIds) {
+        out[id] = [];
+        try {
+          const [active, completed] = await Promise.all([
+            getTodoItems(id, "needs_action"),
+            getTodoItems(id, "completed"),
+          ]);
+          out[id] = active.map((it) => ({ ...it, _entity: id }));
+          done.push(...completed.map((it) => ({ ...it, _entity: id })));
+        } catch {}
+      }
+      if (cancelled) return;
+      setColumns({ ...out, __done__: done });
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [connStatus, fetchTick]);
+
+  const refresh = () => setFetchTick((t) => t + 1);
+
+  return { columns, setColumns, loading, refresh };
+}
+
+export function KanbanBoardCard({ index = 0 }) {
+  const { columns, setColumns, loading, refresh } = useKanbanItems(KANBAN_ENTITY_IDS);
   const [dragOver, setDragOver] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
+  const [adding, setAdding] = useState(null);
 
-  function moveCard(uid, fromCol, toCol) {
-    if (fromCol === toCol) return;
-    setLists((cur) => {
+  function optimisticMove(uid, fromCol, toCol) {
+    setColumns((cur) => {
       const next = { ...cur };
-      next[fromCol] = cur[fromCol].filter((c) => c.uid !== uid);
-      const card = cur[fromCol].find((c) => c.uid === uid);
-      if (card) next[toCol] = [card, ...cur[toCol]];
+      const card = cur[fromCol].find((c) => (c.uid || c.summary) === uid);
+      if (!card) return cur;
+      next[fromCol] = cur[fromCol].filter((c) => (c.uid || c.summary) !== uid);
+      next[toCol] = [card, ...cur[toCol]];
       return next;
     });
+  }
+
+  async function moveCard(uid, fromCol, toCol) {
+    if (fromCol === toCol) return;
+    const card = columns[fromCol]?.find((c) => (c.uid || c.summary) === uid);
+    if (!card) return;
+    optimisticMove(uid, fromCol, toCol);
+    try {
+      if (toCol === "__done__") {
+        await callService("todo", "update_item", {
+          entity_id: card._entity,
+          item: card.summary,
+          status: "completed",
+        });
+      } else if (fromCol === "__done__") {
+        const targetEntity = toCol;
+        if (card._entity === targetEntity) {
+          await callService("todo", "update_item", {
+            entity_id: card._entity,
+            item: card.summary,
+            status: "needs_action",
+          });
+        } else {
+          await callService("todo", "update_item", {
+            entity_id: card._entity,
+            item: card.summary,
+            status: "needs_action",
+          });
+          await callService("todo", "remove_item", {
+            entity_id: card._entity,
+            item: card.summary,
+          });
+          await callService("todo", "add_item", {
+            entity_id: targetEntity,
+            item: card.summary,
+            ...(card.due ? { due_date: card.due } : {}),
+            ...(card.description ? { description: card.description } : {}),
+          });
+        }
+      } else {
+        await callService("todo", "remove_item", {
+          entity_id: fromCol,
+          item: card.summary,
+        });
+        await callService("todo", "add_item", {
+          entity_id: toCol,
+          item: card.summary,
+          ...(card.due ? { due_date: card.due } : {}),
+          ...(card.description ? { description: card.description } : {}),
+        });
+      }
+      setTimeout(refresh, 500);
+    } catch {
+      optimisticMove(uid, toCol, fromCol);
+    }
+  }
+
+  async function addItem(colId, summary, tags, due) {
+    const desc = buildDescription(tags, "");
+    const temp = { uid: `temp-${Date.now()}`, summary, description: desc, due: due || undefined, status: "needs_action", _entity: colId };
+    setColumns((cur) => ({ ...cur, [colId]: [...cur[colId], temp] }));
+    setAdding(null);
+    try {
+      await callService("todo", "add_item", {
+        entity_id: colId,
+        item: summary,
+        ...(due ? { due_date: due } : {}),
+        ...(desc ? { description: desc } : {}),
+      });
+      setTimeout(refresh, 500);
+    } catch {
+      setColumns((cur) => ({ ...cur, [colId]: cur[colId].filter((c) => c.uid !== temp.uid) }));
+    }
+  }
+
+  async function removeItem(colId, card) {
+    setColumns((cur) => ({
+      ...cur,
+      [colId]: cur[colId].filter((c) => (c.uid || c.summary) !== (card.uid || card.summary)),
+    }));
+    try {
+      await callService("todo", "remove_item", {
+        entity_id: card._entity || colId,
+        item: card.summary,
+      });
+      setTimeout(refresh, 500);
+    } catch {
+      setColumns((cur) => ({ ...cur, [colId]: [...cur[colId], card] }));
+    }
   }
 
   function onDragStart(ev, uid, col) {
@@ -3087,15 +3268,8 @@ export function KanbanBoardCard({ index = 0 }) {
     ev.dataTransfer.effectAllowed = "move";
     setDraggingId(uid);
   }
-  function onDragEnd() {
-    setDraggingId(null);
-    setDragOver(null);
-  }
-  function onDragOver(ev, col) {
-    ev.preventDefault();
-    ev.dataTransfer.dropEffect = "move";
-    setDragOver(col);
-  }
+  function onDragEnd() { setDraggingId(null); setDragOver(null); }
+  function onDragOver(ev, col) { ev.preventDefault(); ev.dataTransfer.dropEffect = "move"; setDragOver(col); }
   function onDrop(ev, col) {
     ev.preventDefault();
     try {
@@ -3106,18 +3280,20 @@ export function KanbanBoardCard({ index = 0 }) {
     setDraggingId(null);
   }
 
+  const liveCount = KANBAN_ENTITY_IDS.reduce((n, id) => n + (columns[id]?.length || 0), 0) + (columns.__done__?.length || 0);
+
   return (
     <Card
       index={index}
-      eyebrow="Kanban · todo.backlog · today · doing · done"
+      eyebrow={`Kanban · iCloud Reminders${loading ? "" : ` · ${liveCount} items`}`}
       title="Project board"
-      meta="drag cards between columns"
+      meta={loading ? "loading…" : "drag cards between columns"}
     >
       <div className="kanban">
-        {COLS.map((id) => {
-          const meta = GH_DATA.todo_lists[id];
-          const items = lists[id];
-          const isDone = id === "todo.done";
+        {KANBAN_COLS.map(({ id, label }) => {
+          const items = columns[id] || [];
+          const isDone = id === "__done__";
+          const canAdd = id !== "__done__";
           return (
             <div
               key={id}
@@ -3127,30 +3303,72 @@ export function KanbanBoardCard({ index = 0 }) {
               onDrop={(ev) => onDrop(ev, id)}
             >
               <div className="kanban-col-head">
-                <span className="label">{meta.label}</span>
+                <span className="label">{label}</span>
                 <span className="count">{items.length}</span>
               </div>
-              {items.map((c) => (
-                <div
-                  key={c.uid}
-                  className={`kanban-card ${isDone ? "done" : ""} ${draggingId === c.uid ? "dragging" : ""}`}
-                  draggable
-                  onDragStart={(ev) => onDragStart(ev, c.uid, id)}
-                  onDragEnd={onDragEnd}
-                >
-                  <div className="summary">{c.summary}</div>
-                  <div className="meta">
-                    <span className={`tag tag-${c.tag}`}>{c.tag}</span>
-                    {c.due && <span className="due">due · {c.due}</span>}
+              {items.map((c) => {
+                const key = c.uid || c.summary;
+                const { tags } = parseTags(c.description);
+                const dueLabel = fmtDue(c.due);
+                return (
+                  <div
+                    key={key}
+                    className={`kanban-card ${isDone ? "done" : ""} ${draggingId === key ? "dragging" : ""}${dueLabel === "overdue" ? " overdue" : ""}`}
+                    draggable
+                    onDragStart={(ev) => onDragStart(ev, key, id)}
+                    onDragEnd={onDragEnd}
+                  >
+                    <button className="kanban-card-x" onClick={() => removeItem(id, c)} title="Delete">&times;</button>
+                    <div className="summary">{c.summary}</div>
+                    <div className="meta">
+                      <span className="tags">
+                        {tags.map((t) => <span key={t} className={`tag tag-${t}`}>{t}</span>)}
+                      </span>
+                      {dueLabel && <span className={`due${dueLabel === "overdue" ? " due-overdue" : ""}`}>due · {dueLabel}</span>}
+                    </div>
                   </div>
-                </div>
-              ))}
-              <button className="kanban-add">+ Add</button>
+                );
+              })}
+              {adding === id ? (
+                <KanbanAddForm onSubmit={(s, t, d) => addItem(id, s, t, d)} onCancel={() => setAdding(null)} />
+              ) : canAdd ? (
+                <button className="kanban-add" onClick={() => setAdding(id)}>+ Add</button>
+              ) : null}
             </div>
           );
         })}
       </div>
     </Card>
+  );
+}
+
+function KanbanAddForm({ onSubmit, onCancel }) {
+  const [summary, setSummary] = useState("");
+  const [tagStr, setTagStr] = useState("");
+  const [due, setDue] = useState("");
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.focus(); }, []);
+
+  function handle(ev) {
+    ev.preventDefault();
+    const s = summary.trim();
+    if (!s) return;
+    const tags = tagStr.split(/[\s,]+/).map((t) => t.replace(/^#/, "").trim()).filter(Boolean);
+    onSubmit(s, tags, due || null);
+  }
+
+  return (
+    <form className="kanban-add-form" onSubmit={handle}>
+      <input ref={ref} className="kanban-input" placeholder="What needs doing?" value={summary} onChange={(ev) => setSummary(ev.target.value)} />
+      <div className="kanban-add-row">
+        <input className="kanban-input kanban-input-sm" placeholder="#tag" value={tagStr} onChange={(ev) => setTagStr(ev.target.value)} />
+        <input className="kanban-input kanban-input-sm" type="date" value={due} onChange={(ev) => setDue(ev.target.value)} />
+      </div>
+      <div className="kanban-add-row">
+        <button type="submit" className="kanban-add-btn">Add</button>
+        <button type="button" className="kanban-add-btn cancel" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
   );
 }
 

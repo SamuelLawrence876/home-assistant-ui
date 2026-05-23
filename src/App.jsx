@@ -9,10 +9,11 @@
    in-app Tweaks drawer (cog button, top right). Settings persist to
    localStorage. */
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { GH_DATA } from "./data.js";
 import { LEANS, skyColors, nowFractionalHour } from "./theme.js";
 import { useConnectionStatus, useEntityCounts } from "./ha/useEntity.js";
+import { onServiceError } from "./ha/client.js";
 import {
   Card,
   fmtTime,
@@ -331,6 +332,43 @@ function SystemView() {
 }
 
 /* ----------------------------------------------------------------
+   Service error toast
+   ----------------------------------------------------------------*/
+let toastIdCounter = 0;
+
+function ServiceErrorToast() {
+  const [toasts, setToasts] = useState([]);
+  const dismiss = useCallback((id) => {
+    setToasts((t) => t.filter((x) => x.id !== id));
+  }, []);
+  useEffect(() => {
+    return onServiceError(({ domain, service, data, error }) => {
+      const entityId = data?.entity_id || "";
+      const errMsg = error?.message || String(error);
+      const shortErr = errMsg.length > 120 ? errMsg.slice(0, 120) + "…" : errMsg;
+      const label = entityId
+        ? `${domain}.${service} on ${entityId} failed`
+        : `${domain}.${service} failed`;
+      const id = ++toastIdCounter;
+      setToasts((t) => [...t.slice(-4), { id, label, detail: shortErr }]);
+      setTimeout(() => dismiss(id), 6000);
+    });
+  }, [dismiss]);
+  if (toasts.length === 0) return null;
+  return (
+    <div className="toast-stack">
+      {toasts.map((t) => (
+        <div key={t.id} className="toast-item">
+          <div className="toast-label">{t.label}</div>
+          <div className="toast-detail">{t.detail}</div>
+          <button className="toast-close" onClick={() => dismiss(t.id)}>&times;</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------
    App
    ----------------------------------------------------------------*/
 function useViewport() {
@@ -509,6 +547,8 @@ export default function App() {
         onClockOverrideChange={setClockOverride}
         onClockChange={setClock}
       />
+
+      <ServiceErrorToast />
     </>
   );
 }

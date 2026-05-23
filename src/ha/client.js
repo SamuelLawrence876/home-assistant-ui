@@ -68,5 +68,15 @@ export async function getForecast(entityId, type = "daily") {
   return res?.service_response?.[entityId]?.forecast || [];
 }
 
+export async function getTodoItems(entityId, status) {
+  const data = { entity_id: entityId };
+  if (status) data.status = status;
+  const res = await req(`/api/services/todo/get_items?return_response`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return res?.service_response?.[entityId]?.items || [];
+}
+
 export const haUrl = () => getHAConfig().url;
 export const haToken = () => getHAConfig().token;
