@@ -202,7 +202,7 @@ function OverviewView({ viewport, sky }) {
       <div className="col-8">
         <WeatherSunHero index={0} sky={sky} compact={viewport === "phone"} />
       </div>
-      <div className="col-4" style={{ display: "grid", gap: 14 }}>
+      <div className="col-4" style={{ display: "grid", gap: 14, alignContent: "start" }}>
         <PresenceCard index={1} />
         <MediaCard index={2} />
       </div>
