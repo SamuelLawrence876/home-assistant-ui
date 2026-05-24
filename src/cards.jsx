@@ -5,6 +5,11 @@ import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
 import { useEntity, useEntitiesByDomain, useConnectionStatus, useEntityStatus, combineStatuses } from "./ha/useEntity.js";
 import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js";
+import {
+  isSpotifyConfigured, isSpotifyConnected, startSpotifyAuth,
+  handleSpotifyCallback, clearSpotifyToken, getPlaylists,
+  getRecentlyPlayed, getDevices, playUri,
+} from "./ha/spotify.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
 
 /* ----------------------------------------------------------------
@@ -2357,93 +2362,67 @@ export function SpotifyConnectCard({ index = 0 }) {
   );
 }
 
-const SPOTIFY_ENTITY = "media_player.spotify_samuel_lawrence";
-const PRESETS_KEY = "gh_spotify_presets";
-
-function parseSpotifyUrl(input) {
-  const trimmed = (input || "").trim();
-  if (trimmed.startsWith("spotify:")) return trimmed;
-  try {
-    const url = new URL(trimmed);
-    if (!url.hostname.includes("spotify.com")) return null;
-    const parts = url.pathname.split("/").filter(Boolean);
-    if (parts.length >= 2) return `spotify:${parts[0]}:${parts[1]}`;
-  } catch {}
-  return null;
-}
-
-function spotifyType(uri) {
-  const parts = (uri || "").split(":");
-  return parts[1] || "track";
-}
-
-function loadPresets() {
-  try {
-    return JSON.parse(localStorage.getItem(PRESETS_KEY)) || [];
-  } catch { return []; }
-}
-
-function savePresets(presets) {
-  localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
-}
-
 export function MusicBrowserCard({ index = 0 }) {
-  const [presets, setPresets] = useState(loadPresets);
-  const [adding, setAdding] = useState(false);
-  const [input, setInput] = useState("");
-  const [label, setLabel] = useState("");
+  const [connected, setConnected] = useState(isSpotifyConnected);
+  const [playlists, setPlaylists] = useState([]);
+  const [recent, setRecent] = useState([]);
+  const [tab, setTab] = useState("playlists");
+  const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(null);
   const [error, setError] = useState(null);
-  const inputRef = useRef(null);
+  const configured = isSpotifyConfigured();
 
   useEffect(() => {
-    if (adding && inputRef.current) inputRef.current.focus();
-  }, [adding]);
+    handleSpotifyCallback().then((handled) => {
+      if (handled) setConnected(true);
+    });
+  }, []);
 
-  function addPreset() {
-    const uri = parseSpotifyUrl(input);
-    if (!uri) { setError("Paste a Spotify link or URI"); return; }
-    if (presets.some((p) => p.uri === uri)) { setError("Already added"); return; }
-    const name = label.trim() || spotifyType(uri) + " " + (presets.length + 1);
-    const next = [...presets, { uri, name, type: spotifyType(uri) }];
-    setPresets(next);
-    savePresets(next);
-    setInput("");
-    setLabel("");
-    setAdding(false);
-    setError(null);
-  }
+  useEffect(() => {
+    if (!connected) return;
+    setLoading(true);
+    Promise.all([
+      getPlaylists(30).catch(() => []),
+      getRecentlyPlayed(15).catch(() => []),
+    ]).then(([pl, rc]) => {
+      setPlaylists(pl);
+      setRecent(rc);
+      setLoading(false);
+    });
+  }, [connected]);
 
-  function removePreset(uri) {
-    const next = presets.filter((p) => p.uri !== uri);
-    setPresets(next);
-    savePresets(next);
-  }
-
-  async function play(preset) {
-    setPlaying(preset.uri);
+  async function play(uri) {
+    setPlaying(uri);
     setError(null);
     try {
-      await callService("media_player", "play_media", {
-        entity_id: SPOTIFY_ENTITY,
-        media_content_type: `spotify://${preset.type}`,
-        media_content_id: preset.uri,
-      });
+      await playUri(uri);
     } catch (e) {
-      console.warn("[play] failed", e);
-      setError("Playback failed — is Spotify active?");
+      console.warn("[spotify] play failed", e);
+      if (e.message?.includes("expired")) {
+        setConnected(false);
+        setError("Session expired — reconnect");
+      } else {
+        setError("Open Spotify on a device first");
+      }
     }
     setTimeout(() => setPlaying(null), 2000);
+  }
+
+  function disconnect() {
+    clearSpotifyToken();
+    setConnected(false);
+    setPlaylists([]);
+    setRecent([]);
   }
 
   const itemStyle = {
     background: "var(--glass-bg-2)",
     border: "1px solid var(--glass-stroke)",
     borderRadius: 12,
-    padding: "10px 14px",
+    padding: "10px 12px",
     display: "flex",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
     cursor: "pointer",
     fontFamily: "inherit",
     textAlign: "left",
@@ -2452,174 +2431,168 @@ export function MusicBrowserCard({ index = 0 }) {
     width: "100%",
   };
 
+  const thumbStyle = {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+    backgroundColor: "color-mix(in oklch, var(--ink), transparent 88%)",
+    flexShrink: 0,
+  };
+
+  if (!configured) {
+    return (
+      <Card index={index} eyebrow="Library · Spotify" title="Music">
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", lineHeight: 1.5 }}>
+          Set VITE_SPOTIFY_CLIENT_ID to enable Spotify integration.
+        </div>
+      </Card>
+    );
+  }
+
+  if (!connected) {
+    return (
+      <Card index={index} eyebrow="Library · Spotify" title="Music">
+        <button
+          className="btn primary"
+          onClick={startSpotifyAuth}
+          style={{
+            width: "100%",
+            padding: "14px 20px",
+            fontSize: 14,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+          }}
+        >
+          <span style={{ fontSize: 18 }}>♪</span>
+          Connect to Spotify
+        </button>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--ink-3)", marginTop: 8, textAlign: "center" }}>
+          Browse your playlists and play music from the dashboard
+        </div>
+      </Card>
+    );
+  }
+
+  const tabs = [
+    { id: "playlists", label: "Playlists", count: playlists.length },
+    { id: "recent", label: "Recent", count: recent.length },
+  ];
+
+  const items = tab === "playlists" ? playlists : recent;
+
   return (
     <Card
       index={index}
       eyebrow="Library · Spotify"
-      title="Quick play"
-      meta={presets.length > 0 ? `${presets.length} saved` : null}
-    >
-      {presets.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {presets.map((p) => {
-            const isPlaying = playing === p.uri;
-            return (
-              <button
-                key={p.uri}
-                style={{ ...itemStyle, opacity: isPlaying ? 0.6 : 1 }}
-                onClick={() => play(p)}
-              >
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 8,
-                    background: isPlaying
-                      ? "linear-gradient(135deg, #1db954, #1ed760)"
-                      : "color-mix(in oklch, var(--ink), transparent 88%)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 16,
-                    flexShrink: 0,
-                    transition: "background 0.3s ease",
-                  }}
-                >
-                  {isPlaying ? "♪" : "▶"}
-                </div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 500,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {p.name}
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 9,
-                      letterSpacing: "0.08em",
-                      textTransform: "uppercase",
-                      color: "var(--ink-3)",
-                      marginTop: 1,
-                    }}
-                  >
-                    {p.type}
-                  </div>
-                </div>
-                <span
-                  onClick={(e) => { e.stopPropagation(); removePreset(p.uri); }}
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 9,
-                    color: "var(--ink-3)",
-                    cursor: "pointer",
-                    padding: "4px 6px",
-                    borderRadius: 6,
-                    transition: "color 0.2s",
-                  }}
-                  title="Remove"
-                >
-                  ✕
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {error && (
-        <div
+      title="Music"
+      meta={loading ? "Loading" : null}
+      headRight={
+        <span
+          onClick={disconnect}
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: 10,
-            color: "#e55",
-            marginTop: 8,
+            fontSize: 9,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: "var(--ink-3)",
+            cursor: "pointer",
           }}
         >
+          Disconnect
+        </span>
+      }
+    >
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            className={`preset ${tab === t.id ? "on" : ""}`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}{t.count > 0 ? ` (${t.count})` : ""}
+          </button>
+        ))}
+      </div>
+
+      {error && (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>
           {error}
         </div>
       )}
 
-      {adding ? (
-        <div
-          style={{
-            marginTop: presets.length > 0 ? 12 : 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
-        >
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder="Paste Spotify link or URI..."
-            value={input}
-            onChange={(e) => { setInput(e.target.value); setError(null); }}
-            onKeyDown={(e) => e.key === "Enter" && addPreset()}
-            style={{
-              background: "var(--glass-bg-2)",
-              border: "1px solid var(--glass-stroke)",
-              borderRadius: 10,
-              padding: "10px 12px",
-              fontSize: 13,
-              fontFamily: "var(--font-mono)",
-              color: "var(--ink)",
-              outline: "none",
-              width: "100%",
-              boxSizing: "border-box",
-            }}
-          />
-          <input
-            type="text"
-            placeholder="Label (optional)"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addPreset()}
-            style={{
-              background: "var(--glass-bg-2)",
-              border: "1px solid var(--glass-stroke)",
-              borderRadius: 10,
-              padding: "10px 12px",
-              fontSize: 13,
-              fontFamily: "var(--font-mono)",
-              color: "var(--ink)",
-              outline: "none",
-              width: "100%",
-              boxSizing: "border-box",
-            }}
-          />
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn primary" onClick={addPreset}>Add</button>
-            <button className="btn" onClick={() => { setAdding(false); setError(null); }}>Cancel</button>
-          </div>
-        </div>
-      ) : (
-        <button
-          className="btn"
-          onClick={() => setAdding(true)}
-          style={{ marginTop: presets.length > 0 ? 12 : 0, width: "100%" }}
-        >
-          + Add playlist or album
-        </button>
-      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+        {items.map((item) => {
+          const uri = item.uri;
+          const isPlaying = playing === uri;
+          const img = item.image || null;
+          const subtitle = tab === "playlists"
+            ? `${item.tracks} tracks · ${item.owner}`
+            : `${item.artist} · ${item.album}`;
 
-      {presets.length === 0 && !adding && (
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            color: "var(--ink-3)",
-            padding: "8px 4px 0",
-            lineHeight: 1.5,
-          }}
-        >
-          Add your favorite Spotify playlists, albums, or tracks. Paste a share link from the Spotify app.
+          return (
+            <button
+              key={uri + (item.name || "")}
+              style={{ ...itemStyle, opacity: isPlaying ? 0.6 : 1 }}
+              onClick={() => play(tab === "recent" ? (item.contextUri || uri) : uri)}
+            >
+              <div
+                style={{
+                  ...thumbStyle,
+                  backgroundImage: img ? `url(${img})` : undefined,
+                }}
+              />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {item.name}
+                </div>
+                <div
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 9,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: "var(--ink-3)",
+                    marginTop: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {subtitle}
+                </div>
+              </div>
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 9,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: "var(--ink-3)",
+                  flexShrink: 0,
+                }}
+              >
+                {isPlaying ? "..." : "▶"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {!loading && items.length === 0 && (
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
+          {tab === "playlists" ? "No playlists found." : "No recent tracks."}
         </div>
       )}
     </Card>
@@ -3530,44 +3503,426 @@ export function StatBox({ index = 0, eyebrow, value, unit, caption, pct, color }
 /* Live-wired StatBox variants for Overview. Each subscribes to its own
    entities so a single tile updating doesn't re-render the others. */
 
-export function RoomTempStatBox({ index = 0 }) {
-  const { entity: liveTemp, status } = useEntityStatus("sensor.h5075_4fb6_temperature");
-  const liveHum = useEntity("sensor.h5075_4fb6_humidity");
-  if (status !== "ready") return <Card index={index} className="room-climate"><EntityGuard status={status} entityId="sensor.h5075_4fb6_temperature" /></Card>;
+/* Mock 24h history arrays — 24 data-points, will be replaced with real
+   HA history calls later. Shaped to look plausible for a bedroom. */
+const MOCK_TEMP_HIST = [19.8, 19.6, 19.4, 19.3, 19.2, 19.1, 19.0, 19.1, 19.3, 19.6, 20.0, 20.4, 20.8, 21.1, 21.3, 21.4, 21.3, 21.1, 20.9, 20.7, 20.5, 20.4, 20.3, 20.2];
+const MOCK_HUM_HIST  = [52, 53, 54, 55, 55, 56, 56, 55, 54, 52, 50, 48, 46, 45, 44, 44, 45, 46, 47, 48, 49, 50, 51, 51];
+
+/* Catmull-Rom -> cubic Bezier for smooth SVG curves */
+function smoothPath(pts) {
+  if (pts.length < 2) return "";
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+/* ----------------------------------------------------------------
+   Room climate — full card for the Climate tab
+   (Govee BLE H5075 temperature + humidity, live-wired)
+   ----------------------------------------------------------------*/
+export function RoomClimateCard({ index = 0, compact }) {
+  const { entity: liveTemp, status: tempStatus } = useEntityStatus("sensor.h5075_4fb6_temperature");
+  const { entity: liveHum, status: humStatus } = useEntityStatus("sensor.h5075_4fb6_humidity");
+  const combined = combineStatuses(tempStatus, humStatus);
+
+  if (combined !== "ready") {
+    return (
+      <Card index={index} eyebrow="Climate" title="Room">
+        <EntityGuard status={combined} entityId="sensor.h5075_4fb6_temperature" />
+      </Card>
+    );
+  }
+
   const temp = Number(liveTemp?.state ?? 0);
-  const hum = Number(liveHum?.state ?? 0);
-  const tempColor = temp >= 18 && temp <= 24 ? "var(--good)" : temp < 18 ? "var(--accent-2)" : "var(--bad)";
-  const tempPct = Math.max(0, Math.min(100, ((temp - 10) / 30) * 100));
-  const humPct = Math.max(0, Math.min(100, hum));
+  const humidity = Number(liveHum?.state ?? 0);
+
+  // Build history with live value as the last point
+  const tempHist = [...MOCK_TEMP_HIST.slice(0, 23), temp];
+  const humHist = [...MOCK_HUM_HIST.slice(0, 23), humidity];
+
+  const tempMin = Math.min(...tempHist);
+  const tempMax = Math.max(...tempHist);
+
+  // Dew point approximation (Magnus formula)
+  const gamma = Math.log(humidity / 100) + (17.67 * temp) / (243.5 + temp);
+  const dewPt = (243.5 * gamma) / (17.67 - gamma);
+
+  // Trend over last 3h (index 20 vs 23)
+  const prev = tempHist[tempHist.length - 4];
+  const delta = temp - prev;
+  const trend = delta > 0.2 ? "up" : delta < -0.2 ? "down" : "flat";
+
+  // Comfort verdict
+  const tempBand = temp < 18 ? "cold" : temp < 19 ? "cool" : temp <= 22 ? "comfortable" : temp <= 25 ? "warm" : "hot";
+  const humBand = humidity < 30 ? "dry" : humidity <= 55 ? "ideal" : humidity <= 65 ? "damp" : "humid";
+  const allGood = tempBand === "comfortable" && humBand === "ideal";
+  const verdict = allGood ? "Comfortable" : tempBand !== "comfortable" ? `Room is ${tempBand}` : `Air is ${humBand}`;
+  const verdictNote =
+    allGood ? "Sleep-friendly range. Holding steady."
+    : tempBand === "cold"   ? "Below typical sleeping range. Consider the heater."
+    : tempBand === "cool"   ? "Slightly cool — fine if you like it crisp."
+    : tempBand === "warm"   ? "A touch warm. Crack a window or run the fan."
+    : tempBand === "hot"    ? "Too warm for sleep. Run the fan."
+    : humBand === "dry"     ? "Dry air — humidifier helps."
+    : humBand === "damp"    ? "A little damp. Ventilate."
+    : "Humid — open a window or run the purifier.";
+
+  // Humidity ring geometry (60px radius)
+  const R = 60;
+  const C = 2 * Math.PI * R;
+  const humOffset = C * (1 - humidity / 100);
+
+  // ---- Chart geometry ----
+  const SW = 640, SH = 150;
+  const PAD_L = 8, PAD_R = 8, PAD_T = 18, PAD_B = 22;
+  const innerW = SW - PAD_L - PAD_R;
+  const innerH = SH - PAD_T - PAD_B;
+
+  const tMin = Math.min(...tempHist);
+  const tMax = Math.max(...tempHist);
+  const tRange = Math.max(0.5, tMax - tMin);
+  const tPadded = tRange * 0.18;
+  const tLo = tMin - tPadded;
+  const tHi = tMax + tPadded;
+
+  const hMin = Math.min(...humHist);
+  const hMax = Math.max(...humHist);
+  const hRange = Math.max(2, hMax - hMin);
+  const hLo = hMin - hRange * 0.18;
+  const hHi = hMax + hRange * 0.18;
+
+  const xAt = (i) => PAD_L + (i / (tempHist.length - 1)) * innerW;
+  const yTemp = (v) => PAD_T + (1 - (v - tLo) / (tHi - tLo)) * innerH;
+  const yHum  = (v) => PAD_T + (1 - (v - hLo) / (hHi - hLo)) * innerH;
+
+  const tempPts = tempHist.map((v, i) => ({ x: xAt(i), y: yTemp(v) }));
+  const humPts  = humHist.map((v, i)  => ({ x: xAt(i), y: yHum(v) }));
+  const tempLine = smoothPath(tempPts);
+  const humLine  = smoothPath(humPts);
+  const baseY = PAD_T + innerH;
+  const tempArea = `${tempLine} L ${tempPts[tempPts.length - 1].x.toFixed(1)} ${baseY} L ${tempPts[0].x.toFixed(1)} ${baseY} Z`;
+
+  // Min/max points
+  const maxIdx = tempHist.indexOf(tMax);
+  const minIdx = tempHist.indexOf(tMin);
+  const maxX = xAt(maxIdx), maxY = yTemp(tMax);
+  const minX = xAt(minIdx), minY = yTemp(tMin);
+  const nowIdx = tempHist.length - 1;
+  const nowX = xAt(nowIdx), nowY = yTemp(temp);
+
+  // Y-axis temperature reference grid
+  const tGridLo = Math.floor(tLo);
+  const tGridHi = Math.ceil(tHi);
+  const tGrid = [];
+  for (let v = tGridLo; v <= tGridHi; v++) tGrid.push(v);
+
+  const trendIcon = trend === "up" ? "↗" : trend === "down" ? "↘" : "→";
+  const trendColor = trend === "up" ? "var(--accent)" : trend === "down" ? "var(--accent-2)" : "var(--ink-3)";
+
+  const source = liveTemp?.attributes?.friendly_name || "Govee H5075";
+  const lastUp = liveTemp?.last_updated
+    ? new Date(liveTemp.last_updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+
   return (
-    <Card index={index} className="room-climate">
-      <div className="rc-body">
-        <div className="rc-gauge">
-          <svg viewBox="0 0 80 80">
-            <circle cx="40" cy="40" r="34" fill="none" stroke="var(--rule)" strokeWidth="5" />
-            <circle cx="40" cy="40" r="34" fill="none" stroke={tempColor} strokeWidth="5"
-              strokeDasharray={`${2 * Math.PI * 34}`}
-              strokeDashoffset={`${2 * Math.PI * 34 * (1 - tempPct / 100)}`}
-              strokeLinecap="round"
-              transform="rotate(-90 40 40)"
-              style={{ transition: "stroke-dashoffset 1.2s ease, stroke 0.6s" }}
-            />
-          </svg>
-          <div className="rc-temp">
-            <span className="rc-val">{temp}</span>
-            <span className="rc-unit">°c</span>
+    <Card
+      index={index}
+      eyebrow={`Climate · ${source}`}
+      title="Room"
+      meta={`${lastUp} · ${humBand}`}
+    >
+      <div className="roomclim-body">
+        {/* LEFT — big temperature readout */}
+        <div className="roomclim-temp">
+          <div className="readout temp" style={{ fontSize: compact ? 80 : 104 }}>
+            {temp.toFixed(1)}<span className="u">°c</span>
           </div>
-        </div>
-        <div className="rc-info">
-          <div className="rc-label">Room</div>
-          <div className="rc-row">
-            <span className="rc-icon">💧</span>
-            <span className="rc-hum-val">{hum}%</span>
-            <div className="rc-hum-bar">
-              <span style={{ "--p": `${humPct}%` }} />
+          <div className="roomclim-trend" style={{ color: trendColor }}>
+            <span className="ic">{trendIcon}</span>
+            <span>
+              {delta === 0 ? "steady" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}°`} <span className="muted">last 3h</span>
+            </span>
+          </div>
+
+          <div className="roomclim-minmax">
+            <div className="chip-stat">
+              <span className="k">Low · 24h</span>
+              <span className="v">{tempMin.toFixed(1)}°</span>
+            </div>
+            <div className="chip-stat">
+              <span className="k">High · 24h</span>
+              <span className="v">{tempMax.toFixed(1)}°</span>
+            </div>
+            <div className="chip-stat">
+              <span className="k">Dew pt</span>
+              <span className="v">{dewPt.toFixed(1)}°</span>
             </div>
           </div>
-          <div className="rc-comfort">{temp >= 18 && temp <= 24 ? "Comfortable" : temp < 18 ? "Cold" : "Warm"}</div>
+        </div>
+
+        {/* RIGHT — humidity ring */}
+        <div className="roomclim-hum">
+          <svg viewBox="0 0 140 140" className="hum-ring">
+            <circle cx="70" cy="70" r={R} className="bg" />
+            <circle cx="70" cy="70" r={R} className="fg"
+              strokeDasharray={C} strokeDashoffset={humOffset} />
+            <text x="70" y="62" textAnchor="middle" className="hum-label">HUMIDITY</text>
+            <text x="70" y="92" textAnchor="middle" className="hum-num">{humidity}<tspan className="hum-pct">%</tspan></text>
+          </svg>
+          <div className="hum-band">{humBand}</div>
+        </div>
+      </div>
+
+      {/* Verdict */}
+      <div className="roomclim-verdict">
+        <span className={`dot ${allGood ? "good" : "warn"}`} />
+        <div>
+          <div className="h">{verdict}</div>
+          <div className="d">{verdictNote}</div>
+        </div>
+      </div>
+
+      {/* 24h climate chart — temp + humidity */}
+      <div className="roomclim-chart">
+        <div className="chart-head">
+          <span className="k">24-hour trace</span>
+          <span className="legend">
+            <span className="li"><span className="sw temp" />Temperature</span>
+            <span className="li"><span className="sw hum" />Humidity</span>
+          </span>
+        </div>
+        <div className="chart-canvas">
+          <svg viewBox={`0 0 ${SW} ${SH}`} preserveAspectRatio="none" className="chart-svg">
+            <defs>
+              <linearGradient id="rc-temp-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--accent-2)" stopOpacity="0.42" />
+                <stop offset="60%" stopColor="var(--accent-2)" stopOpacity="0.10" />
+                <stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+
+            {/* Y-axis grid lines (per degree) */}
+            {tGrid.map((v) => (
+              <line
+                key={v}
+                x1={PAD_L} x2={SW - PAD_R}
+                y1={yTemp(v)} y2={yTemp(v)}
+                stroke="var(--rule)"
+                strokeWidth="1"
+                strokeDasharray="2 5"
+                opacity={v === tGridLo || v === tGridHi ? 0.7 : 0.35}
+              />
+            ))}
+
+            {/* Now vertical line */}
+            <line
+              x1={nowX} x2={nowX}
+              y1={PAD_T - 4} y2={baseY + 6}
+              stroke="var(--ink)" strokeWidth="1" opacity="0.18"
+            />
+
+            {/* Humidity (dashed, secondary) */}
+            <path d={humLine}
+              fill="none"
+              stroke="var(--accent)"
+              strokeWidth="1.6"
+              strokeLinecap="round" strokeLinejoin="round"
+              strokeDasharray="4 4"
+              opacity="0.65"
+            />
+
+            {/* Temp area + line */}
+            <path d={tempArea} fill="url(#rc-temp-grad)" />
+            <path d={tempLine}
+              fill="none"
+              stroke="var(--accent-2)"
+              strokeWidth="2.2"
+              strokeLinecap="round" strokeLinejoin="round"
+            />
+
+            {/* Min point (subdued) */}
+            <circle cx={minX} cy={minY} r="3.2" fill="var(--glass-bg)" stroke="var(--accent-2)" strokeWidth="1.6" opacity="0.7" />
+            {/* Max point (bold) */}
+            <circle cx={maxX} cy={maxY} r="3.6" fill="var(--accent-2)" stroke="var(--glass-bg)" strokeWidth="1.6" />
+
+            {/* Now point */}
+            <circle cx={nowX} cy={nowY} r="8" fill="var(--accent-2)" opacity="0.18" />
+            <circle cx={nowX} cy={nowY} r="4" fill="var(--accent-2)" stroke="var(--glass-bg)" strokeWidth="1.5" />
+          </svg>
+
+          {/* Floating annotations */}
+          <div className="chart-tag tag-high"
+               style={{ left: `${(maxX / SW) * 100}%`, top: `${(maxY / SH) * 100}%` }}>
+            <span className="lbl">HIGH</span>
+            <span className="val">{tMax.toFixed(1)}°</span>
+          </div>
+          <div className="chart-tag tag-low"
+               style={{ left: `${(minX / SW) * 100}%`, top: `${(minY / SH) * 100}%` }}>
+            <span className="lbl">LOW</span>
+            <span className="val">{tMin.toFixed(1)}°</span>
+          </div>
+          <div className="chart-tag tag-now"
+               style={{ left: `${(nowX / SW) * 100}%`, top: `${(nowY / SH) * 100}%` }}>
+            <span className="val">{temp.toFixed(1)}°</span>
+            <span className="lbl">NOW</span>
+          </div>
+        </div>
+        <div className="chart-axis">
+          <span>24h ago</span>
+          <span>18h</span>
+          <span>12h</span>
+          <span>6h</span>
+          <span>now</span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------
+   Room climate strip — horizontal variant for the Overview tab
+   (same sensors, single-row composition)
+   ----------------------------------------------------------------*/
+export function RoomClimateStrip({ index = 0 }) {
+  const { entity: liveTemp, status: tempStatus } = useEntityStatus("sensor.h5075_4fb6_temperature");
+  const { entity: liveHum, status: humStatus } = useEntityStatus("sensor.h5075_4fb6_humidity");
+  const { entity: liveAirQ, status: airQStatus } = useEntityStatus("sensor.core_300s_series_air_quality");
+  const livePm = useEntity("sensor.core_300s_series_pm2_5");
+  const combined = combineStatuses(tempStatus, humStatus, airQStatus);
+
+  if (combined !== "ready") {
+    return (
+      <Card index={index} className="roomclim-strip" eyebrow="Climate" title="Room">
+        <EntityGuard status={combined} entityId="sensor.h5075_4fb6_temperature" />
+      </Card>
+    );
+  }
+
+  const temp = Number(liveTemp?.state ?? 0);
+  const humidity = Number(liveHum?.state ?? 0);
+  const airQ = liveAirQ?.state ?? "—";
+  const pm = Number(livePm?.state ?? 0);
+
+  const tempHist = [...MOCK_TEMP_HIST.slice(0, 23), temp];
+
+  // Trend over last 3h
+  const prev = tempHist[tempHist.length - 4];
+  const delta = temp - prev;
+  const trend = delta > 0.2 ? "up" : delta < -0.2 ? "down" : "flat";
+  const trendIcon = trend === "up" ? "↗" : trend === "down" ? "↘" : "→";
+
+  const tempBand = temp < 18 ? "cold" : temp < 19 ? "cool" : temp <= 22 ? "comfortable" : temp <= 25 ? "warm" : "hot";
+  const humBand = humidity < 30 ? "dry" : humidity <= 55 ? "ideal" : humidity <= 65 ? "damp" : "humid";
+  const allGood = tempBand === "comfortable" && humBand === "ideal";
+  const verdict = allGood ? "Comfortable" : tempBand !== "comfortable" ? `Room is ${tempBand}` : `Air is ${humBand}`;
+
+  const tempMin = Math.min(...tempHist);
+  const tempMax = Math.max(...tempHist);
+
+  // Mini humidity ring
+  const R = 26;
+  const C = 2 * Math.PI * R;
+  const humOffset = C * (1 - humidity / 100);
+
+  // Sparkline
+  const SW = 260, SH = 44, PAD = 3;
+  const tMin = Math.min(...tempHist);
+  const tMax = Math.max(...tempHist);
+  const tRange = Math.max(0.5, tMax - tMin);
+  const xAt = (i) => PAD + (i / (tempHist.length - 1)) * (SW - PAD * 2);
+  const yAt = (v) => PAD + (1 - (v - tMin) / tRange) * (SH - PAD * 2);
+  const linePath = tempHist.map((v, i) => `${i === 0 ? "M" : "L"} ${xAt(i).toFixed(1)} ${yAt(v).toFixed(1)}`).join(" ");
+  const areaPath = `${linePath} L ${xAt(tempHist.length - 1).toFixed(1)} ${SH - PAD} L ${xAt(0).toFixed(1)} ${SH - PAD} Z`;
+  const nowX = xAt(tempHist.length - 1);
+  const nowY = yAt(temp);
+
+  const lastUp = liveTemp?.last_updated
+    ? new Date(liveTemp.last_updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+
+  return (
+    <Card index={index} className="roomclim-strip"
+          eyebrow="Climate · Govee H5075"
+          title="Room"
+          meta={`${lastUp} · ${tempBand}`}>
+      <div className="rcstrip-body">
+        {/* Temp + trend */}
+        <div className="rcstrip-temp">
+          <div className="readout temp" style={{ fontSize: 64 }}>
+            {temp.toFixed(1)}<span className="u">°c</span>
+          </div>
+          <div className="rcstrip-trend">
+            <span className="ic">{trendIcon}</span>
+            {delta === 0 ? "steady" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}° · 3h`}
+          </div>
+        </div>
+
+        {/* Humidity + air quality — paired secondary stats */}
+        <div className="rcstrip-pair">
+          <div className="rcstrip-hum">
+            <svg viewBox="0 0 64 64" width="58" height="58">
+              <circle cx="32" cy="32" r={R} fill="none" stroke="var(--rule)" strokeWidth="4" />
+              <circle cx="32" cy="32" r={R} fill="none"
+                stroke="var(--accent-2)" strokeWidth="4" strokeLinecap="round"
+                strokeDasharray={C} strokeDashoffset={humOffset}
+                style={{ transform: "rotate(-90deg)", transformOrigin: "center" }} />
+              <text x="32" y="36" textAnchor="middle"
+                style={{ fill: "var(--ink)", fontFamily: "var(--font-display)", fontStyle: "italic", fontSize: 18, letterSpacing: "-0.02em" }}>
+                {humidity}
+              </text>
+            </svg>
+            <div className="rcstrip-pair-lbl">
+              <div className="k">Humidity · %</div>
+              <div className="v">{humBand}</div>
+            </div>
+          </div>
+          <div className="rcstrip-aq">
+            <div className="rcstrip-aq-num">
+              {pm}<span className="u">µg</span>
+            </div>
+            <div className="rcstrip-pair-lbl">
+              <div className="k">PM 2.5 · air</div>
+              <div className="v" style={{ color: "var(--good)" }}>{airQ}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Verdict */}
+        <div className="rcstrip-verdict">
+          <span className={`dot ${allGood ? "good" : "warn"}`} />
+          <div>
+            <div className="h">{verdict}</div>
+            <div className="d">low {tempMin.toFixed(1)}° · high {tempMax.toFixed(1)}°</div>
+          </div>
+        </div>
+
+        {/* Sparkline */}
+        <div className="rcstrip-spark">
+          <svg viewBox={`0 0 ${SW} ${SH}`} preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="rcs-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--accent-2)" stopOpacity="0.32" />
+                <stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <path d={areaPath} fill="url(#rcs-grad)" />
+            <path d={linePath} fill="none" stroke="var(--accent-2)" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" />
+            <circle cx={nowX} cy={nowY} r="2.6" fill="var(--accent-2)" />
+            <circle cx={nowX} cy={nowY} r="5" fill="var(--accent-2)" opacity="0.25" />
+          </svg>
+          <div className="rcstrip-spark-foot">
+            <span>24h</span><span>now</span>
+          </div>
         </div>
       </div>
     </Card>

@@ -48,6 +48,7 @@ jobs:
       - name: Build
         env:
           VITE_HA_URL: ${{ vars.VITE_HA_URL }}
+          VITE_SPOTIFY_CLIENT_ID: ${{ vars.VITE_SPOTIFY_CLIENT_ID }}
         run: npm run build
 
       - name: Configure AWS credentials (OIDC)
