@@ -33,9 +33,11 @@ const states = new Map();              // entity_id -> state object
 const subscribers = new Map();         // entity_id -> Set<callback>
 const connectionListeners = new Set(); // callbacks for connection status
 const statesListeners = new Set();     // callbacks for "states set changed" (size/keys)
+const snapshotListeners = new Set();   // one-shot callbacks for first entity snapshot
 let connection = null;
 let auth = null;
 let connectionStatus = "disconnected"; // "disconnected" | "connecting" | "authenticating" | "ready"
+let snapshotReceived = false;
 
 function setStatus(next) {
   if (connectionStatus === next) return;
@@ -51,15 +53,15 @@ function notify(entityId) {
 }
 
 function applyEntities(entities) {
-  // `entities` is HassEntities: Record<entity_id, HassEntity>.
-  // The library delivers diffs after the first full snapshot — each call
-  // gives the new state for any entity that changed.
   for (const [id, state] of Object.entries(entities)) {
     states.set(id, state);
     notify(id);
   }
-  // Wake up listeners that track "how many entities exist" — chiefly the
-  // topbar chip's useEntityCounts. Fires once per batch, not per entity.
+  if (!snapshotReceived) {
+    snapshotReceived = true;
+    snapshotListeners.forEach((cb) => cb());
+    snapshotListeners.clear();
+  }
   statesListeners.forEach((cb) => cb());
 }
 
@@ -170,12 +172,26 @@ export function getConnectionStatus() {
   return connectionStatus;
 }
 
+export function hasSnapshot() {
+  return snapshotReceived;
+}
+
+export function onSnapshotReady(callback) {
+  if (snapshotReceived) {
+    callback();
+    return () => {};
+  }
+  snapshotListeners.add(callback);
+  return () => snapshotListeners.delete(callback);
+}
+
 export function reconnect() {
   if (connection) {
     try { connection.close(); } catch {}
     connection = null;
   }
   states.clear();
+  snapshotReceived = false;
   setup();
 }
 

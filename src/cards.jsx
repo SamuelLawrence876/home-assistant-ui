@@ -1,11 +1,9 @@
-/* Glasshouse v2 — atomic card components.
-   Each card consumes GH_DATA (mock entity state) and exposes simple
-   interactivity (toggles, sliders) via local state. */
+/* Glasshouse v2 — atomic card components. */
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
-import { useEntity, useEntitiesByDomain, useConnectionStatus } from "./ha/useEntity.js";
+import { useEntity, useEntitiesByDomain, useConnectionStatus, useEntityStatus, combineStatuses } from "./ha/useEntity.js";
 import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
 
@@ -56,6 +54,34 @@ export function Card({ index = 0, className = "", children, eyebrow, title, meta
       {children}
     </section>
   );
+}
+
+/* ----------------------------------------------------------------
+   Entity guard — loading / not-found / unavailable overlays
+   ----------------------------------------------------------------*/
+export function EntityGuard({ status, entityId, children, style }) {
+  if (status === "loading") {
+    return <div className="entity-loading" style={style} />;
+  }
+  if (status === "not_found") {
+    return (
+      <div className="entity-warning" style={style}>
+        <span className="entity-warning-icon">{"⚠️"}</span>
+        <span className="entity-warning-text">
+          {entityId ? `${entityId} not found` : "Entity not found"}
+        </span>
+      </div>
+    );
+  }
+  if (status === "unavailable") {
+    return (
+      <div className="entity-warning" style={style}>
+        <span className="entity-warning-icon">{"⚠️"}</span>
+        <span className="entity-warning-text">Unavailable</span>
+      </div>
+    );
+  }
+  return children;
 }
 
 /* ----------------------------------------------------------------
@@ -165,16 +191,15 @@ export function WeatherIcon({ condition, size = 88, sunColor = "var(--accent-2)"
 }
 
 export function WeatherSunHero({ index = 0, sky, compact }) {
-  const live = useEntity("weather.forecast_home");
-  const w = live || GH_DATA.weather["weather.forecast_home"];
-  const t = w.attributes.temperature;
-  const [forecast, setForecast] = useState(GH_DATA.weather["weather.forecast_home"].attributes.forecast);
+  const { entity: w, status: wStatus } = useEntityStatus("weather.forecast_home");
+  const t = w?.attributes?.temperature;
+  const [forecast, setForecast] = useState([]);
   useEffect(() => {
-    if (!live) return;
+    if (!w) return;
     getForecast("weather.forecast_home", "daily")
       .then((fc) => { if (fc.length) setForecast(fc); })
       .catch(() => {});
-  }, [live?.last_updated]);
+  }, [w?.last_updated]);
   const f = forecast;
   const condLabels = {
     sunny: "Sunny",
@@ -207,8 +232,9 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
   const sunY = cy - r * Math.sin(angle);
   const sunOnArc = phase >= 0 && phase <= 1;
 
-  const liveRising = useEntity("sensor.sun_next_rising");
-  const liveSetting = useEntity("sensor.sun_next_setting");
+  const { entity: liveRising, status: rStatus } = useEntityStatus("sensor.sun_next_rising");
+  const { entity: liveSetting, status: sStatus } = useEntityStatus("sensor.sun_next_setting");
+  const status = combineStatuses(wStatus, rStatus, sStatus);
   const fmtSun = (s) => {
     if (!s) return "—";
     const d = new Date(s);
@@ -216,8 +242,8 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
       ? s
       : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   };
-  const sunrise = fmtSun(liveRising?.state || GH_DATA.sun["sensor.sun_next_rising"].state);
-  const sunset = fmtSun(liveSetting?.state || GH_DATA.sun["sensor.sun_next_setting"].state);
+  const sunrise = fmtSun(liveRising?.state);
+  const sunset = fmtSun(liveSetting?.state);
 
   return (
     <Card
@@ -227,6 +253,7 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
       title="Outside, right now"
       meta={`${sky.isDay ? "Sun" : "Night"} · ${fmtTime(nowFractionalHour())}`}
     >
+      <EntityGuard status={status} entityId="weather.forecast_home">
       <div className="weather-body">
         <div className="weather-now">
           <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
@@ -362,6 +389,7 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
           );
         })}
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -370,20 +398,20 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
    Presence
    ----------------------------------------------------------------*/
 export function PresenceCard({ index = 0 }) {
-  const livePerson = useEntity("person.samuel_lawrence");
-  const liveDev = useEntity("device_tracker.sams_iphone");
-  const p = livePerson || GH_DATA.presence["person.samuel_lawrence"];
-  const dev = liveDev || GH_DATA.presence["device_tracker.sams_iphone"];
-  const home = p.state === "home";
-  const battery = dev.attributes?.battery_level;
+  const { entity: p, status: pStatus } = useEntityStatus("person.samuel_lawrence");
+  const { entity: dev, status: dStatus } = useEntityStatus("device_tracker.sams_iphone");
+  const status = combineStatuses(pStatus, dStatus);
+  const home = p?.state === "home";
+  const battery = dev?.attributes?.battery_level;
   return (
     <Card index={index} eyebrow="Presence · person.samuel_lawrence">
+      <EntityGuard status={status} entityId="person.samuel_lawrence">
       <div className="presence-row">
         <div className="presence-avatar">S</div>
         <div className="presence-info">
-          <div className="nm">{p.attributes?.friendly_name || "Samuel"}</div>
+          <div className="nm">{p?.attributes?.friendly_name || "Samuel"}</div>
           <div className="where">
-            {home ? "Home · iPhone in range" : p.state === "not_home" ? "Away" : p.state}
+            {home ? "Home · iPhone in range" : p?.state === "not_home" ? "Away" : p?.state}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -393,6 +421,7 @@ export function PresenceCard({ index = 0 }) {
           </div>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -438,18 +467,17 @@ export function ScenesCard({ index = 0 }) {
    Media — Spotify now playing (compact)
    ----------------------------------------------------------------*/
 export function MediaCard({ index = 0 }) {
-  const live = useEntity("media_player.spotify_samuel_lawrence");
-  const m = live || GH_DATA.media["media_player.spotify_samuel_lawrence"];
-  const a = m.attributes || {};
+  const { entity: m, status } = useEntityStatus("media_player.spotify_samuel_lawrence");
+  const a = m?.attributes || {};
   const duration = a.media_duration || 1;
   const [pos, setPos] = useState(a.media_position || 0);
-  const [playing, setPlaying] = useState(m.state === "playing");
+  const [playing, setPlaying] = useState(m?.state === "playing");
   useEffect(() => {
-    if (live) {
-      setPlaying(live.state === "playing");
-      if (live.attributes?.media_position != null) setPos(live.attributes.media_position);
+    if (m) {
+      setPlaying(m.state === "playing");
+      if (m.attributes?.media_position != null) setPos(m.attributes.media_position);
     }
-  }, [live?.state, live?.attributes?.media_position]);
+  }, [m?.state, m?.attributes?.media_position]);
   useEffect(() => {
     if (!playing) return;
     const id = setInterval(() => setPos((p) => (p + 1) % duration), 1000);
@@ -469,6 +497,7 @@ export function MediaCard({ index = 0 }) {
 
   return (
     <Card index={index} eyebrow="Spotify · samuel_lawrence" meta={playing ? "Playing" : "Paused"}>
+      <EntityGuard status={status} entityId="media_player.spotify_samuel_lawrence">
       <div className="media-row">
         <div className="media-art" />
         <div className="media-info">
@@ -492,6 +521,7 @@ export function MediaCard({ index = 0 }) {
         </button>
         <button className="btn icon" onClick={() => seek(Math.min(duration - 1, pos + 15))}>⏭</button>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -501,7 +531,7 @@ export function MediaCard({ index = 0 }) {
    ----------------------------------------------------------------*/
 export function PrinterCard({ index = 0, compact }) {
   const PREFIX = "x1c_00m09d522400385";
-  const liveProg = useEntity(`sensor.${PREFIX}_print_progress`);
+  const { entity: liveProg, status } = useEntityStatus(`sensor.${PREFIX}_print_progress`);
   const liveStage = useEntity(`sensor.${PREFIX}_current_stage`);
   const liveRemaining = useEntity(`sensor.${PREFIX}_remaining_time`);
   const liveNozzle = useEntity(`sensor.${PREFIX}_nozzle_temperature`);
@@ -512,28 +542,27 @@ export function PrinterCard({ index = 0, compact }) {
   const liveLight = useEntity(`light.${PREFIX}_chamber_light`);
   const liveImage = useEntity(`image.${PREFIX}_cover_image`);
 
-  const p = GH_DATA.printer;
-  const prog = Number(liveProg?.state ?? p[`sensor.${PREFIX}_print_progress`].state);
-  const stage = liveStage?.state ?? p[`sensor.${PREFIX}_current_stage`].state;
-  const remaining = Number(liveRemaining?.state ?? p[`sensor.${PREFIX}_remaining_time`].state);
-  const nozzle = Number(liveNozzle?.state ?? p[`sensor.${PREFIX}_nozzle_temperature`].state);
-  const bed = Number(liveBed?.state ?? p[`sensor.${PREFIX}_bed_temperature`].state);
-  const chamber = Number(liveChamber?.state ?? p[`sensor.${PREFIX}_chamber_temperature`].state);
-  const ams = Number(liveAms?.state ?? p[`sensor.${PREFIX}_ams_1_humidity`].state);
-  const tray = liveTray?.state ?? p[`sensor.${PREFIX}_active_tray`].state;
-  const fileName = liveProg?.attributes?.file_name || p.file;
-  const [light, setLight] = useState((liveLight?.state ?? p[`light.${PREFIX}_chamber_light`].state) === "on");
+  const prog = Number(liveProg?.state ?? 0);
+  const stage = liveStage?.state ?? "—";
+  const remaining = Number(liveRemaining?.state ?? 0);
+  const nozzle = Number(liveNozzle?.state ?? 0);
+  const bed = Number(liveBed?.state ?? 0);
+  const chamber = Number(liveChamber?.state ?? 0);
+  const ams = Number(liveAms?.state ?? 0);
+  const tray = liveTray?.state ?? "—";
+  const fileName = liveProg?.attributes?.file_name || "—";
+  const [light, setLight] = useState(liveLight?.state === "on");
   useEffect(() => { if (liveLight) setLight(liveLight.state === "on"); }, [liveLight?.state]);
   function toggleLight() {
     const next = !light;
     setLight(next);
     callService("light", next ? "turn_on" : "turn_off", { entity_id: `light.${PREFIX}_chamber_light` }).catch(() => setLight(light));
   }
-  // Use last_updated as a cache-bust so the cover image refreshes when HA pushes a new frame.
   const coverSrc = liveImage ? imageUrl(`image.${PREFIX}_cover_image`, liveImage.last_updated) : null;
 
   return (
     <Card index={index} eyebrow="3D Printer · Bambu X1C" title="Printing" meta={`stage · ${stage}`}>
+      <EntityGuard status={status} entityId={`sensor.${PREFIX}_print_progress`}>
       <div className="printer-body" style={compact ? { gridTemplateColumns: "120px 1fr", gap: 14 } : null}>
         <div
           className="printer-tile"
@@ -599,6 +628,7 @@ export function PrinterCard({ index = 0, compact }) {
           </div>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -607,18 +637,17 @@ export function PrinterCard({ index = 0, compact }) {
    Vacuum — Roborock S8 "Gregory"
    ----------------------------------------------------------------*/
 export function VacuumCard({ index = 0 }) {
-  const liveVac = useEntity("vacuum.roborock_s8");
+  const { entity: liveVac, status: vacStatus } = useEntityStatus("vacuum.roborock_s8");
   const liveBat = useEntity("sensor.roborock_s8_battery");
   const liveStatus = useEntity("sensor.roborock_s8_status");
   const liveLast = useEntity("sensor.roborock_s8_last_clean_end");
   const liveMap = useEntity("select.roborock_s8_selected_map");
-  const v = GH_DATA.vacuum;
-  const battery = Number(liveBat?.state ?? v["sensor.roborock_s8_battery"].state);
-  const status = liveStatus?.state ?? v["sensor.roborock_s8_status"].state;
-  const last = formatRelativeIso(liveLast?.state) || v["sensor.roborock_s8_last_clean_end"].state;
+  const battery = Number(liveBat?.state ?? 0);
+  const vStatus = liveStatus?.state ?? "—";
+  const last = formatRelativeIso(liveLast?.state) || "—";
   const mapOptions = liveMap?.attributes?.options || [];
   const currentMap = liveMap?.state;
-  const [state, setState] = useState(liveVac?.state ?? v["vacuum.roborock_s8"].state);
+  const [state, setState] = useState(liveVac?.state ?? "docked");
   const unavailable = liveVac?.state === "unavailable";
   useEffect(() => {
     if (liveVac?.state) setState(liveVac.state);
@@ -642,8 +671,9 @@ export function VacuumCard({ index = 0 }) {
 
   return (
     <Card index={index} eyebrow="Vacuum · roborock_s8" title="Gregory" meta={unavailable ? "Reauth required" : `Last clean · ${last}`}>
+      <EntityGuard status={vacStatus} entityId="vacuum.roborock_s8">
       <div className="vacuum-state">
-        {unavailable ? "Unavailable — reauth in HA Settings → Devices → Roborock" : (cleaning ? "Cleaning · main floor" : `Docked · ${status}`)}
+        {unavailable ? "Unavailable — reauth in HA Settings → Devices → Roborock" : (cleaning ? "Cleaning · main floor" : `Docked · ${vStatus}`)}
       </div>
       <div className="vacuum-map">
         <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid meet">
@@ -697,7 +727,7 @@ export function VacuumCard({ index = 0 }) {
               fontFamily: "var(--font-mono)",
             }}
           >
-            {cleaning ? "ACTIVE" : status.toUpperCase()}
+            {cleaning ? "ACTIVE" : (vStatus || "—").toUpperCase()}
           </div>
         </div>
         <div>
@@ -729,6 +759,7 @@ export function VacuumCard({ index = 0 }) {
           ))}
         </div>
       )}
+      </EntityGuard>
     </Card>
   );
 }
@@ -737,17 +768,16 @@ export function VacuumCard({ index = 0 }) {
    Air purifier — Levoit Core 300S
    ----------------------------------------------------------------*/
 export function AirPurifierCard({ index = 0 }) {
-  const liveFan = useEntity("fan.core_300s_series");
+  const { entity: liveFan, status: fanStatus } = useEntityStatus("fan.core_300s_series");
   const liveQ = useEntity("sensor.core_300s_series_air_quality");
   const livePm = useEntity("sensor.core_300s_series_pm2_5");
   const liveFilt = useEntity("sensor.core_300s_series_filter_lifetime");
-  const a = GH_DATA.air;
   const unavailable = liveFan?.state === "unavailable" || liveFan?.state === "unknown";
-  const q = liveQ?.state ?? a["sensor.core_300s_series_air_quality"].state;
-  const pm = Number(livePm?.state ?? a["sensor.core_300s_series_pm2_5"].state);
-  const filt = Number(liveFilt?.state ?? a["sensor.core_300s_series_filter_lifetime"].state);
-  const [preset, setPreset] = useState(liveFan?.attributes?.preset_mode ?? a["fan.core_300s_series"].attributes.preset_mode);
-  const [on, setOn] = useState((liveFan?.state ?? a["fan.core_300s_series"].state) === "on");
+  const q = liveQ?.state ?? "—";
+  const pm = Number(livePm?.state ?? 0);
+  const filt = Number(liveFilt?.state ?? 0);
+  const [preset, setPreset] = useState(liveFan?.attributes?.preset_mode ?? "auto");
+  const [on, setOn] = useState(liveFan?.state === "on");
   useEffect(() => {
     if (!liveFan) return;
     setOn(liveFan.state === "on");
@@ -778,6 +808,7 @@ export function AirPurifierCard({ index = 0 }) {
         <div className={`toggle ${on && !unavailable ? "on" : ""}`} onClick={toggleFan} role="switch" aria-checked={on} style={unavailable ? { opacity: 0.4 } : undefined} />
       }
     >
+      <EntityGuard status={fanStatus} entityId="fan.core_300s_series">
       <div className="purifier-body">
         <div className="purifier-ring">
           <svg viewBox="0 0 200 200">
@@ -808,6 +839,7 @@ export function AirPurifierCard({ index = 0 }) {
           </div>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -816,8 +848,8 @@ export function AirPurifierCard({ index = 0 }) {
    Heater — Govee
    ----------------------------------------------------------------*/
 export function HeaterCard({ index = 0 }) {
-  const liveTemp = useEntity("input_number.govee_heater_temperature");
-  const initialTemp = Number(liveTemp?.state ?? GH_DATA.climate["input_number.govee_heater_temperature"].state);
+  const { entity: liveTemp, status: heaterStatus } = useEntityStatus("input_number.govee_heater_temperature");
+  const initialTemp = Number(liveTemp?.state ?? 20);
   const [temp, setTemp] = useState(initialTemp);
   const [on, setOn] = useState(false);
   useEffect(() => {
@@ -846,6 +878,7 @@ export function HeaterCard({ index = 0 }) {
       title="Heater"
       meta={on ? `On · target ${temp}°` : `Off · target ${temp}°`}
     >
+      <EntityGuard status={heaterStatus} entityId="input_number.govee_heater_temperature">
       <div className="heater-body">
         <div>
           <div className="heater-num">
@@ -873,6 +906,7 @@ export function HeaterCard({ index = 0 }) {
           </div>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -881,12 +915,18 @@ export function HeaterCard({ index = 0 }) {
    AdGuard — full card (with ring + filtering toggle)
    ----------------------------------------------------------------*/
 export function AdGuardCard({ index = 0 }) {
-  const a = GH_DATA.adguard;
-  const ratio = a["sensor.adguard_home_dns_queries_blocked_ratio"].state;
-  const total = a["sensor.adguard_home_dns_queries"].state;
-  const blocked = a["sensor.adguard_home_dns_queries_blocked"].state;
-  const [prot, setProt] = useState(a["switch.adguard_home_protection"].state === "on");
-  const [filt, setFilt] = useState(a["switch.adguard_home_filtering"].state === "on");
+  const { entity: liveRatio, status: adgStatus } = useEntityStatus("sensor.adguard_home_dns_queries_blocked_ratio");
+  const liveTotal = useEntity("sensor.adguard_home_dns_queries");
+  const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
+  const liveProt = useEntity("switch.adguard_home_protection");
+  const liveFilt = useEntity("switch.adguard_home_filtering");
+  const ratio = Number(liveRatio?.state ?? 0);
+  const total = Number(liveTotal?.state ?? 0);
+  const blocked = Number(liveBlocked?.state ?? 0);
+  const [prot, setProt] = useState(liveProt?.state === "on");
+  const [filt, setFilt] = useState(liveFilt?.state === "on");
+  useEffect(() => { if (liveProt) setProt(liveProt.state === "on"); }, [liveProt?.state]);
+  useEffect(() => { if (liveFilt) setFilt(liveFilt.state === "on"); }, [liveFilt?.state]);
 
   const C = 2 * Math.PI * 90;
   const offset = C * (1 - ratio / 100);
@@ -897,8 +937,12 @@ export function AdGuardCard({ index = 0 }) {
       eyebrow="Network · AdGuard Home"
       title="Filtering"
       meta={prot ? "Protected" : "Disabled"}
-      headRight={<div className={`toggle ${prot ? "on" : ""}`} onClick={() => setProt(!prot)} role="switch" />}
+      headRight={<div className={`toggle ${prot ? "on" : ""}`} onClick={() => {
+        const next = !prot; setProt(next);
+        callService("switch", next ? "turn_on" : "turn_off", { entity_id: "switch.adguard_home_protection" }).catch(() => setProt(prot));
+      }} role="switch" />}
     >
+      <EntityGuard status={adgStatus} entityId="sensor.adguard_home_dns_queries_blocked_ratio">
       <div className="adg-body">
         <div className="purifier-ring">
           <svg viewBox="0 0 200 200">
@@ -940,7 +984,10 @@ export function AdGuardCard({ index = 0 }) {
                 <div
                   className={`toggle ${filt ? "on" : ""}`}
                   style={{ transform: "scale(0.85)" }}
-                  onClick={() => setFilt(!filt)}
+                  onClick={() => {
+                    const next = !filt; setFilt(next);
+                    callService("switch", next ? "turn_on" : "turn_off", { entity_id: "switch.adguard_home_filtering" }).catch(() => setFilt(filt));
+                  }}
                   role="switch"
                 />
               </div>
@@ -948,6 +995,7 @@ export function AdGuardCard({ index = 0 }) {
           </div>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -984,16 +1032,15 @@ const PI_RAM_MIB = 4096;     // Pi 4 model B has 4 GB RAM
 const PI_DISK_GIB = 220;     // 220 GB SSD (df -h /  →  219.4G total)
 
 export function PiCard({ index = 0 }) {
-  const liveCpu = useEntity("sensor.system_monitor_processor_use");
+  const { entity: liveCpu, status: piStatus } = useEntityStatus("sensor.system_monitor_processor_use");
   const liveMem = useEntity("sensor.system_monitor_memory_use");
   const liveTemp = useEntity("sensor.system_monitor_processor_temperature");
   const liveDisk = useEntity("sensor.system_monitor_disk_use_config");
-  const s = GH_DATA.system;
-  const cpu = Number(liveCpu?.state ?? s["sensor.system_monitor_processor_use"].state);
-  const memMiB = Number(liveMem?.state ?? s["sensor.system_monitor_memory_use"].state);
+  const cpu = Number(liveCpu?.state ?? 0);
+  const memMiB = Number(liveMem?.state ?? 0);
   const memPct = (memMiB / PI_RAM_MIB) * 100;
-  const temp = Number(liveTemp?.state ?? s["sensor.system_monitor_processor_temperature"].state);
-  const diskGiB = Number(liveDisk?.state ?? s["sensor.system_monitor_disk_use_config"].state);
+  const temp = Number(liveTemp?.state ?? 0);
+  const diskGiB = Number(liveDisk?.state ?? 0);
   const diskPct = (diskGiB / PI_DISK_GIB) * 100;
 
   // Health summary derived from the worst metric.
@@ -1006,6 +1053,7 @@ export function PiCard({ index = 0 }) {
 
   return (
     <Card index={index} eyebrow="System · raspberry_pi" title="Pi health" meta={health}>
+      <EntityGuard status={piStatus} entityId="sensor.system_monitor_processor_use">
       <div className="pi-rows">
         <div className="pi-row">
           <span className="k">CPU</span>
@@ -1028,6 +1076,7 @@ export function PiCard({ index = 0 }) {
           <span className="v">{diskGiB.toFixed(1)} GiB</span>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -1059,16 +1108,15 @@ function formatMiB(mib) {
 }
 
 export function BackupCard({ index = 0 }) {
-  const liveLast = useEntity("sensor.backup_last_successful_automatic_backup");
+  const { entity: liveLast, status: backupStatus } = useEntityStatus("sensor.backup_last_successful_automatic_backup");
   const liveNext = useEntity("sensor.backup_next_scheduled_automatic_backup");
   const liveState = useEntity("sensor.backup_backup_manager_state");
   const liveSize = useEntity("sensor.bucket_sam_ha_backups_total_size_of_backups");
-  const b = GH_DATA.backup;
 
-  const lastDisplay = formatRelativeIso(liveLast?.state || b["sensor.backup_last_successful_automatic_backup"].state);
-  const nextDisplay = formatRelativeIso(liveNext?.state || b["sensor.backup_next_scheduled_automatic_backup"].state);
+  const lastDisplay = formatRelativeIso(liveLast?.state);
+  const nextDisplay = formatRelativeIso(liveNext?.state);
   const managerState = liveState?.state || "idle";
-  const sizeDisplay = liveSize ? formatMiB(liveSize.state) : b.last_size;
+  const sizeDisplay = liveSize ? formatMiB(liveSize.state) : "—";
   const liveRunning = managerState !== "idle" && managerState !== "unknown" && managerState !== "unavailable";
 
   // Local optimistic progress bar — the real backup runs server-side via
@@ -1122,6 +1170,7 @@ export function BackupCard({ index = 0 }) {
         </button>
       }
     >
+      <EntityGuard status={backupStatus} entityId="sensor.backup_last_successful_automatic_backup">
       {running && (
         <div className="progress" style={{ marginBottom: 12 }}>
           <span style={{ "--p": `${pct}%` }} />
@@ -1137,19 +1186,17 @@ export function BackupCard({ index = 0 }) {
         <span className="k">Total stored</span>
         <span className="v">{sizeDisplay}</span>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
 
 export function EntityHealthCard({ index = 0 }) {
   const h = GH_DATA.health;
-  // Live counts from the template sensors Samuel set up in configuration.yaml.
-  // The curated groups list stays in GH_DATA — it's human knowledge about
-  // *why* things are unavailable, not entity state.
-  const liveAvail = useEntity("sensor.available_entities_count");
+  const { entity: liveAvail, status: healthStatus } = useEntityStatus("sensor.available_entities_count");
   const liveUnavail = useEntity("sensor.unavailable_entities_count");
-  const available = Number(liveAvail?.state ?? h.available);
-  const unavailable = Number(liveUnavail?.state ?? h.unavailable);
+  const available = Number(liveAvail?.state ?? 0);
+  const unavailable = Number(liveUnavail?.state ?? 0);
   return (
     <Card
       index={index}
@@ -1157,6 +1204,7 @@ export function EntityHealthCard({ index = 0 }) {
       title="Unavailable groups"
       meta="known, expected"
     >
+      <EntityGuard status={healthStatus} entityId="sensor.available_entities_count">
       <div className="health">
         {h.groups.map((g, i) => (
           <div key={i} className="health-row">
@@ -1169,14 +1217,15 @@ export function EntityHealthCard({ index = 0 }) {
           </div>
         ))}
       </div>
+      </EntityGuard>
     </Card>
   );
 }
 
 export function ShoppingCard({ index = 0 }) {
-  const live = useEntity("todo.shopping_list");
-  const [items, setItems] = useState(GH_DATA.todo["todo.shopping_list"].items);
-  const count = Number(live?.state ?? GH_DATA.todo["todo.shopping_list"].count);
+  const { entity: live, status: shopStatus } = useEntityStatus("todo.shopping_list");
+  const [items, setItems] = useState([]);
+  const count = Number(live?.state ?? 0);
   // todo lists need a service call to read items — the entity's state is just a count.
   useEffect(() => {
     if (!live) return;
@@ -1188,6 +1237,7 @@ export function ShoppingCard({ index = 0 }) {
   }, [live?.state]);
   return (
     <Card index={index} eyebrow={`Shopping · ${count} items`} title="Shopping list">
+      <EntityGuard status={shopStatus} entityId="todo.shopping_list">
       <ul className="shopping">
         {items.slice(0, 6).map((it, i) => (
           <li key={i}>{it}</li>
@@ -1196,6 +1246,7 @@ export function ShoppingCard({ index = 0 }) {
           <li style={{ color: "var(--ink-3)", borderBottom: 0 }}>… and {items.length - 6} more</li>
         )}
       </ul>
+      </EntityGuard>
     </Card>
   );
 }
@@ -1221,21 +1272,20 @@ function rgbStr(rgb) {
 }
 
 export function LightCard({ index = 0, entityId }) {
-  const live = useEntity(entityId);
-  const e = live || GH_DATA.lights[entityId];
-  const placeholder = e.attributes?.placeholder;
-  const unavailable = live?.state === "unavailable" || live?.state === "unknown";
-  const initialRgb = e.attributes?.rgb_color || [255, 198, 130];
-  const [on, setOn] = useState(e.state === "on");
-  const [bright, setB] = useState(e.attributes?.brightness || 180);
+  const { entity: e, status } = useEntityStatus(entityId);
+  const placeholder = e?.attributes?.placeholder;
+  const unavailable = status === "unavailable";
+  const initialRgb = e?.attributes?.rgb_color || [255, 198, 130];
+  const [on, setOn] = useState(e?.state === "on");
+  const [bright, setB] = useState(e?.attributes?.brightness || 180);
   const [rgb, setRgb] = useState(initialRgb);
 
   useEffect(() => {
-    if (!live) return;
-    setOn(live.state === "on");
-    if (live.attributes?.brightness != null) setB(live.attributes.brightness);
-    if (live.attributes?.rgb_color) setRgb(live.attributes.rgb_color);
-  }, [live?.state, live?.attributes?.brightness, live?.attributes?.rgb_color?.join(",")]);
+    if (!e) return;
+    setOn(e.state === "on");
+    if (e.attributes?.brightness != null) setB(e.attributes.brightness);
+    if (e.attributes?.rgb_color) setRgb(e.attributes.rgb_color);
+  }, [e?.state, e?.attributes?.brightness, e?.attributes?.rgb_color?.join(",")]);
 
   function toggle() {
     if (placeholder || unavailable) return;
@@ -1267,7 +1317,7 @@ export function LightCard({ index = 0, entityId }) {
     <Card
       index={index}
       eyebrow={`Light · ${entityId}`}
-      title={e.attributes.friendly_name}
+      title={e?.attributes?.friendly_name || entityId.split(".")[1]}
       meta={placeholder ? "Not yet added" : unavailable ? "Unavailable" : on ? `On · ${Math.round((bright / 255) * 100)}%` : "Off"}
       headRight={
         placeholder ? (
@@ -1293,6 +1343,7 @@ export function LightCard({ index = 0, entityId }) {
         )
       }
     >
+      <EntityGuard status={status} entityId={entityId}>
       <div
         style={{
           display: "grid",
@@ -1371,6 +1422,7 @@ export function LightCard({ index = 0, entityId }) {
           </div>
         </div>
       )}
+      </EntityGuard>
     </Card>
   );
 }
@@ -1379,13 +1431,12 @@ export function LightCard({ index = 0, entityId }) {
    Fan
    ----------------------------------------------------------------*/
 export function FanCard({ index = 0 }) {
-  const live = useEntity("fan.ceiling");
-  const f = live || GH_DATA.fans["fan.ceiling"];
-  const unavailable = !live || live.state === "unavailable" || live.state === "unknown";
-  const [on, setOn] = useState(f.state === "on");
-  const [pct, setPct] = useState(f.attributes?.percentage || 0);
-  const presets = f.attributes?.preset_modes || GH_DATA.fans["fan.ceiling"].attributes.preset_modes;
-  const [preset, setPreset] = useState(f.attributes?.preset_mode);
+  const { entity: live, status: fanStatus } = useEntityStatus("fan.ceiling");
+  const unavailable = fanStatus === "unavailable" || fanStatus === "not_found";
+  const [on, setOn] = useState(live?.state === "on");
+  const [pct, setPct] = useState(live?.attributes?.percentage || 0);
+  const presets = live?.attributes?.preset_modes || ["sleep", "low", "medium", "high"];
+  const [preset, setPreset] = useState(live?.attributes?.preset_mode);
   useEffect(() => {
     if (!live) return;
     setOn(live.state === "on");
@@ -1415,6 +1466,7 @@ export function FanCard({ index = 0 }) {
       meta={unavailable ? "Entity not found" : on ? `${preset || "manual"} · ${pct}%` : "Off"}
       headRight={<div className={`toggle ${on && !unavailable ? "on" : ""}`} onClick={toggleFan} role="switch" style={unavailable ? { opacity: 0.4 } : undefined} />}
     >
+      <EntityGuard status={fanStatus} entityId="fan.ceiling">
       <div style={{ display: "flex", alignItems: "center", gap: 18, marginTop: 4 }}>
         <div
           style={{
@@ -1478,6 +1530,7 @@ export function FanCard({ index = 0 }) {
           </div>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -1486,14 +1539,14 @@ export function FanCard({ index = 0 }) {
    Quick toggles (Overview)
    ----------------------------------------------------------------*/
 function QuickToggle({ entityId }) {
-  const live = useEntity(entityId);
-  const e = live || GH_DATA.lights[entityId];
-  const unavailable = live?.state === "unavailable" || live?.state === "unknown";
-  const initRgb = e.attributes?.rgb_color || [255, 198, 130];
-  const [on, setOn] = useState(e.state === "on");
+  const { entity: e, status } = useEntityStatus(entityId);
+  const unavailable = status === "unavailable" || status === "not_found";
+  const initRgb = e?.attributes?.rgb_color || [255, 198, 130];
+  const [on, setOn] = useState(e?.state === "on");
   useEffect(() => {
-    if (live) setOn(live.state === "on");
-  }, [live?.state]);
+    if (e) setOn(e.state === "on");
+  }, [e?.state]);
+  if (status === "loading") return <div className="entity-loading" style={{ borderRadius: 14, minHeight: 52 }} />;
   function toggle() {
     if (unavailable) return;
     const next = !on;
@@ -1537,7 +1590,7 @@ function QuickToggle({ entityId }) {
         }}
       />
       <div>
-        <div style={{ fontSize: 13, fontWeight: 500 }}>{e.attributes.friendly_name}</div>
+        <div style={{ fontSize: 13, fontWeight: 500 }}>{e?.attributes?.friendly_name || entityId.split(".")[1]}</div>
         <div
           style={{
             fontFamily: "var(--font-mono)",
@@ -1572,15 +1625,14 @@ export function QuickLightsCard({ index = 0 }) {
    Simple AdGuard
    ----------------------------------------------------------------*/
 export function AdGuardSimpleCard({ index = 0 }) {
-  const liveTotal = useEntity("sensor.adguard_home_dns_queries");
+  const { entity: liveTotal, status: adgStatus } = useEntityStatus("sensor.adguard_home_dns_queries");
   const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
   const liveRatio = useEntity("sensor.adguard_home_dns_queries_blocked_ratio");
   const liveProt = useEntity("switch.adguard_home_protection");
-  const a = GH_DATA.adguard;
-  const total = Number(liveTotal?.state ?? a["sensor.adguard_home_dns_queries"].state);
-  const blocked = Number(liveBlocked?.state ?? a["sensor.adguard_home_dns_queries_blocked"].state);
-  const ratio = Number(liveRatio?.state ?? a["sensor.adguard_home_dns_queries_blocked_ratio"].state);
-  const [prot, setProt] = useState((liveProt?.state ?? a["switch.adguard_home_protection"].state) === "on");
+  const total = Number(liveTotal?.state ?? 0);
+  const blocked = Number(liveBlocked?.state ?? 0);
+  const ratio = Number(liveRatio?.state ?? 0);
+  const [prot, setProt] = useState(liveProt?.state === "on");
   useEffect(() => { if (liveProt) setProt(liveProt.state === "on"); }, [liveProt?.state]);
   function toggleProt() {
     const next = !prot;
@@ -1590,6 +1642,7 @@ export function AdGuardSimpleCard({ index = 0 }) {
 
   return (
     <Card index={index} eyebrow="Network · AdGuard" title="AdGuard" meta={prot ? "Live" : "Off"}>
+      <EntityGuard status={adgStatus} entityId="sensor.adguard_home_dns_queries">
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span
@@ -1622,6 +1675,7 @@ export function AdGuardSimpleCard({ index = 0 }) {
         </div>
         <div className={`toggle ${prot ? "on" : ""}`} onClick={toggleProt} role="switch" />
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -1630,8 +1684,8 @@ export function AdGuardSimpleCard({ index = 0 }) {
    Uptime
    ----------------------------------------------------------------*/
 export function UptimeCard({ index = 0 }) {
-  const live = useEntity("sensor.uptime");
-  const iso = live?.state || GH_DATA.system["sensor.uptime"].state;
+  const { entity: live, status: uptimeStatus } = useEntityStatus("sensor.uptime");
+  const iso = live?.state || "2000-01-01T00:00:00";
   const started = new Date(iso);
   const now = new Date();
   const diffMs = now - started;
@@ -1641,6 +1695,7 @@ export function UptimeCard({ index = 0 }) {
 
   return (
     <Card index={index} eyebrow="Uptime · sensor.uptime" title="Up since">
+      <EntityGuard status={uptimeStatus} entityId="sensor.uptime">
       <div
         style={{
           fontFamily: "var(--font-display)",
@@ -1676,6 +1731,7 @@ export function UptimeCard({ index = 0 }) {
           minute: "2-digit",
         })}
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -1684,13 +1740,11 @@ export function UptimeCard({ index = 0 }) {
    Pixoo 64
    ----------------------------------------------------------------*/
 export function PixooCard({ index = 0 }) {
-  const live = useEntity("light.divoom_pixoo_64");
-  const e = live || GH_DATA.lights["light.divoom_pixoo_64"];
-  const notInstalled = !live; // Divoom integration is not on the Pi per the canonical config — card runs on mock as a preview.
-  const [on, setOn] = useState(e.state === "on");
-  const [bright, setB] = useState(e.attributes?.brightness ?? 200);
-  const [channel, setChannel] = useState(e.attributes?.channel ?? "Clock");
-  const channels = e.attributes?.available_channels ?? GH_DATA.lights["light.divoom_pixoo_64"].attributes.available_channels;
+  const { entity: e, status: pixooStatus } = useEntityStatus("light.divoom_pixoo_64");
+  const [on, setOn] = useState(e?.state === "on");
+  const [bright, setB] = useState(e?.attributes?.brightness ?? 200);
+  const [channel, setChannel] = useState(e?.attributes?.channel ?? "Clock");
+  const channels = e?.attributes?.available_channels ?? ["Clock", "Weather", "Visualizer", "Custom"];
 
   function ChannelPreview() {
     if (!on) {
@@ -1789,11 +1843,12 @@ export function PixooCard({ index = 0 }) {
   return (
     <Card
       index={index}
-      eyebrow={notInstalled ? "Light · light.divoom_pixoo_64 · preview" : "Light · light.divoom_pixoo_64"}
+      eyebrow="Light · light.divoom_pixoo_64"
       title="Pixoo 64 · bedroom"
-      meta={notInstalled ? "integration not installed" : on ? `${channel} · ${Math.round((bright / 255) * 100)}%` : "Off"}
+      meta={pixooStatus !== "ready" ? "—" : on ? `${channel} · ${Math.round((bright / 255) * 100)}%` : "Off"}
       headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={() => setOn(!on)} role="switch" />}
     >
+      <EntityGuard status={pixooStatus} entityId="light.divoom_pixoo_64">
       <div style={{ display: "grid", gridTemplateColumns: "92px 1fr", gap: 18, alignItems: "center", marginTop: 4 }}>
         <div
           style={{
@@ -1867,6 +1922,7 @@ export function PixooCard({ index = 0 }) {
           ))}
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -1970,21 +2026,20 @@ export function AddonsCard({ index = 0 }) {
    ================================================================*/
 export function NowPlayingHero({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
-  const live = useEntity(ENTITY);
-  const m = live || GH_DATA.media[ENTITY];
-  const a = m.attributes || {};
+  const { entity: m, status: npStatus } = useEntityStatus(ENTITY);
+  const a = m?.attributes || {};
   const duration = Number(a.media_duration) > 0 ? Number(a.media_duration) : 0;
   const hasDuration = duration > 0;
   const [pos, setPos] = useState(a.media_position || 0);
-  const [playing, setPlaying] = useState(m.state === "playing");
+  const [playing, setPlaying] = useState(m?.state === "playing");
   const [vol, setVol] = useState(Math.round((a.volume_level || 0) * 100));
-  const idle = live && live.state !== "playing" && live.state !== "paused";
+  const idle = m && m.state !== "playing" && m.state !== "paused";
   useEffect(() => {
-    if (!live) return;
-    setPlaying(live.state === "playing");
-    if (live.attributes?.media_position != null) setPos(live.attributes.media_position);
-    if (live.attributes?.volume_level != null) setVol(Math.round(live.attributes.volume_level * 100));
-  }, [live?.state, live?.attributes?.media_position, live?.attributes?.volume_level]);
+    if (!m) return;
+    setPlaying(m.state === "playing");
+    if (m.attributes?.media_position != null) setPos(m.attributes.media_position);
+    if (m.attributes?.volume_level != null) setVol(Math.round(m.attributes.volume_level * 100));
+  }, [m?.state, m?.attributes?.media_position, m?.attributes?.volume_level]);
   function playPause() {
     const next = !playing;
     setPlaying(next);
@@ -2018,6 +2073,7 @@ export function NowPlayingHero({ index = 0 }) {
       title={idle ? "Nothing playing" : "Currently listening"}
       meta={idle ? "Idle" : playing ? "Playing" : "Paused"}
     >
+      <EntityGuard status={npStatus} entityId={ENTITY}>
       <div
         className="nowplaying-grid"
         style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 24, alignItems: "center" }}
@@ -2138,6 +2194,7 @@ export function NowPlayingHero({ index = 0 }) {
           </div>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -2307,9 +2364,9 @@ export function CastTargetsCard({ index = 0 }) {
 
 export function TVCard({ index = 0 }) {
   const ENTITY = "media_player.living_room_tv";
-  const live = useEntity(ENTITY);
+  const { entity: live, status: tvStatus } = useEntityStatus(ENTITY);
   const attrs = live?.attributes || {};
-  const unavailable = !live || live.state === "unavailable" || live.state === "unknown";
+  const unavailable = tvStatus === "unavailable" || tvStatus === "not_found";
   const isOff = live?.state === "off";
   const isOn = !unavailable && !isOff;
   const sources = Array.isArray(attrs.source_list) ? attrs.source_list : [];
@@ -2372,6 +2429,7 @@ export function TVCard({ index = 0 }) {
         />
       }
     >
+      <EntityGuard status={tvStatus} entityId={ENTITY}>
       <div style={{ opacity: disabled ? 0.55 : 1, transition: "opacity 0.3s ease" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>
           {hasSources ? "Source" : "Now showing"}
@@ -2450,6 +2508,7 @@ export function TVCard({ index = 0 }) {
           </span>
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }
@@ -3449,14 +3508,14 @@ export function StatBox({ index = 0, eyebrow, value, unit, caption, pct, color }
 
 export function BambuStatBox({ index = 0 }) {
   const PREFIX = "x1c_00m09d522400385";
-  const liveProg = useEntity(`sensor.${PREFIX}_print_progress`);
+  const { entity: liveProg, status } = useEntityStatus(`sensor.${PREFIX}_print_progress`);
   const liveRem = useEntity(`sensor.${PREFIX}_remaining_time`);
   const liveStage = useEntity(`sensor.${PREFIX}_current_stage`);
-  const p = GH_DATA.printer;
-  const prog = Number(liveProg?.state ?? p[`sensor.${PREFIX}_print_progress`].state);
-  const rem = Number(liveRem?.state ?? p[`sensor.${PREFIX}_remaining_time`].state);
-  const file = liveProg?.attributes?.file_name || p.file;
-  const stage = liveStage?.state ?? p[`sensor.${PREFIX}_current_stage`].state;
+  if (status !== "ready") return <Card index={index} className="statbox"><EntityGuard status={status} entityId={`sensor.${PREFIX}_print_progress`} /></Card>;
+  const prog = Number(liveProg?.state ?? 0);
+  const rem = Number(liveRem?.state ?? 0);
+  const file = liveProg?.attributes?.file_name || "—";
+  const stage = liveStage?.state ?? "—";
   const idle = !rem && (stage === "idle" || stage === "unknown");
   return (
     <StatBox
@@ -3472,12 +3531,11 @@ export function BambuStatBox({ index = 0 }) {
 }
 
 export function LevoitStatBox({ index = 0 }) {
-  const liveQ = useEntity("sensor.core_300s_series_air_quality");
+  const { entity: liveQ, status } = useEntityStatus("sensor.core_300s_series_air_quality");
   const livePm = useEntity("sensor.core_300s_series_pm2_5");
-  const a = GH_DATA.air;
-  const q = liveQ?.state ?? a["sensor.core_300s_series_air_quality"].state;
-  const pm = Number(livePm?.state ?? a["sensor.core_300s_series_pm2_5"].state);
-  // PM2.5 to a 0-100 "goodness" score: 0µg=100, 35µg=0 (WHO unhealthy).
+  if (status !== "ready") return <Card index={index} className="statbox"><EntityGuard status={status} entityId="sensor.core_300s_series_air_quality" /></Card>;
+  const q = liveQ?.state ?? "—";
+  const pm = Number(livePm?.state ?? 0);
   const pct = Math.max(0, Math.min(100, Math.round(100 - (pm / 35) * 100)));
   return (
     <StatBox
@@ -3492,18 +3550,18 @@ export function LevoitStatBox({ index = 0 }) {
 }
 
 export function VacuumStatBox({ index = 0 }) {
-  const liveBat = useEntity("sensor.roborock_s8_battery");
+  const { entity: liveBat, status } = useEntityStatus("sensor.roborock_s8_battery");
   const liveStatus = useEntity("sensor.roborock_s8_status");
-  const v = GH_DATA.vacuum;
-  const bat = Number(liveBat?.state ?? v["sensor.roborock_s8_battery"].state);
-  const status = liveStatus?.state ?? v["sensor.roborock_s8_status"].state;
+  if (status !== "ready") return <Card index={index} className="statbox"><EntityGuard status={status} entityId="sensor.roborock_s8_battery" /></Card>;
+  const bat = Number(liveBat?.state ?? 0);
+  const vStatus = liveStatus?.state ?? "docked";
   return (
     <StatBox
       index={index}
       eyebrow="Gregory · vacuum"
       value={bat}
       unit="%"
-      caption={status ? `${status[0].toUpperCase()}${status.slice(1)}` : "Docked"}
+      caption={vStatus ? `${vStatus[0].toUpperCase()}${vStatus.slice(1)}` : "Docked"}
       pct={bat}
       color={bat >= 90 ? "var(--good)" : bat >= 30 ? "var(--accent-2)" : "var(--bad)"}
     />
@@ -3511,13 +3569,13 @@ export function VacuumStatBox({ index = 0 }) {
 }
 
 export function AdGuardStatBox({ index = 0 }) {
-  const liveRatio = useEntity("sensor.adguard_home_dns_queries_blocked_ratio");
+  const { entity: liveRatio, status } = useEntityStatus("sensor.adguard_home_dns_queries_blocked_ratio");
   const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
   const liveTotal = useEntity("sensor.adguard_home_dns_queries");
-  const a = GH_DATA.adguard;
-  const ratio = Number(liveRatio?.state ?? a["sensor.adguard_home_dns_queries_blocked_ratio"].state);
-  const blocked = Number(liveBlocked?.state ?? a["sensor.adguard_home_dns_queries_blocked"].state);
-  const total = Number(liveTotal?.state ?? a["sensor.adguard_home_dns_queries"].state);
+  if (status !== "ready") return <Card index={index} className="statbox"><EntityGuard status={status} entityId="sensor.adguard_home_dns_queries_blocked_ratio" /></Card>;
+  const ratio = Number(liveRatio?.state ?? 0);
+  const blocked = Number(liveBlocked?.state ?? 0);
+  const total = Number(liveTotal?.state ?? 0);
   return (
     <StatBox
       index={index}

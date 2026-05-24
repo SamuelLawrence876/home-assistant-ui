@@ -11,6 +11,8 @@ import {
   subscribe,
   onConnectionChange,
   onStatesChanged,
+  onSnapshotReady,
+  hasSnapshot,
   getAllStates,
   getEntity,
   getConnectionStatus,
@@ -73,4 +75,36 @@ export function useEntityCounts() {
     return { available, unavailable, total: all.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, tick]);
+}
+
+/* status: "loading" | "not_found" | "unavailable" | "ready" */
+export function useEntityStatus(entityId) {
+  const entity = useEntity(entityId);
+  const connStatus = useConnectionStatus();
+  const [snapshotReady, setSnapshotReady] = useState(() => hasSnapshot());
+
+  useEffect(() => {
+    if (snapshotReady) return;
+    return onSnapshotReady(() => setSnapshotReady(true));
+  }, [snapshotReady]);
+
+  let status;
+  if (connStatus !== "ready" || !snapshotReady) {
+    status = "loading";
+  } else if (!entity) {
+    status = "not_found";
+  } else if (entity.state === "unavailable" || entity.state === "unknown") {
+    status = "unavailable";
+  } else {
+    status = "ready";
+  }
+
+  return { entity, status };
+}
+
+export function combineStatuses(...statuses) {
+  if (statuses.includes("loading")) return "loading";
+  if (statuses.includes("not_found")) return "not_found";
+  if (statuses.includes("unavailable")) return "unavailable";
+  return "ready";
 }
