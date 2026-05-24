@@ -2116,7 +2116,7 @@ body.mode-night {
 .kanban-tag-toggle .tag-rm:hover { opacity: 1; }
 .kanban-tag-menu {
   position: absolute;
-  top: calc(100% + 4px);
+  bottom: calc(100% + 4px);
   left: 0; right: 0;
   background: var(--card-bg, var(--glass-bg));
   border: 1px solid var(--glass-stroke);
