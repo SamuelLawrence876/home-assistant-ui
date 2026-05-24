@@ -433,6 +433,7 @@ body.viewport-phone .topbar {
   grid-template-columns: 1fr auto;
   margin-bottom: 14px;
   gap: 10px;
+  padding-right: 42px;
 }
 body.viewport-phone .tabs { display: none; } /* phone uses bottom nav */
 body.viewport-phone .brand-mark { width: 40px; height: 40px; }
