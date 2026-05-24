@@ -30,6 +30,7 @@ import {
   BackupCard,
   EntityHealthCard,
   SystemActionsCard,
+  StorageCard,
   InProgressCard,
   StatBox,
   RoomClimateCard,
@@ -334,10 +335,11 @@ function SystemView() {
       <div className="col-6"><AddonsCard index={2} /></div>
       <div className="col-6"><AdGuardSimpleCard index={3} /></div>
 
-      <div className="col-8"><BackupCard index={4} /></div>
-      <div className="col-4"><SystemActionsCard index={5} /></div>
+      <div className="col-6"><BackupCard index={4} /></div>
+      <div className="col-6"><StorageCard index={5} /></div>
 
-      <div className="col-12"><EntityHealthCard index={6} /></div>
+      <div className="col-8"><EntityHealthCard index={6} /></div>
+      <div className="col-4"><SystemActionsCard index={7} /></div>
     </div>
   );
 }
