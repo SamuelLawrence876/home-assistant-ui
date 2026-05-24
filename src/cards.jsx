@@ -5,6 +5,7 @@ import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
 import { useEntity, useEntitiesByDomain, useConnectionStatus, useEntityStatus, combineStatuses } from "./ha/useEntity.js";
 import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js";
+import { getAllStates, onStatesChanged } from "./ha/socket.js";
 import {
   isSpotifyConfigured, isSpotifyConnected, startSpotifyAuth,
   callbackReady, clearSpotifyToken, getPlaylists,
@@ -1233,22 +1234,129 @@ export function BackupCard({ index = 0 }) {
 }
 
 export function EntityHealthCard({ index = 0 }) {
-  const { entity: liveAvail, status: healthStatus } = useEntityStatus("sensor.available_entities_count");
-  const liveUnavail = useEntity("sensor.unavailable_entities_count");
-  const available = Number(liveAvail?.state ?? 0);
-  const unavailable = Number(liveUnavail?.state ?? 0);
+  const connStatus = useConnectionStatus();
+  const [tick, setTick] = useState(0);
+  const [expanded, setExpanded] = useState(null);
+  useEffect(() => onStatesChanged(() => setTick((t) => t + 1)), []);
+
+  const { groups, available, unavailable } = useMemo(() => {
+    const all = getAllStates();
+    let avail = 0;
+    let unavail = 0;
+    const byDomain = {};
+    for (const s of all) {
+      const bad = s.state === "unavailable" || s.state === "unknown";
+      if (bad) {
+        unavail++;
+        const domain = s.entity_id.split(".")[0];
+        if (!byDomain[domain]) byDomain[domain] = [];
+        byDomain[domain].push(s);
+      } else {
+        avail++;
+      }
+    }
+    const sorted = Object.entries(byDomain).sort((a, b) => b[1].length - a[1].length);
+    return { groups: sorted, available: avail, unavailable: unavail };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick, connStatus]);
+
+  const loading = connStatus !== "ready";
+
   return (
     <Card
       index={index}
       eyebrow={`Entity registry · ${available} online · ${unavailable} unavailable`}
       title="Unavailable groups"
     >
-      <EntityGuard status={healthStatus} entityId="sensor.available_entities_count">
-      <div className="entity-warning">
-        <span className="entity-warning-icon">{"⚠️"}</span>
-        <span className="entity-warning-text">Needs unavailable-entity group sensors</span>
+      {loading ? (
+        <div className="entity-loading" />
+      ) : unavailable === 0 ? (
+        <div className="health-all-good">All entities available</div>
+      ) : (
+        <div className="health-groups">
+          {groups.map(([domain, entities]) => (
+            <div key={domain} className="health-group">
+              <button
+                className={`health-group-header ${expanded === domain ? "open" : ""}`}
+                onClick={() => setExpanded(expanded === domain ? null : domain)}
+              >
+                <span className="health-domain">{domain}</span>
+                <span className="health-count">{entities.length}</span>
+                <span className="health-chevron">{expanded === domain ? "−" : "+"}</span>
+              </button>
+              {expanded === domain && (
+                <ul className="health-entities">
+                  {entities.map((e) => (
+                    <li key={e.entity_id}>
+                      <span className="health-eid">{e.entity_id}</span>
+                      <span className={`health-state ${e.state}`}>{e.state}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const SYSTEM_ACTIONS = [
+  { id: "restart_ha", label: "Restart HA", icon: "↻", desc: "homeassistant.restart", confirm: true,
+    run: () => callService("homeassistant", "restart") },
+  { id: "reboot_host", label: "Reboot Pi", icon: "⏻", desc: "hassio.host_reboot", confirm: true,
+    run: () => callService("hassio", "host_reboot") },
+  { id: "reload_auto", label: "Reload Automations", icon: "⟲", desc: "automation.reload",
+    run: () => callService("automation", "reload") },
+  { id: "reload_scripts", label: "Reload Scripts", icon: "⟲", desc: "script.reload",
+    run: () => callService("script", "reload") },
+];
+
+export function SystemActionsCard({ index = 0 }) {
+  const [firing, setFiring] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+
+  async function exec(action) {
+    if (action.confirm && confirm !== action.id) {
+      setConfirm(action.id);
+      return;
+    }
+    setConfirm(null);
+    setFiring(action.id);
+    try {
+      await action.run();
+    } catch (e) {
+      console.warn("[system-action] failed", action.id, e);
+    }
+    setTimeout(() => setFiring(null), 2000);
+  }
+
+  return (
+    <Card index={index} eyebrow="System · actions" title="Quick actions" meta={firing ? `Running…` : ""}>
+      <div className="sys-actions-grid">
+        {SYSTEM_ACTIONS.map((a) => (
+          <button
+            key={a.id}
+            className={`sys-action ${firing === a.id ? "firing" : ""} ${confirm === a.id ? "confirming" : ""} ${a.id}`}
+            onClick={() => exec(a)}
+            disabled={!!firing}
+          >
+            <div className="sys-action-ic">{a.icon}</div>
+            <div>
+              <div className="sys-action-nm">
+                {confirm === a.id ? "Confirm?" : a.label}
+              </div>
+              <div className="sys-action-sub">{a.desc}</div>
+            </div>
+          </button>
+        ))}
       </div>
-      </EntityGuard>
+      {confirm && (
+        <button className="sys-action-cancel" onClick={() => setConfirm(null)}>
+          Cancel
+        </button>
+      )}
     </Card>
   );
 }
