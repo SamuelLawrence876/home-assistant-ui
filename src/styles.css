@@ -2083,7 +2083,8 @@ body.mode-night {
 .kanban-add-btn.cancel:hover { color: var(--ink); border-color: var(--ink-3); }
 
 /* Tag picker */
-.kanban-tag-picker { position: relative; }
+.kanban-tag-picker { position: relative; flex: 1; min-width: 0; }
+.kanban-date { width: 100px; flex: 0 0 auto; }
 .kanban-tag-toggle {
   width: 100%;
   background: var(--glass-bg-2);

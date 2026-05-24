@@ -3391,28 +3391,30 @@ function KanbanAddForm({ onSubmit, onCancel }) {
   return (
     <form className="kanban-add-form" onSubmit={handle}>
       <input ref={ref} className="kanban-input" placeholder="What needs doing?" value={summary} onChange={(ev) => setSummary(ev.target.value)} />
-      <div className="kanban-tag-picker" ref={menuRef}>
-        <button type="button" className="kanban-tag-toggle" onClick={() => setShowTagMenu(!showTagMenu)}>
-          {selectedTags.length ? selectedTags.map((t) => (
-            <span key={t} className={`tag tag-${t}`}>{tagLabel(t)} <span className="tag-rm" onClick={(ev) => { ev.stopPropagation(); removeTag(t); }}>&times;</span></span>
-          )) : <span className="placeholder">+ Tags</span>}
-        </button>
-        {showTagMenu && (
-          <div className="kanban-tag-menu">
-            {KANBAN_PRESET_TAGS.map(({ id, label }) => (
-              <button key={id} type="button" className={`kanban-tag-option ${selectedTags.includes(id) ? "selected" : ""}`} onClick={() => toggleTag(id)}>
-                <span className={`tag-dot tag-${id}`} />
-                {label}
-                {selectedTags.includes(id) && <span className="check">✓</span>}
-              </button>
-            ))}
-            <form className="kanban-tag-custom" onSubmit={addCustomTag}>
-              <input className="kanban-input kanban-input-sm" placeholder="Custom tag…" value={customTag} onChange={(ev) => setCustomTag(ev.target.value)} />
-            </form>
-          </div>
-        )}
+      <div className="kanban-add-row">
+        <div className="kanban-tag-picker" ref={menuRef}>
+          <button type="button" className="kanban-tag-toggle" onClick={() => setShowTagMenu(!showTagMenu)}>
+            {selectedTags.length ? selectedTags.map((t) => (
+              <span key={t} className={`tag tag-${t}`}>{tagLabel(t)} <span className="tag-rm" onClick={(ev) => { ev.stopPropagation(); removeTag(t); }}>&times;</span></span>
+            )) : <span className="placeholder">+ Tags</span>}
+          </button>
+          {showTagMenu && (
+            <div className="kanban-tag-menu">
+              {KANBAN_PRESET_TAGS.map(({ id, label }) => (
+                <button key={id} type="button" className={`kanban-tag-option ${selectedTags.includes(id) ? "selected" : ""}`} onClick={() => toggleTag(id)}>
+                  <span className={`tag-dot tag-${id}`} />
+                  {label}
+                  {selectedTags.includes(id) && <span className="check">✓</span>}
+                </button>
+              ))}
+              <form className="kanban-tag-custom" onSubmit={addCustomTag}>
+                <input className="kanban-input kanban-input-sm" placeholder="Custom tag…" value={customTag} onChange={(ev) => setCustomTag(ev.target.value)} />
+              </form>
+            </div>
+          )}
+        </div>
+        <input className="kanban-input kanban-input-sm kanban-date" type="date" value={due} onChange={(ev) => setDue(ev.target.value)} />
       </div>
-      <input className="kanban-input kanban-input-sm" type="date" value={due} onChange={(ev) => setDue(ev.target.value)} />
       <div className="kanban-add-row">
         <button type="submit" className="kanban-add-btn">Add</button>
         <button type="button" className="kanban-add-btn cancel" onClick={onCancel}>Cancel</button>
