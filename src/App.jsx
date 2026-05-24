@@ -29,8 +29,9 @@ import {
   PiCard,
   BackupCard,
   EntityHealthCard,
-  ShoppingCard,
+  InProgressCard,
   StatBox,
+  RoomTempStatBox,
   BambuStatBox,
   LevoitStatBox,
   VacuumStatBox,
@@ -43,10 +44,7 @@ import {
   PixooCard,
   AddonsCard,
   NowPlayingHero,
-  CastTargetsCard,
-  TVCard,
-  QueueCard,
-  RecentCard,
+  SpotifyConnectCard,
   WeeklyCalendarCard,
   KanbanBoardCard,
 } from "./cards.jsx";
@@ -201,23 +199,24 @@ function OverviewView({ viewport, sky }) {
       </div>
       <div className="col-4" style={{ display: "grid", gap: 14 }}>
         <PresenceCard index={1} />
-        <MediaCard index={2} />
+        <RoomTempStatBox index={2} />
+        <MediaCard index={3} />
       </div>
 
       <div className="col-4">
-        <QuickLightsCard index={3} />
+        <QuickLightsCard index={4} />
       </div>
       <div className="col-5">
-        <ScenesCard index={4} />
+        <ScenesCard index={5} />
       </div>
       <div className="col-3">
-        <ShoppingCard index={5} />
+        <InProgressCard index={6} />
       </div>
 
-      <div className="col-3"><BambuStatBox index={6} /></div>
-      <div className="col-3"><LevoitStatBox index={7} /></div>
-      <div className="col-3"><VacuumStatBox index={8} /></div>
-      <div className="col-3"><AdGuardStatBox index={9} /></div>
+      <div className="col-3"><BambuStatBox index={7} /></div>
+      <div className="col-3"><LevoitStatBox index={8} /></div>
+      <div className="col-3"><VacuumStatBox index={9} /></div>
+      <div className="col-3"><AdGuardStatBox index={10} /></div>
     </div>
   );
 }
@@ -277,12 +276,7 @@ function MediaView() {
   return (
     <div className="grid">
       <div className="col-8"><NowPlayingHero index={0} /></div>
-      <div className="col-4"><CastTargetsCard index={1} /></div>
-      <div className="col-7"><QueueCard index={2} /></div>
-      <div className="col-5" style={{ display: "grid", gap: 14 }}>
-        <TVCard index={3} />
-        <RecentCard index={4} />
-      </div>
+      <div className="col-4"><SpotifyConnectCard index={1} /></div>
     </div>
   );
 }

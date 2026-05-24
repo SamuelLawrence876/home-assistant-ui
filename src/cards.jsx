@@ -856,49 +856,51 @@ export function AirPurifierCard({ index = 0 }) {
    Heater — Govee
    ----------------------------------------------------------------*/
 export function HeaterCard({ index = 0 }) {
-  const { entity: liveTemp, status: heaterStatus } = useEntityStatus("input_number.govee_heater_temperature");
-  const initialTemp = Number(liveTemp?.state ?? 20);
-  const [temp, setTemp] = useState(initialTemp);
+  const { entity: roomTempEntity, status: roomStatus } = useEntityStatus("sensor.h5075_4fb6_temperature");
+  const roomHumidity = useEntity("sensor.h5075_4fb6_humidity");
+  const roomBattery = useEntity("sensor.h5075_4fb6_battery");
+  const targetEntity = useEntity("input_number.govee_heater_temperature");
+
+  const roomTemp = Number(roomTempEntity?.state ?? 0);
+  const humidity = Number(roomHumidity?.state ?? 0);
+  const battery = Number(roomBattery?.state ?? 0);
+  const roomAvailable = roomStatus === "ready";
+
+  const [target, setTarget] = useState(Number(targetEntity?.state ?? 20));
   const [on, setOn] = useState(false);
   useEffect(() => {
-    if (liveTemp) setTemp(Number(liveTemp.state));
-  }, [liveTemp?.state]);
+    if (targetEntity) setTarget(Number(targetEntity.state));
+  }, [targetEntity?.state]);
+
   function commitTemp(v) {
-    setTemp(v);
+    setTarget(v);
     callService("input_number", "set_value", { entity_id: "input_number.govee_heater_temperature", value: v }).catch(() => {});
   }
   function toggleHeater() {
     const next = !on;
     setOn(next);
-    // The Pi has rest_command.govee_heater_control wired up; signature depends on /config.
-    // Sending action: on/off as a best-guess; adjust if the rest_command expects different params.
-    callService("rest_command", "govee_heater_control", { power: next ? "on" : "off" }).catch((e) => {
-      console.warn("[heater] rest_command failed — check param names", e);
-      setOn(on);
-    });
+    callService("script", next ? "turn_on_govee_heater" : "turn_off_govee_heater", {}).catch(() => setOn(on));
   }
-  const angle = Math.max(0, Math.min(270, ((temp - 12) / 18) * 270));
+  const angle = Math.max(0, Math.min(270, ((target - 12) / 18) * 270));
 
   return (
     <Card
       index={index}
-      eyebrow="Climate · Govee heater"
-      title="Heater"
-      meta={on ? `On · target ${temp}°` : `Off · target ${temp}°`}
+      eyebrow={`Climate · Govee H5075${roomAvailable ? ` · ${battery}% battery` : ""}`}
+      title="Room climate"
+      meta={roomAvailable ? `${roomTemp}° · ${humidity}% humidity` : "Sensor offline"}
     >
-      <EntityGuard status={heaterStatus} entityId="input_number.govee_heater_temperature">
+      <EntityGuard status={roomStatus} entityId="sensor.h5075_4fb6_temperature">
       <div className="heater-body">
         <div>
           <div className="heater-num">
-            {temp}
+            {roomTemp}
             <span className="u">°c</span>
           </div>
-          <div className="meta" style={{ marginTop: 6 }}>
-            Drives <b style={{ color: "var(--ink-2)" }}>input_number.govee_heater_temperature</b>
-          </div>
+          <div className="meta" style={{ marginTop: 2 }}>{humidity}% humidity</div>
           <div className="heater-controls">
-            <button className="heater-step" onClick={() => commitTemp(Math.max(12, temp - 1))}>−</button>
-            <button className="heater-step" onClick={() => commitTemp(Math.min(30, temp + 1))}>+</button>
+            <button className="heater-step" onClick={() => commitTemp(Math.max(12, target - 1))}>−</button>
+            <button className="heater-step" onClick={() => commitTemp(Math.min(30, target + 1))}>+</button>
             <button className={`btn ${on ? "accent" : "primary"}`} onClick={toggleHeater}>
               {on ? "Turn off" : "Turn on"}
             </button>
@@ -908,8 +910,8 @@ export function HeaterCard({ index = 0 }) {
           <div className="heater-dial-inner">
             <div>
               <div className="set">Target</div>
-              <div className="val">{temp}°</div>
-              <div className="act">{on ? "Heating" : "Idle"}</div>
+              <div className="val">{target}°</div>
+              <div className="act">{on ? "Heating" : "Unplugged"}</div>
             </div>
           </div>
         </div>
@@ -1208,22 +1210,21 @@ export function EntityHealthCard({ index = 0 }) {
   );
 }
 
-export function ShoppingCard({ index = 0 }) {
-  const { entity: live, status: shopStatus } = useEntityStatus("todo.shopping_list");
+export function InProgressCard({ index = 0 }) {
+  const { entity: live, status } = useEntityStatus("todo.doing_2");
   const [items, setItems] = useState([]);
   const count = Number(live?.state ?? 0);
-  // todo lists need a service call to read items — the entity's state is just a count.
   useEffect(() => {
     if (!live) return;
-    getTodoItems("todo.shopping_list")
+    getTodoItems("todo.doing_2")
       .then((list) => {
         if (Array.isArray(list)) setItems(list.map((x) => x.summary || x.uid));
       })
       .catch(() => {});
   }, [live?.state]);
   return (
-    <Card index={index} eyebrow={`Shopping · ${count} items`} title="Shopping list">
-      <EntityGuard status={shopStatus} entityId="todo.shopping_list">
+    <Card index={index} eyebrow={`In Progress · ${count} items`} title="Doing now">
+      <EntityGuard status={status} entityId="todo.doing_2">
       <ul className="shopping">
         {items.slice(0, 6).map((it, i) => (
           <li key={i}>{it}</li>
@@ -2185,338 +2186,173 @@ export function NowPlayingHero({ index = 0 }) {
   );
 }
 
-/* Multi-room audio destinations. Spotify's source_list only ever surfaces
-   Spotify Connect devices (just SAM_PC here), so we list the full
-   media_player domain instead. Music Assistant entities show up naturally;
-   the Spotify source itself and the Chromecast TV (already on TVCard) are
-   filtered out. Each row's button calls media_player.media_play_pause on
-   that target — universal across cast / MA / airplay / etc. */
-const CAST_TARGETS_EXCLUDE = new Set([
-  "media_player.spotify_samuel_lawrence",
-  "media_player.living_room_tv",
-  "media_player.living_room_tv_2", // dlna duplicate of the cast TV
-]);
+export function SpotifyConnectCard({ index = 0 }) {
+  const ENTITY = "media_player.spotify_samuel_lawrence";
+  const { entity: m } = useEntityStatus(ENTITY);
+  const a = m?.attributes || {};
+  const sources = Array.isArray(a.source_list) ? a.source_list : [];
+  const activeSource = a.source || null;
+  const playing = m?.state === "playing";
+  const paused = m?.state === "paused";
 
-export function CastTargetsCard({ index = 0 }) {
-  const all = useEntitiesByDomain("media_player");
-  const [pending, setPending] = useState(null);
-
-  const targets = useMemo(() => {
-    return all
-      .filter((s) => s && !CAST_TARGETS_EXCLUDE.has(s.entity_id))
-      .map((s) => {
-        const a = s.attributes || {};
-        const name = a.friendly_name || s.entity_id.replace(/^media_player\./, "");
-        const playing = s.state === "playing";
-        const paused = s.state === "paused";
-        const unavailable = s.state === "unavailable" || s.state === "unknown";
-        const off = s.state === "off";
-        const title = playing || paused ? a.media_title : null;
-        const artist = playing || paused ? a.media_artist : null;
-        const subtitle = unavailable
-          ? "offline"
-          : off
-            ? "off"
-            : title
-              ? artist
-                ? `${title} · ${artist}`
-                : title
-              : s.state || "idle";
-        return {
-          id: s.entity_id,
-          name,
-          subtitle,
-          playing,
-          unavailable,
-          off,
-        };
-      })
-      .sort((a, b) => {
-        // playing first, then idle/paused, then off/unavailable
-        const rank = (t) => (t.playing ? 0 : t.unavailable || t.off ? 2 : 1);
-        return rank(a) - rank(b) || a.name.localeCompare(b.name);
-      });
-  }, [all]);
-
-  function toggle(id) {
-    setPending(id);
-    callService("media_player", "media_play_pause", { entity_id: id })
-      .catch((e) => console.warn("[cast] media_play_pause failed", e))
-      .finally(() => setPending(null));
-  }
-
-  const playingCount = targets.filter((t) => t.playing).length;
+  const steps = [
+    { n: "1", text: "Open Spotify on your phone" },
+    { n: "2", text: 'Tap the "Connect to a device" icon' },
+    { n: "3", text: 'Select "Home Assistant"' },
+  ];
 
   return (
     <Card
       index={index}
-      eyebrow={`Speakers · ${targets.length} destinations`}
-      title="Multi-room audio"
-      meta={playingCount > 0 ? `${playingCount} playing` : null}
+      eyebrow="Spotify Connect · Pi speaker"
+      title="Guest playback"
+      meta={playing ? "In use" : "Available"}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
-        {targets.map((t) => {
-          const dimmed = t.unavailable || t.off;
-          return (
-            <button
-              key={t.id}
-              onClick={() => toggle(t.id)}
-              disabled={dimmed || (pending && pending !== t.id)}
+      <div
+        style={{
+          background: "var(--glass-bg-2)",
+          border: "1px solid var(--glass-stroke)",
+          borderRadius: 14,
+          padding: "14px 16px",
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+        }}
+      >
+        <div
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 10,
+            background: playing || paused
+              ? "linear-gradient(135deg, #1db954, #1ed760)"
+              : "color-mix(in oklch, var(--ink), transparent 88%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 20,
+            flexShrink: 0,
+            transition: "background 0.3s ease",
+          }}
+        >
+          {playing ? "♪" : "🔊"}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 500 }}>Home Assistant</div>
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--ink-3)",
+              marginTop: 2,
+            }}
+          >
+            {playing
+              ? `Playing · ${a.media_title || "unknown"}`
+              : paused
+                ? "Paused"
+                : "Ready for connections"}
+          </div>
+        </div>
+        <div
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: "50%",
+            background: playing || paused ? "#1db954" : "var(--ink-3)",
+            boxShadow: playing ? "0 0 8px #1db954" : "none",
+            flexShrink: 0,
+            transition: "background 0.3s, box-shadow 0.3s",
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          marginTop: 16,
+          paddingTop: 14,
+          borderTop: "1px solid var(--rule)",
+        }}
+      >
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 9,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: "var(--ink-3)",
+            marginBottom: 10,
+          }}
+        >
+          How to connect
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {steps.map((s) => (
+            <div
+              key={s.n}
               style={{
-                background: t.playing ? "var(--ink)" : "var(--glass-bg-2)",
-                color: t.playing ? "var(--sky-top, white)" : "var(--ink)",
-                border: "1px solid var(--glass-stroke)",
-                borderRadius: 14,
-                padding: "12px 14px",
-                display: "grid",
-                gridTemplateColumns: "28px 1fr auto",
+                display: "flex",
                 alignItems: "center",
                 gap: 12,
-                cursor: dimmed ? "not-allowed" : pending ? "wait" : "pointer",
-                opacity: dimmed ? 0.45 : 1,
-                fontFamily: "inherit",
-                textAlign: "left",
-                transition: "background 0.3s ease, color 0.3s ease, opacity 0.3s ease",
               }}
             >
               <span
                 style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 4,
-                  background: t.playing ? "var(--accent)" : "color-mix(in oklch, var(--ink), transparent 88%)",
-                  boxShadow: t.playing ? `0 0 12px var(--accent)` : "none",
-                  transition: "background 0.3s, box-shadow 0.3s",
-                }}
-              />
-              <div style={{ minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {t.name}
-                </div>
-                <div
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 9,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    opacity: 0.7,
-                    marginTop: 2,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {t.subtitle}
-                </div>
-              </div>
-              <span
-                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 6,
+                  background: "color-mix(in oklch, var(--ink), transparent 90%)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   fontFamily: "var(--font-mono)",
-                  fontSize: 9,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  opacity: 0.7,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  flexShrink: 0,
                 }}
               >
-                {pending === t.id ? "…" : t.playing ? "⏸ Pause" : dimmed ? "—" : "▶ Play"}
+                {s.n}
               </span>
-            </button>
-          );
-        })}
-        {targets.length === 0 && (
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "var(--ink-3)",
-              padding: "12px 4px",
-            }}
-          >
-            No media destinations reported yet.
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-export function TVCard({ index = 0 }) {
-  const ENTITY = "media_player.living_room_tv";
-  const { entity: live, status: tvStatus } = useEntityStatus(ENTITY);
-  const attrs = live?.attributes || {};
-  const unavailable = tvStatus === "unavailable" || tvStatus === "not_found";
-  const isOff = live?.state === "off";
-  const isOn = !unavailable && !isOff;
-  const sources = Array.isArray(attrs.source_list) ? attrs.source_list : [];
-  const hasSources = sources.length > 0;
-
-  const [on, setOn] = useState(isOn);
-  const [source, setSource] = useState(attrs.source ?? null);
-  const [vol, setVol] = useState(Math.round((attrs.volume_level ?? 0) * 100));
-  useEffect(() => {
-    if (!live) return;
-    setOn(live.state !== "off" && live.state !== "unavailable" && live.state !== "unknown");
-    if (live.attributes?.source !== undefined) setSource(live.attributes.source);
-    if (live.attributes?.volume_level != null) setVol(Math.round(live.attributes.volume_level * 100));
-  }, [live?.state, live?.attributes?.source, live?.attributes?.volume_level]);
-
-  const appName = attrs.app_name || null;
-  const mediaTitle = attrs.media_title || null;
-  const statusLabel = unavailable
-    ? "Off"
-    : isOff
-      ? "Off"
-      : appName
-        ? appName
-        : live?.state === "playing"
-          ? "Playing"
-          : live?.state === "paused"
-            ? "Paused"
-            : "Idle";
-
-  function togglePower() {
-    if (unavailable) return;
-    const next = !on;
-    setOn(next);
-    callService("media_player", next ? "turn_on" : "turn_off", { entity_id: ENTITY }).catch(() => setOn(on));
-  }
-  function pickSource(s) {
-    setSource(s);
-    callService("media_player", "select_source", { entity_id: ENTITY, source: s }).catch(() => setSource(source));
-  }
-  function commitVolume(v) {
-    setVol(v);
-    callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 }).catch(() => {});
-  }
-
-  const disabled = unavailable || isOff;
-
-  return (
-    <Card
-      index={index}
-      eyebrow="TV · living_room_tv"
-      title="Living room TV"
-      meta={statusLabel}
-      headRight={
-        <div
-          className={`toggle ${on ? "on" : ""}`}
-          onClick={unavailable ? undefined : togglePower}
-          role="switch"
-          aria-checked={on}
-          style={{ opacity: unavailable ? 0.4 : 1, cursor: unavailable ? "not-allowed" : "pointer" }}
-        />
-      }
-    >
-      <EntityGuard status={tvStatus} entityId={ENTITY}>
-      <div style={{ opacity: disabled ? 0.55 : 1, transition: "opacity 0.3s ease" }}>
-        <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>
-          {hasSources ? "Source" : "Now showing"}
+              <span style={{ fontSize: 13, color: "var(--ink-2)" }}>{s.text}</span>
+            </div>
+          ))}
         </div>
-        {hasSources ? (
-          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-            {sources.map((s) => (
-              <button
-                key={s}
-                className={`preset ${source === s ? "on" : ""}`}
-                onClick={() => pickSource(s)}
-                disabled={disabled}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 500,
-              color: "var(--ink-2)",
-              minHeight: 32,
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            {unavailable
-              ? "TV is off the network"
-              : isOff
-                ? "TV is off"
-                : appName
-                  ? mediaTitle
-                    ? `${appName} · ${mediaTitle}`
-                    : appName
-                  : "Idle"}
-          </div>
-        )}
+      </div>
 
+      {sources.length > 0 && (
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
             marginTop: 16,
             paddingTop: 14,
             borderTop: "1px solid var(--rule)",
           }}
         >
-          <span
+          <div
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: 10,
+              fontSize: 9,
               letterSpacing: "0.1em",
               textTransform: "uppercase",
               color: "var(--ink-3)",
+              marginBottom: 8,
             }}
           >
-            Volume
-          </span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={vol}
-            disabled={disabled}
-            onChange={(e) => setVol(Number(e.target.value))}
-            onPointerUp={(e) => commitVolume(Number(e.target.value))}
-            onKeyUp={(e) => commitVolume(Number(e.target.value))}
-            className="gh-slider"
-            style={{ flex: 1, accentColor: "var(--accent)" }}
-          />
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)", minWidth: 30, textAlign: "right" }}>
-            {vol}%
-          </span>
+            Known devices
+          </div>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+            {sources.map((s) => (
+              <span
+                key={s}
+                className={`preset ${activeSource === s ? "on" : ""}`}
+              >
+                {s}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
-      </EntityGuard>
-    </Card>
-  );
-}
-
-export function QueueCard({ index = 0 }) {
-  return (
-    <Card index={index} eyebrow="Queue" title="Up next">
-      <div className="entity-warning">
-        <span className="entity-warning-icon">{"⚠️"}</span>
-        <span className="entity-warning-text">Needs Music Assistant queue integration</span>
-      </div>
-    </Card>
-  );
-}
-
-export function RecentCard({ index = 0 }) {
-  return (
-    <Card index={index} eyebrow="Recent" title="Recently played">
-      <div className="entity-warning">
-        <span className="entity-warning-icon">{"⚠️"}</span>
-        <span className="entity-warning-text">Needs recorder or Music Assistant history</span>
-      </div>
+      )}
     </Card>
   );
 }
@@ -3424,6 +3260,50 @@ export function StatBox({ index = 0, eyebrow, value, unit, caption, pct, color }
 
 /* Live-wired StatBox variants for Overview. Each subscribes to its own
    entities so a single tile updating doesn't re-render the others. */
+
+export function RoomTempStatBox({ index = 0 }) {
+  const { entity: liveTemp, status } = useEntityStatus("sensor.h5075_4fb6_temperature");
+  const liveHum = useEntity("sensor.h5075_4fb6_humidity");
+  if (status !== "ready") return <Card index={index} className="room-climate"><EntityGuard status={status} entityId="sensor.h5075_4fb6_temperature" /></Card>;
+  const temp = Number(liveTemp?.state ?? 0);
+  const hum = Number(liveHum?.state ?? 0);
+  const tempColor = temp >= 18 && temp <= 24 ? "var(--good)" : temp < 18 ? "var(--accent-2)" : "var(--bad)";
+  const tempPct = Math.max(0, Math.min(100, ((temp - 10) / 30) * 100));
+  const humPct = Math.max(0, Math.min(100, hum));
+  return (
+    <Card index={index} className="room-climate">
+      <div className="rc-body">
+        <div className="rc-gauge">
+          <svg viewBox="0 0 80 80">
+            <circle cx="40" cy="40" r="34" fill="none" stroke="var(--rule)" strokeWidth="5" />
+            <circle cx="40" cy="40" r="34" fill="none" stroke={tempColor} strokeWidth="5"
+              strokeDasharray={`${2 * Math.PI * 34}`}
+              strokeDashoffset={`${2 * Math.PI * 34 * (1 - tempPct / 100)}`}
+              strokeLinecap="round"
+              transform="rotate(-90 40 40)"
+              style={{ transition: "stroke-dashoffset 1.2s ease, stroke 0.6s" }}
+            />
+          </svg>
+          <div className="rc-temp">
+            <span className="rc-val">{temp}</span>
+            <span className="rc-unit">°c</span>
+          </div>
+        </div>
+        <div className="rc-info">
+          <div className="rc-label">Room</div>
+          <div className="rc-row">
+            <span className="rc-icon">💧</span>
+            <span className="rc-hum-val">{hum}%</span>
+            <div className="rc-hum-bar">
+              <span style={{ "--p": `${humPct}%` }} />
+            </div>
+          </div>
+          <div className="rc-comfort">{temp >= 18 && temp <= 24 ? "Comfortable" : temp < 18 ? "Cold" : "Warm"}</div>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 export function BambuStatBox({ index = 0 }) {
   const PREFIX = "x1c_00m09d522400385";
