@@ -244,10 +244,10 @@ export const GH_DATA = {
         supported_color_modes: ["color_temp", "rgb"],
       },
     },
-    "light.bedroom": {
+    "light.smartbulb_5c_h": {
       state: "off",
       attributes: {
-        friendly_name: "Bedroom",
+        friendly_name: "Bedroom bulb",
         brightness: 120,
         color_mode: "color_temp",
         color_temp_kelvin: 2200,

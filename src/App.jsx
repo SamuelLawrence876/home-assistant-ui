@@ -233,7 +233,7 @@ function LightsView() {
   return (
     <div className="grid">
       <div className="col-6"><LightCard index={0} entityId="light.living_room" /></div>
-      <div className="col-6"><LightCard index={1} entityId="light.bedroom" /></div>
+      <div className="col-6"><LightCard index={1} entityId="light.smartbulb_5c_h" /></div>
       <div className="col-6"><LightCard index={2} entityId="light.desk_strip" /></div>
       <div className="col-6"><PixooCard index={3} /></div>
 
