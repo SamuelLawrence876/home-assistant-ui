@@ -44,6 +44,7 @@ import {
   UptimeCard,
   PixooCard,
   AddonsCard,
+  NextEventCard,
   NowPlayingHero,
   SpotifyConnectCard,
   SpotifySearchCard,
@@ -205,26 +206,27 @@ function OverviewView({ viewport, sky }) {
       <div className="col-4" style={{ display: "grid", gap: 14, alignContent: "start" }}>
         <PresenceCard index={1} />
         <MediaCard index={2} />
+        <NextEventCard index={3} />
       </div>
 
       <div className="col-12">
-        <RoomClimateStrip index={3} />
+        <RoomClimateStrip index={4} />
       </div>
 
       <div className="col-4">
-        <QuickLightsCard index={4} />
+        <QuickLightsCard index={5} />
       </div>
       <div className="col-5">
-        <ScenesCard index={5} />
+        <ScenesCard index={6} />
       </div>
       <div className="col-3">
-        <InProgressCard index={6} />
+        <InProgressCard index={7} />
       </div>
 
-      <div className="col-3"><BambuStatBox index={7} /></div>
-      <div className="col-3"><LevoitStatBox index={8} /></div>
-      <div className="col-3"><VacuumStatBox index={9} /></div>
-      <div className="col-3"><AdGuardStatBox index={10} /></div>
+      <div className="col-3"><BambuStatBox index={8} /></div>
+      <div className="col-3"><LevoitStatBox index={9} /></div>
+      <div className="col-3"><VacuumStatBox index={10} /></div>
+      <div className="col-3"><AdGuardStatBox index={11} /></div>
     </div>
   );
 }
