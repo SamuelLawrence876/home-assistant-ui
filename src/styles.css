@@ -1950,13 +1950,15 @@ body.mode-night {
   text-decoration-color: var(--ink-4);
 }
 
-/* Tag colors */
-.tag-dev         { --tag-color: oklch(0.55 0.13 235); }
-.tag-network     { --tag-color: oklch(0.55 0.16 30); }
-.tag-hardware    { --tag-color: oklch(0.50 0.14 320); }
-.tag-home        { --tag-color: oklch(0.55 0.13 150); }
-.tag-integration { --tag-color: oklch(0.55 0.12 80); }
-.tag-automation  { --tag-color: oklch(0.50 0.15 200); }
+/* Tag colors — preset categories */
+.tag-ha           { --tag-color: oklch(0.55 0.16 250); }
+.tag-work         { --tag-color: oklch(0.55 0.16 30); }
+.tag-side-project { --tag-color: oklch(0.55 0.15 310); }
+.tag-fun          { --tag-color: oklch(0.58 0.17 145); }
+.tag-errand       { --tag-color: oklch(0.55 0.12 80); }
+.tag-learning     { --tag-color: oklch(0.55 0.14 195); }
+.tag-health       { --tag-color: oklch(0.58 0.18 160); }
+.tag-finance      { --tag-color: oklch(0.55 0.13 55); }
 
 /* Placeholder column shown when an iCloud Reminders list with the
    canonical name hasn't been created yet. Visually muted so it reads
@@ -2079,6 +2081,83 @@ body.mode-night {
   border: 1px solid var(--rule);
 }
 .kanban-add-btn.cancel:hover { color: var(--ink); border-color: var(--ink-3); }
+
+/* Tag picker */
+.kanban-tag-picker { position: relative; }
+.kanban-tag-toggle {
+  width: 100%;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 10px;
+  padding: 6px 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  cursor: pointer;
+  min-height: 32px;
+  align-items: center;
+  transition: border-color 0.2s;
+}
+.kanban-tag-toggle:hover { border-color: var(--accent); }
+.kanban-tag-toggle .placeholder {
+  font-size: 11px;
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+}
+.kanban-tag-toggle .tag { cursor: default; display: inline-flex; align-items: center; gap: 3px; }
+.kanban-tag-toggle .tag-rm {
+  cursor: pointer;
+  opacity: 0.7;
+  font-size: 13px;
+  line-height: 1;
+}
+.kanban-tag-toggle .tag-rm:hover { opacity: 1; }
+.kanban-tag-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0; right: 0;
+  background: var(--card-bg, var(--glass-bg));
+  border: 1px solid var(--glass-stroke);
+  border-radius: 10px;
+  padding: 4px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+}
+.kanban-tag-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.kanban-tag-option:hover { background: var(--glass-bg-2); }
+.kanban-tag-option.selected { background: var(--glass-bg-2); }
+.kanban-tag-option .check {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 13px;
+}
+.tag-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--tag-color, var(--ink-3));
+  flex-shrink: 0;
+}
+.kanban-tag-custom {
+  padding: 4px;
+  border-top: 1px solid var(--rule);
+  margin-top: 2px;
+}
 
 /* Phone-specific kanban — horizontal scroll columns */
 body.viewport-phone .kanban {

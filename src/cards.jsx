@@ -3089,6 +3089,17 @@ const KANBAN_COLS = [
   { id: "todo.doing_2", label: "In Progress" },
   { id: "__done__",      label: "Done" },
 ];
+
+const KANBAN_PRESET_TAGS = [
+  { id: "ha",           label: "HA" },
+  { id: "work",         label: "Work" },
+  { id: "side-project", label: "Side Project" },
+  { id: "fun",          label: "Fun" },
+  { id: "errand",       label: "Errand" },
+  { id: "learning",     label: "Learning" },
+  { id: "health",       label: "Health" },
+  { id: "finance",      label: "Finance" },
+];
 const KANBAN_ENTITY_IDS = KANBAN_COLS.filter((c) => c.id !== "__done__").map((c) => c.id);
 
 function parseTags(description) {
@@ -3343,26 +3354,65 @@ export function KanbanBoardCard({ index = 0 }) {
 
 function KanbanAddForm({ onSubmit, onCancel }) {
   const [summary, setSummary] = useState("");
-  const [tagStr, setTagStr] = useState("");
+  const [selectedTags, setSelectedTags] = useState([]);
+  const [customTag, setCustomTag] = useState("");
+  const [showTagMenu, setShowTagMenu] = useState(false);
   const [due, setDue] = useState("");
   const ref = useRef(null);
+  const menuRef = useRef(null);
   useEffect(() => { ref.current?.focus(); }, []);
+  useEffect(() => {
+    if (!showTagMenu) return;
+    function close(ev) { if (menuRef.current && !menuRef.current.contains(ev.target)) setShowTagMenu(false); }
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [showTagMenu]);
+
+  function toggleTag(id) {
+    setSelectedTags((cur) => cur.includes(id) ? cur.filter((t) => t !== id) : [...cur, id]);
+  }
+  function addCustomTag(ev) {
+    ev.preventDefault();
+    const t = customTag.replace(/^#/, "").replace(/\s+/g, "-").toLowerCase().trim();
+    if (t && !selectedTags.includes(t)) setSelectedTags((cur) => [...cur, t]);
+    setCustomTag("");
+  }
+  function removeTag(id) { setSelectedTags((cur) => cur.filter((t) => t !== id)); }
 
   function handle(ev) {
     ev.preventDefault();
     const s = summary.trim();
     if (!s) return;
-    const tags = tagStr.split(/[\s,]+/).map((t) => t.replace(/^#/, "").trim()).filter(Boolean);
-    onSubmit(s, tags, due || null);
+    onSubmit(s, selectedTags, due || null);
   }
+
+  const tagLabel = (id) => KANBAN_PRESET_TAGS.find((p) => p.id === id)?.label || id;
 
   return (
     <form className="kanban-add-form" onSubmit={handle}>
       <input ref={ref} className="kanban-input" placeholder="What needs doing?" value={summary} onChange={(ev) => setSummary(ev.target.value)} />
-      <div className="kanban-add-row">
-        <input className="kanban-input kanban-input-sm" placeholder="#tag" value={tagStr} onChange={(ev) => setTagStr(ev.target.value)} />
-        <input className="kanban-input kanban-input-sm" type="date" value={due} onChange={(ev) => setDue(ev.target.value)} />
+      <div className="kanban-tag-picker" ref={menuRef}>
+        <button type="button" className="kanban-tag-toggle" onClick={() => setShowTagMenu(!showTagMenu)}>
+          {selectedTags.length ? selectedTags.map((t) => (
+            <span key={t} className={`tag tag-${t}`}>{tagLabel(t)} <span className="tag-rm" onClick={(ev) => { ev.stopPropagation(); removeTag(t); }}>&times;</span></span>
+          )) : <span className="placeholder">+ Tags</span>}
+        </button>
+        {showTagMenu && (
+          <div className="kanban-tag-menu">
+            {KANBAN_PRESET_TAGS.map(({ id, label }) => (
+              <button key={id} type="button" className={`kanban-tag-option ${selectedTags.includes(id) ? "selected" : ""}`} onClick={() => toggleTag(id)}>
+                <span className={`tag-dot tag-${id}`} />
+                {label}
+                {selectedTags.includes(id) && <span className="check">✓</span>}
+              </button>
+            ))}
+            <form className="kanban-tag-custom" onSubmit={addCustomTag}>
+              <input className="kanban-input kanban-input-sm" placeholder="Custom tag…" value={customTag} onChange={(ev) => setCustomTag(ev.target.value)} />
+            </form>
+          </div>
+        )}
       </div>
+      <input className="kanban-input kanban-input-sm" type="date" value={due} onChange={(ev) => setDue(ev.target.value)} />
       <div className="kanban-add-row">
         <button type="submit" className="kanban-add-btn">Add</button>
         <button type="button" className="kanban-add-btn cancel" onClick={onCancel}>Cancel</button>
