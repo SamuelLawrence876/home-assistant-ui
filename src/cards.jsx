@@ -1,10 +1,10 @@
 /* Glasshouse v2 — atomic card components. */
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
 import { useEntity, useEntitiesByDomain, useConnectionStatus, useEntityStatus, combineStatuses } from "./ha/useEntity.js";
-import { callService, imageUrl, getTodoItems, getForecast, browseMedia } from "./ha/client.js";
+import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
 
 /* ----------------------------------------------------------------
@@ -2358,231 +2358,268 @@ export function SpotifyConnectCard({ index = 0 }) {
 }
 
 const SPOTIFY_ENTITY = "media_player.spotify_samuel_lawrence";
+const PRESETS_KEY = "gh_spotify_presets";
+
+function parseSpotifyUrl(input) {
+  const trimmed = (input || "").trim();
+  if (trimmed.startsWith("spotify:")) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (!url.hostname.includes("spotify.com")) return null;
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length >= 2) return `spotify:${parts[0]}:${parts[1]}`;
+  } catch {}
+  return null;
+}
+
+function spotifyType(uri) {
+  const parts = (uri || "").split(":");
+  return parts[1] || "track";
+}
+
+function loadPresets() {
+  try {
+    return JSON.parse(localStorage.getItem(PRESETS_KEY)) || [];
+  } catch { return []; }
+}
+
+function savePresets(presets) {
+  localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
+}
 
 export function MusicBrowserCard({ index = 0 }) {
-  const [root, setRoot] = useState(null);
-  const [playlists, setPlaylists] = useState([]);
-  const [browseStack, setBrowseStack] = useState([]);
-  const [currentItems, setCurrentItems] = useState([]);
-  const [currentTitle, setCurrentTitle] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [presets, setPresets] = useState(loadPresets);
+  const [adding, setAdding] = useState(false);
+  const [input, setInput] = useState("");
+  const [label, setLabel] = useState("");
   const [playing, setPlaying] = useState(null);
+  const [error, setError] = useState(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
-    browseMedia(SPOTIFY_ENTITY)
-      .then((data) => {
-        setRoot(data);
-        const playlistDir = (data.children || []).find(
-          (c) => c.media_content_type === "spotify://current_user_playlists"
-        );
-        if (playlistDir) {
-          browseMedia(SPOTIFY_ENTITY, playlistDir.media_content_type, playlistDir.media_content_id)
-            .then((pl) => setPlaylists((pl.children || []).slice(0, 6)))
-            .catch(() => {});
-        }
-        setLoading(false);
-      })
-      .catch((e) => { console.warn("[browse] root fetch failed", e); setLoading(false); });
-  }, []);
+    if (adding && inputRef.current) inputRef.current.focus();
+  }, [adding]);
 
-  const browse = useCallback(async (item) => {
-    setLoading(true);
-    try {
-      const data = await browseMedia(SPOTIFY_ENTITY, item.media_content_type, item.media_content_id);
-      setBrowseStack((s) => [...s, { title: currentTitle || "Library", items: currentItems }]);
-      setCurrentItems(data.children || []);
-      setCurrentTitle(data.title);
-    } catch (e) {
-      console.warn("[browse] failed", e);
-    }
-    setLoading(false);
-  }, [currentTitle, currentItems]);
-
-  function goBack() {
-    const prev = browseStack[browseStack.length - 1];
-    if (prev) {
-      setCurrentItems(prev.items);
-      setCurrentTitle(prev.title);
-      setBrowseStack((s) => s.slice(0, -1));
-    } else {
-      setCurrentItems([]);
-      setCurrentTitle(null);
-    }
+  function addPreset() {
+    const uri = parseSpotifyUrl(input);
+    if (!uri) { setError("Paste a Spotify link or URI"); return; }
+    if (presets.some((p) => p.uri === uri)) { setError("Already added"); return; }
+    const name = label.trim() || spotifyType(uri) + " " + (presets.length + 1);
+    const next = [...presets, { uri, name, type: spotifyType(uri) }];
+    setPresets(next);
+    savePresets(next);
+    setInput("");
+    setLabel("");
+    setAdding(false);
+    setError(null);
   }
 
-  async function play(item) {
-    setPlaying(item.media_content_id);
+  function removePreset(uri) {
+    const next = presets.filter((p) => p.uri !== uri);
+    setPresets(next);
+    savePresets(next);
+  }
+
+  async function play(preset) {
+    setPlaying(preset.uri);
+    setError(null);
     try {
       await callService("media_player", "play_media", {
         entity_id: SPOTIFY_ENTITY,
-        media_content_type: item.media_content_type,
-        media_content_id: item.media_content_id,
+        media_content_type: `spotify://${preset.type}`,
+        media_content_id: preset.uri,
       });
     } catch (e) {
       console.warn("[play] failed", e);
+      setError("Playback failed — is Spotify active?");
     }
     setTimeout(() => setPlaying(null), 2000);
   }
-
-  const browsing = currentItems.length > 0;
-  const categories = (root?.children || []).filter((c) => c.can_expand);
 
   const itemStyle = {
     background: "var(--glass-bg-2)",
     border: "1px solid var(--glass-stroke)",
     borderRadius: 12,
-    padding: "10px 12px",
+    padding: "10px 14px",
     display: "flex",
     alignItems: "center",
-    gap: 10,
+    gap: 12,
     cursor: "pointer",
     fontFamily: "inherit",
     textAlign: "left",
     color: "var(--ink)",
-    transition: "background 0.2s ease",
+    transition: "background 0.2s ease, opacity 0.2s ease",
     width: "100%",
   };
-
-  const thumbStyle = {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    backgroundSize: "cover",
-    backgroundPosition: "center",
-    backgroundColor: "color-mix(in oklch, var(--ink), transparent 88%)",
-    flexShrink: 0,
-  };
-
-  function renderItem(item) {
-    const isPlaying = playing === item.media_content_id;
-    return (
-      <button
-        key={item.media_content_id || item.title}
-        style={{ ...itemStyle, opacity: isPlaying ? 0.6 : 1 }}
-        onClick={() => item.can_play ? play(item) : item.can_expand ? browse(item) : null}
-      >
-        <div
-          style={{
-            ...thumbStyle,
-            backgroundImage: item.thumbnail ? `url(${item.thumbnail})` : undefined,
-          }}
-        />
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 500,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {item.title}
-          </div>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 9,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "var(--ink-3)",
-              marginTop: 1,
-            }}
-          >
-            {item.media_class || item.media_content_type?.replace("spotify://", "")}
-          </div>
-        </div>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 9,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "var(--ink-3)",
-            flexShrink: 0,
-          }}
-        >
-          {isPlaying ? "..." : item.can_play ? "▶" : item.can_expand ? "→" : ""}
-        </span>
-      </button>
-    );
-  }
 
   return (
     <Card
       index={index}
       eyebrow="Library · Spotify"
-      title={browsing ? currentTitle : "Music"}
-      meta={loading ? "Loading" : null}
+      title="Quick play"
+      meta={presets.length > 0 ? `${presets.length} saved` : null}
     >
-      {playlists.length > 0 && !browsing && (
-        <>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 9,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              color: "var(--ink-3)",
-              marginBottom: 8,
-            }}
-          >
-            Quick play
-          </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
-            {playlists.map((pl) => (
+      {presets.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {presets.map((p) => {
+            const isPlaying = playing === p.uri;
+            return (
               <button
-                key={pl.media_content_id}
-                className={`preset ${playing === pl.media_content_id ? "on" : ""}`}
-                onClick={() => play(pl)}
-                style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                key={p.uri}
+                style={{ ...itemStyle, opacity: isPlaying ? 0.6 : 1 }}
+                onClick={() => play(p)}
               >
-                {pl.title}
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    background: isPlaying
+                      ? "linear-gradient(135deg, #1db954, #1ed760)"
+                      : "color-mix(in oklch, var(--ink), transparent 88%)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 16,
+                    flexShrink: 0,
+                    transition: "background 0.3s ease",
+                  }}
+                >
+                  {isPlaying ? "♪" : "▶"}
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {p.name}
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 9,
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                      color: "var(--ink-3)",
+                      marginTop: 1,
+                    }}
+                  >
+                    {p.type}
+                  </div>
+                </div>
+                <span
+                  onClick={(e) => { e.stopPropagation(); removePreset(p.uri); }}
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 9,
+                    color: "var(--ink-3)",
+                    cursor: "pointer",
+                    padding: "4px 6px",
+                    borderRadius: 6,
+                    transition: "color 0.2s",
+                  }}
+                  title="Remove"
+                >
+                  ✕
+                </span>
               </button>
-            ))}
-          </div>
-        </>
+            );
+          })}
+        </div>
       )}
 
-      {browsing && (
-        <button
-          onClick={goBack}
+      {error && (
+        <div
           style={{
-            background: "none",
-            border: "none",
             fontFamily: "var(--font-mono)",
             fontSize: 10,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "var(--accent)",
-            cursor: "pointer",
-            padding: "0 0 10px 0",
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
+            color: "#e55",
+            marginTop: 8,
           }}
         >
-          ← Back
+          {error}
+        </div>
+      )}
+
+      {adding ? (
+        <div
+          style={{
+            marginTop: presets.length > 0 ? 12 : 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Paste Spotify link or URI..."
+            value={input}
+            onChange={(e) => { setInput(e.target.value); setError(null); }}
+            onKeyDown={(e) => e.key === "Enter" && addPreset()}
+            style={{
+              background: "var(--glass-bg-2)",
+              border: "1px solid var(--glass-stroke)",
+              borderRadius: 10,
+              padding: "10px 12px",
+              fontSize: 13,
+              fontFamily: "var(--font-mono)",
+              color: "var(--ink)",
+              outline: "none",
+              width: "100%",
+              boxSizing: "border-box",
+            }}
+          />
+          <input
+            type="text"
+            placeholder="Label (optional)"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addPreset()}
+            style={{
+              background: "var(--glass-bg-2)",
+              border: "1px solid var(--glass-stroke)",
+              borderRadius: 10,
+              padding: "10px 12px",
+              fontSize: 13,
+              fontFamily: "var(--font-mono)",
+              color: "var(--ink)",
+              outline: "none",
+              width: "100%",
+              boxSizing: "border-box",
+            }}
+          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn primary" onClick={addPreset}>Add</button>
+            <button className="btn" onClick={() => { setAdding(false); setError(null); }}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          className="btn"
+          onClick={() => setAdding(true)}
+          style={{ marginTop: presets.length > 0 ? 12 : 0, width: "100%" }}
+        >
+          + Add playlist or album
         </button>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {browsing
-          ? currentItems.map(renderItem)
-          : categories.map(renderItem)
-        }
-      </div>
-
-      {!loading && !browsing && categories.length === 0 && (
+      {presets.length === 0 && !adding && (
         <div
           style={{
             fontFamily: "var(--font-mono)",
             fontSize: 11,
             color: "var(--ink-3)",
-            padding: "12px 4px",
+            padding: "8px 4px 0",
+            lineHeight: 1.5,
           }}
         >
-          Connect Spotify to browse your library.
+          Add your favorite Spotify playlists, albums, or tracks. Paste a share link from the Spotify app.
         </div>
       )}
     </Card>
