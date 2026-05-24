@@ -31,7 +31,8 @@ import {
   EntityHealthCard,
   InProgressCard,
   StatBox,
-  RoomTempStatBox,
+  RoomClimateCard,
+  RoomClimateStrip,
   BambuStatBox,
   LevoitStatBox,
   VacuumStatBox,
@@ -200,8 +201,11 @@ function OverviewView({ viewport, sky }) {
       </div>
       <div className="col-4" style={{ display: "grid", gap: 14 }}>
         <PresenceCard index={1} />
-        <RoomTempStatBox index={2} />
-        <MediaCard index={3} />
+        <MediaCard index={2} />
+      </div>
+
+      <div className="col-12">
+        <RoomClimateStrip index={3} />
       </div>
 
       <div className="col-4">
@@ -295,10 +299,11 @@ function ScheduleView() {
 function ClimateView({ sky }) {
   return (
     <div className="grid">
-      <div className="col-7"><AirPurifierCard index={0} /></div>
-      <div className="col-5"><HeaterCard index={1} /></div>
-      <div className="col-12"><FanCard index={2} /></div>
-      <div className="col-12"><WeatherSunHero index={3} sky={sky} /></div>
+      <div className="col-12"><RoomClimateCard index={0} /></div>
+      <div className="col-7"><AirPurifierCard index={1} /></div>
+      <div className="col-5"><HeaterCard index={2} /></div>
+      <div className="col-12"><FanCard index={3} /></div>
+      <div className="col-12"><WeatherSunHero index={4} sky={sky} /></div>
     </div>
   );
 }
