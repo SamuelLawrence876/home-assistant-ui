@@ -2211,12 +2211,6 @@ export function SpotifyConnectCard({ index = 0 }) {
   const [spotifyConnected, setSpotifyConnected] = useSpotifyConnect();
   const configured = isSpotifyConfigured();
 
-  const steps = [
-    { n: "1", text: "Open Spotify on your phone" },
-    { n: "2", text: 'Tap the "Connect to a device" icon' },
-    { n: "3", text: 'Select "Home Assistant"' },
-  ];
-
   return (
     <Card
       index={index}
@@ -2285,88 +2279,15 @@ export function SpotifyConnectCard({ index = 0 }) {
         />
       </div>
 
-      <div
-        style={{
-          marginTop: 16,
-          paddingTop: 14,
-          borderTop: "1px solid var(--rule)",
-        }}
-      >
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 9,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "var(--ink-3)",
-            marginBottom: 10,
-          }}
-        >
-          How to connect
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {steps.map((s) => (
-            <div
-              key={s.n}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-              }}
-            >
-              <span
-                style={{
-                  width: 22,
-                  height: 22,
-                  borderRadius: 6,
-                  background: "color-mix(in oklch, var(--ink), transparent 90%)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  fontWeight: 600,
-                  flexShrink: 0,
-                }}
-              >
-                {s.n}
-              </span>
-              <span style={{ fontSize: 13, color: "var(--ink-2)" }}>{s.text}</span>
-            </div>
-          ))}
-        </div>
+      <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--ink-3)", marginTop: 12, lineHeight: 1.5 }}>
+        Open Spotify → Connect to a device → "Home Assistant"
       </div>
 
       {sources.length > 0 && (
-        <div
-          style={{
-            marginTop: 16,
-            paddingTop: 14,
-            borderTop: "1px solid var(--rule)",
-          }}
-        >
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 9,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              color: "var(--ink-3)",
-              marginBottom: 8,
-            }}
-          >
-            Known devices
-          </div>
-          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-            {sources.map((s) => (
-              <span
-                key={s}
-                className={`preset ${activeSource === s ? "on" : ""}`}
-              >
-                {s}
-              </span>
-            ))}
-          </div>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 10 }}>
+          {sources.map((s) => (
+            <span key={s} className={`preset ${activeSource === s ? "on" : ""}`}>{s}</span>
+          ))}
         </div>
       )}
 
