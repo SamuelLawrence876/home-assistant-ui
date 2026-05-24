@@ -3086,7 +3086,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
 const KANBAN_COLS = [
   { id: "todo.backlog", label: "Backlog" },
   { id: "todo.next",    label: "Next" },
-  { id: "todo.doing",   label: "In Progress" },
+  { id: "todo.doing_2", label: "In Progress" },
   { id: "__done__",      label: "Done" },
 ];
 const KANBAN_ENTITY_IDS = KANBAN_COLS.filter((c) => c.id !== "__done__").map((c) => c.id);
