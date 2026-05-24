@@ -1290,23 +1290,37 @@ body.viewport-phone .health-row .pill { display: none; }
   display: grid; grid-template-columns: 1fr 180px; gap: 18px;
   align-items: center;
 }
-.heater-num {
-  font-size: 92px;
+.heater-controls-col {
+  display: flex; flex-direction: column;
+  min-width: 0;
+}
+.heater-stepper {
+  display: inline-flex; align-items: center; gap: 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  margin-top: 8px;
+  align-self: flex-start;
+}
+.heater-target-val {
   font-family: var(--font-display);
   font-style: var(--display-italic);
   font-weight: 300;
-  line-height: 0.9;
-  letter-spacing: -0.04em;
-  font-feature-settings: "tnum";
+  font-size: 32px;
+  letter-spacing: -0.02em;
+  line-height: 1;
   color: var(--ink);
+  font-feature-settings: "tnum";
+  min-width: 50px;
+  text-align: center;
 }
-.heater-num .u {
+.heater-target-val .u {
   font-family: var(--font-body);
   font-style: normal;
-  font-size: 22px;
+  font-size: 14px;
   color: var(--accent-2);
-  font-weight: 400;
-  margin-left: 4px;
+  margin-left: 2px;
 }
 .heater-dial {
   width: 180px; height: 180px;
