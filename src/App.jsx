@@ -284,11 +284,13 @@ function MediaView() {
   return (
     <div className="grid">
       <div className="col-8"><NowPlayingHero index={0} /></div>
-      <div className="col-4"><SpotifyConnectCard index={1} /></div>
-      <div className="col-6"><SpotifySearchCard index={2} /></div>
-      <div className="col-6"><SpotifyPlaylistsCard index={3} /></div>
-      <div className="col-6"><SpotifyQueueCard index={4} /></div>
-      <div className="col-6"><SpotifyRecentCard index={5} /></div>
+      <div className="col-4" style={{ display: "grid", gap: 14 }}>
+        <SpotifyConnectCard index={1} />
+        <SpotifyQueueCard index={2} />
+      </div>
+      <div className="col-8"><SpotifySearchCard index={3} /></div>
+      <div className="col-4"><SpotifyPlaylistsCard index={4} /></div>
+      <div className="col-12"><SpotifyRecentCard index={5} /></div>
     </div>
   );
 }
