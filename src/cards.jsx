@@ -245,6 +245,14 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
   const sunrise = fmtSun(liveRising?.state);
   const sunset = fmtSun(liveSetting?.state);
 
+  if (!w) {
+    return (
+      <Card index={index} className="weather-hero" eyebrow="Weather · weather.forecast_home" title="Outside, right now" meta="Loading…">
+        <EntityGuard status={status} entityId="weather.forecast_home" />
+      </Card>
+    );
+  }
+
   return (
     <Card
       index={index}
