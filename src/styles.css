@@ -271,6 +271,51 @@ body {
   color: var(--ink-3);
 }
 
+/* Entity loading / warning states */
+.entity-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--ink), transparent 94%);
+}
+.entity-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklch, var(--ink), transparent 82%) 50%,
+    transparent 100%
+  );
+  animation: entity-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes entity-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.entity-warning {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 60px;
+  opacity: 0.55;
+}
+.entity-warning-icon { font-size: 22px; line-height: 1; }
+.entity-warning-text {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
 /* big readout */
 .readout {
   display: flex;
@@ -1854,6 +1899,7 @@ body.mode-night {
   padding: 12px;
   min-height: 200px;
   transition: background 0.2s ease, border-color 0.2s ease;
+  overflow: visible;
 }
 .kanban-col.drag-over {
   background: color-mix(in oklch, var(--accent), transparent 86%);
@@ -2039,6 +2085,9 @@ body.mode-night {
   flex-direction: column;
   gap: 6px;
   margin-top: 4px;
+  overflow: visible;
+  position: relative;
+  z-index: 10;
 }
 .kanban-input {
   width: 100%;
@@ -2083,7 +2132,7 @@ body.mode-night {
 .kanban-add-btn.cancel:hover { color: var(--ink); border-color: var(--ink-3); }
 
 /* Tag picker */
-.kanban-tag-picker { position: relative; flex: 1; min-width: 0; }
+.kanban-tag-picker { position: static; flex: 1; min-width: 0; }
 .kanban-date { width: 100px; flex: 0 0 auto; }
 .kanban-tag-toggle {
   width: 100%;
@@ -2116,16 +2165,20 @@ body.mode-night {
 .kanban-tag-toggle .tag-rm:hover { opacity: 1; }
 .kanban-tag-menu {
   position: absolute;
-  bottom: calc(100% + 4px);
   left: 0; right: 0;
-  background: var(--card-bg, var(--glass-bg));
+  bottom: 0;
+  background: oklch(0.97 0 0);
   border: 1px solid var(--glass-stroke);
   border-radius: 10px;
   padding: 4px;
-  z-index: 20;
+  z-index: 50;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+}
+[data-theme="dark"] .kanban-tag-menu,
+body.night .kanban-tag-menu {
+  background: oklch(0.22 0 0);
 }
 .kanban-tag-option {
   display: flex;
