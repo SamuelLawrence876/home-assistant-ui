@@ -512,10 +512,15 @@ export function MediaCard({ index = 0 }) {
             backgroundPosition: "center",
             backgroundColor: "color-mix(in oklch, var(--ink), transparent 88%)",
             flexShrink: 0,
-            opacity: idle ? 0.4 : 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 20,
             transition: "opacity 0.3s",
           }}
-        />
+        >
+          {!art && "♪"}
+        </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {idle ? "Nothing playing" : a.media_title}
