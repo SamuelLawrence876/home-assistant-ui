@@ -1797,6 +1797,35 @@ body.viewport-phone .health-row .pill { display: none; }
   overflow: visible;
 }
 
+/* Chart dot markers — HTML to avoid SVG stretch distortion */
+.chart-dot {
+  position: absolute;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.chart-dot.dot-min {
+  width: 7px; height: 7px;
+  background: var(--glass-bg);
+  border: 1.6px solid var(--accent-2);
+  opacity: 0.7;
+}
+.chart-dot.dot-max {
+  width: 8px; height: 8px;
+  background: var(--accent-2);
+  border: 1.6px solid var(--glass-bg);
+}
+.chart-dot.dot-now-glow {
+  width: 16px; height: 16px;
+  background: var(--accent-2);
+  opacity: 0.18;
+}
+.chart-dot.dot-now {
+  width: 8px; height: 8px;
+  background: var(--accent-2);
+  border: 1.5px solid var(--glass-bg);
+}
+
 /* Floating annotations */
 .chart-tag {
   position: absolute;

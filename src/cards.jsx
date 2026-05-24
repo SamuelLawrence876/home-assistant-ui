@@ -7,7 +7,7 @@ import { useEntity, useEntitiesByDomain, useConnectionStatus, useEntityStatus, c
 import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js";
 import {
   isSpotifyConfigured, isSpotifyConnected, startSpotifyAuth,
-  handleSpotifyCallback, clearSpotifyToken, getPlaylists,
+  callbackReady, clearSpotifyToken, getPlaylists,
   getRecentlyPlayed, getDevices, playUri,
 } from "./ha/spotify.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
@@ -861,21 +861,18 @@ export function AirPurifierCard({ index = 0 }) {
    Heater — Govee
    ----------------------------------------------------------------*/
 export function HeaterCard({ index = 0 }) {
-  const { entity: roomTempEntity, status: roomStatus } = useEntityStatus("sensor.h5075_4fb6_temperature");
+  const { entity: liveTarget, status: heaterStatus } = useEntityStatus("input_number.govee_heater_temperature");
+  const roomTempEntity = useEntity("sensor.h5075_4fb6_temperature");
   const roomHumidity = useEntity("sensor.h5075_4fb6_humidity");
-  const roomBattery = useEntity("sensor.h5075_4fb6_battery");
-  const targetEntity = useEntity("input_number.govee_heater_temperature");
 
   const roomTemp = Number(roomTempEntity?.state ?? 0);
   const humidity = Number(roomHumidity?.state ?? 0);
-  const battery = Number(roomBattery?.state ?? 0);
-  const roomAvailable = roomStatus === "ready";
 
-  const [target, setTarget] = useState(Number(targetEntity?.state ?? 20));
+  const [target, setTarget] = useState(Number(liveTarget?.state ?? 20));
   const [on, setOn] = useState(false);
   useEffect(() => {
-    if (targetEntity) setTarget(Number(targetEntity.state));
-  }, [targetEntity?.state]);
+    if (liveTarget) setTarget(Number(liveTarget.state));
+  }, [liveTarget?.state]);
 
   function commitTemp(v) {
     setTarget(v);
@@ -891,25 +888,31 @@ export function HeaterCard({ index = 0 }) {
   return (
     <Card
       index={index}
-      eyebrow={`Climate · Govee H5075${roomAvailable ? ` · ${battery}% battery` : ""}`}
-      title="Room climate"
-      meta={roomAvailable ? `${roomTemp}° · ${humidity}% humidity` : "Sensor offline"}
+      eyebrow="Climate · Govee heater"
+      title="Heater"
+      meta={on ? `On · target ${target}°` : `Off · target ${target}°`}
     >
-      <EntityGuard status={roomStatus} entityId="sensor.h5075_4fb6_temperature">
+      <EntityGuard status={heaterStatus} entityId="input_number.govee_heater_temperature">
       <div className="heater-body">
-        <div>
-          <div className="heater-num">
-            {roomTemp}
-            <span className="u">°c</span>
-          </div>
-          <div className="meta" style={{ marginTop: 2 }}>{humidity}% humidity</div>
-          <div className="heater-controls">
+        <div className="heater-controls-col">
+          <div className="eyebrow" style={{ fontSize: 9 }}>Setpoint</div>
+          <div className="heater-stepper">
             <button className="heater-step" onClick={() => commitTemp(Math.max(12, target - 1))}>−</button>
+            <div className="heater-target-val">
+              {target}<span className="u">°</span>
+            </div>
             <button className="heater-step" onClick={() => commitTemp(Math.min(30, target + 1))}>+</button>
-            <button className={`btn ${on ? "accent" : "primary"}`} onClick={toggleHeater}>
-              {on ? "Turn off" : "Turn on"}
-            </button>
           </div>
+          <div className="meta" style={{ marginTop: 8 }}>
+            {roomTempEntity ? `Room is ${roomTemp}° · ${humidity}% humidity` : "Room sensor offline"}
+          </div>
+          <button
+            className={`btn ${on ? "accent" : "primary"}`}
+            onClick={toggleHeater}
+            style={{ marginTop: 14, alignSelf: "flex-start" }}
+          >
+            {on ? "Turn off" : "Turn on"}
+          </button>
         </div>
         <div className="heater-dial" style={{ "--ang": `${angle}deg` }}>
           <div className="heater-dial-inner">
@@ -2373,7 +2376,7 @@ export function MusicBrowserCard({ index = 0 }) {
   const configured = isSpotifyConfigured();
 
   useEffect(() => {
-    handleSpotifyCallback().then((handled) => {
+    callbackReady.then((handled) => {
       if (handled) setConnected(true);
     });
   }, []);
@@ -3584,7 +3587,7 @@ export function RoomClimateCard({ index = 0, compact }) {
 
   // ---- Chart geometry ----
   const SW = 640, SH = 150;
-  const PAD_L = 8, PAD_R = 8, PAD_T = 18, PAD_B = 22;
+  const PAD_L = 8, PAD_R = 44, PAD_T = 26, PAD_B = 22;
   const innerW = SW - PAD_L - PAD_R;
   const innerH = SH - PAD_T - PAD_B;
 
@@ -3750,22 +3753,24 @@ export function RoomClimateCard({ index = 0, compact }) {
               strokeLinecap="round" strokeLinejoin="round"
             />
 
-            {/* Min point (subdued) */}
-            <circle cx={minX} cy={minY} r="3.2" fill="var(--glass-bg)" stroke="var(--accent-2)" strokeWidth="1.6" opacity="0.7" />
-            {/* Max point (bold) */}
-            <circle cx={maxX} cy={maxY} r="3.6" fill="var(--accent-2)" stroke="var(--glass-bg)" strokeWidth="1.6" />
-
-            {/* Now point */}
-            <circle cx={nowX} cy={nowY} r="8" fill="var(--accent-2)" opacity="0.18" />
-            <circle cx={nowX} cy={nowY} r="4" fill="var(--accent-2)" stroke="var(--glass-bg)" strokeWidth="1.5" />
           </svg>
 
-          {/* Floating annotations */}
-          <div className="chart-tag tag-high"
-               style={{ left: `${(maxX / SW) * 100}%`, top: `${(maxY / SH) * 100}%` }}>
-            <span className="lbl">HIGH</span>
-            <span className="val">{tMax.toFixed(1)}°</span>
-          </div>
+          {/* Dot markers as HTML so they don't stretch with the SVG */}
+          <div className="chart-dot dot-min" style={{ left: `${(minX / SW) * 100}%`, top: `${(minY / SH) * 100}%` }} />
+          {maxIdx !== nowIdx && (
+            <div className="chart-dot dot-max" style={{ left: `${(maxX / SW) * 100}%`, top: `${(maxY / SH) * 100}%` }} />
+          )}
+          <div className="chart-dot dot-now-glow" style={{ left: `${(nowX / SW) * 100}%`, top: `${(nowY / SH) * 100}%` }} />
+          <div className="chart-dot dot-now" style={{ left: `${(nowX / SW) * 100}%`, top: `${(nowY / SH) * 100}%` }} />
+
+          {/* Floating annotations — skip HIGH if it overlaps NOW */}
+          {maxIdx !== nowIdx && (
+            <div className="chart-tag tag-high"
+                 style={{ left: `${(maxX / SW) * 100}%`, top: `${(maxY / SH) * 100}%` }}>
+              <span className="lbl">HIGH</span>
+              <span className="val">{tMax.toFixed(1)}°</span>
+            </div>
+          )}
           <div className="chart-tag tag-low"
                style={{ left: `${(minX / SW) * 100}%`, top: `${(minY / SH) * 100}%` }}>
             <span className="lbl">LOW</span>
@@ -3774,7 +3779,7 @@ export function RoomClimateCard({ index = 0, compact }) {
           <div className="chart-tag tag-now"
                style={{ left: `${(nowX / SW) * 100}%`, top: `${(nowY / SH) * 100}%` }}>
             <span className="val">{temp.toFixed(1)}°</span>
-            <span className="lbl">NOW</span>
+            <span className="lbl">{maxIdx === nowIdx ? "NOW · HIGH" : "NOW"}</span>
           </div>
         </div>
         <div className="chart-axis">

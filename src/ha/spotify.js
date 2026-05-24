@@ -1,5 +1,5 @@
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID || "";
-const REDIRECT_URI = `${window.location.origin}/`;
+const REDIRECT_URI = `${window.location.origin}/?tab=media`;
 const SCOPES = [
   "user-read-playback-state",
   "user-modify-playback-state",
@@ -215,3 +215,6 @@ export async function transferPlayback(deviceId) {
     body: JSON.stringify({ device_ids: [deviceId], play: false }),
   });
 }
+
+// Process Spotify OAuth callback at module load time (before React mounts).
+export const callbackReady = handleSpotifyCallback();

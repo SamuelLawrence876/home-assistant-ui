@@ -105,8 +105,8 @@ async function setup() {
     return;
   }
 
-  // Clean OAuth callback params from the URL so a reload doesn't re-exchange.
-  if (window.location.search.includes("auth_callback=") || window.location.search.includes("code=")) {
+  // Clean HA OAuth callback params only (not Spotify's — state=spotify is handled by spotify.js).
+  if (window.location.search.includes("auth_callback=")) {
     const url = new URL(window.location.href);
     url.searchParams.delete("auth_callback");
     url.searchParams.delete("code");
