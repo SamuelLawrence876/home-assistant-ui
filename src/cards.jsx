@@ -1301,21 +1301,35 @@ function rgbStr(rgb) {
   return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
 }
 
+function kelvinToRgb(k) {
+  const t = k / 100;
+  let r, g, b;
+  if (t <= 66) { r = 255; } else { r = Math.min(255, Math.max(0, 329.698727446 * Math.pow(t - 60, -0.1332047592))); }
+  if (t <= 66) { g = Math.min(255, Math.max(0, 99.4708025861 * Math.log(t) - 161.1195681661)); } else { g = Math.min(255, Math.max(0, 288.1221695283 * Math.pow(t - 60, -0.0755148492))); }
+  if (t >= 66) { b = 255; } else if (t <= 19) { b = 0; } else { b = Math.min(255, Math.max(0, 138.5177312231 * Math.log(t - 10) - 305.0447927307)); }
+  return [Math.round(r), Math.round(g), Math.round(b)];
+}
+
 export function LightCard({ index = 0, entityId }) {
   const { entity: e, status } = useEntityStatus(entityId);
   const placeholder = e?.attributes?.placeholder;
   const unavailable = status === "unavailable";
   const initialRgb = e?.attributes?.rgb_color || [255, 198, 130];
+  const supportsColorTemp = e?.attributes?.supported_color_modes?.includes("color_temp");
+  const minKelvin = e?.attributes?.min_color_temp_kelvin || 2000;
+  const maxKelvin = e?.attributes?.max_color_temp_kelvin || 6500;
   const [on, setOn] = useState(e?.state === "on");
   const [bright, setB] = useState(e?.attributes?.brightness || 180);
   const [rgb, setRgb] = useState(initialRgb);
+  const [kelvin, setKelvin] = useState(e?.attributes?.color_temp_kelvin || 4000);
 
   useEffect(() => {
     if (!e) return;
     setOn(e.state === "on");
     if (e.attributes?.brightness != null) setB(e.attributes.brightness);
     if (e.attributes?.rgb_color) setRgb(e.attributes.rgb_color);
-  }, [e?.state, e?.attributes?.brightness, e?.attributes?.rgb_color?.join(",")]);
+    if (e.attributes?.color_temp_kelvin != null) setKelvin(e.attributes.color_temp_kelvin);
+  }, [e?.state, e?.attributes?.brightness, e?.attributes?.rgb_color?.join(","), e?.attributes?.color_temp_kelvin]);
 
   function toggle() {
     if (placeholder || unavailable) return;
@@ -1326,17 +1340,28 @@ export function LightCard({ index = 0, entityId }) {
 
   function pickColor(p) {
     if (placeholder || unavailable) return;
-    setRgb(p.rgb);
     if (!on) setOn(true);
-    const data = { entity_id: entityId, rgb_color: p.rgb };
-    if (p.kelvin) data.color_temp_kelvin = p.kelvin;
-    callService("light", "turn_on", data).catch(() => {});
+    if (p.kelvin) {
+      setKelvin(p.kelvin);
+      setRgb(kelvinToRgb(p.kelvin));
+      callService("light", "turn_on", { entity_id: entityId, color_temp_kelvin: p.kelvin }).catch(() => {});
+    } else {
+      setRgb(p.rgb);
+      callService("light", "turn_on", { entity_id: entityId, rgb_color: p.rgb }).catch(() => {});
+    }
   }
 
   function commitBrightness(v) {
     setB(v);
     if (placeholder || unavailable || !on) return;
     callService("light", "turn_on", { entity_id: entityId, brightness: v }).catch(() => {});
+  }
+
+  function commitKelvin(v) {
+    setKelvin(v);
+    setRgb(kelvinToRgb(v));
+    if (placeholder || unavailable || !on) return;
+    callService("light", "turn_on", { entity_id: entityId, color_temp_kelvin: v }).catch(() => {});
   }
 
   const glow = on
@@ -1423,6 +1448,36 @@ export function LightCard({ index = 0, entityId }) {
           />
         </div>
       </div>
+
+      {!placeholder && !unavailable && supportsColorTemp && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+            <span className="eyebrow" style={{ fontSize: 9 }}>Color temperature</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
+              {kelvin}K
+            </span>
+          </div>
+          <input
+            type="range"
+            min={minKelvin}
+            max={maxKelvin}
+            step="100"
+            value={kelvin}
+            disabled={!on}
+            onChange={(ev) => { setKelvin(Number(ev.target.value)); setRgb(kelvinToRgb(Number(ev.target.value))); }}
+            onPointerUp={(ev) => commitKelvin(Number(ev.target.value))}
+            onKeyUp={(ev) => commitKelvin(Number(ev.target.value))}
+            className="gh-slider"
+            style={{
+              width: "100%",
+              background: on
+                ? `linear-gradient(to right, rgb(255,147,41), rgb(255,198,130), rgb(255,235,200), rgb(220,235,255))`
+                : "var(--glass-bg-2)",
+              borderRadius: 6,
+            }}
+          />
+        </div>
+      )}
 
       {!placeholder && !unavailable && (
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
