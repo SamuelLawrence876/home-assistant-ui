@@ -8,7 +8,7 @@ import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js
 import {
   isSpotifyConfigured, isSpotifyConnected, startSpotifyAuth,
   callbackReady, clearSpotifyToken, getPlaylists,
-  getRecentlyPlayed, getDevices, playUri,
+  getRecentlyPlayed, getDevices, playUri, searchTracks, getQueue,
 } from "./ha/spotify.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
 
@@ -2369,10 +2369,14 @@ export function MusicBrowserCard({ index = 0 }) {
   const [connected, setConnected] = useState(isSpotifyConnected);
   const [playlists, setPlaylists] = useState([]);
   const [recent, setRecent] = useState([]);
+  const [searchResults, setSearchResults] = useState([]);
+  const [queueData, setQueueData] = useState({ current: null, queue: [] });
   const [tab, setTab] = useState("playlists");
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(null);
   const [error, setError] = useState(null);
+  const searchTimer = useRef(null);
   const configured = isSpotifyConfigured();
 
   useEffect(() => {
@@ -2393,6 +2397,28 @@ export function MusicBrowserCard({ index = 0 }) {
       setLoading(false);
     });
   }, [connected]);
+
+  useEffect(() => {
+    if (tab !== "queue" || !connected) return;
+    setLoading(true);
+    getQueue()
+      .then((q) => setQueueData(q))
+      .catch(() => setQueueData({ current: null, queue: [] }))
+      .finally(() => setLoading(false));
+  }, [tab, connected]);
+
+  function handleSearch(q) {
+    setSearchQuery(q);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (!q.trim()) { setSearchResults([]); return; }
+    searchTimer.current = setTimeout(() => {
+      setLoading(true);
+      searchTracks(q)
+        .then((r) => setSearchResults(r))
+        .catch(() => setSearchResults([]))
+        .finally(() => setLoading(false));
+    }, 400);
+  }
 
   async function play(uri) {
     setPlaying(uri);
@@ -2444,6 +2470,42 @@ export function MusicBrowserCard({ index = 0 }) {
     flexShrink: 0,
   };
 
+  function renderTrackRow(item, opts = {}) {
+    const uri = item.uri;
+    const isPlaying = playing === uri;
+    const img = item.image || null;
+    const subtitle = opts.subtitle || `${item.artist} · ${item.album}`;
+    const playable = opts.playable !== false;
+
+    return (
+      <button
+        key={(opts.keyPrefix || "") + uri + item.name}
+        style={{ ...itemStyle, opacity: isPlaying ? 0.6 : 1, cursor: playable ? "pointer" : "default" }}
+        onClick={playable ? () => play(opts.playUri || uri) : undefined}
+      >
+        <div style={{ ...thumbStyle, backgroundImage: img ? `url(${img})` : undefined }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {opts.label && (
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--accent)", marginRight: 6 }}>
+                {opts.label}
+              </span>
+            )}
+            {item.name}
+          </div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {subtitle}
+          </div>
+        </div>
+        {playable && (
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", flexShrink: 0 }}>
+            {isPlaying ? "..." : "▶"}
+          </span>
+        )}
+      </button>
+    );
+  }
+
   if (!configured) {
     return (
       <Card index={index} eyebrow="Library · Spotify" title="Music">
@@ -2460,15 +2522,7 @@ export function MusicBrowserCard({ index = 0 }) {
         <button
           className="btn primary"
           onClick={startSpotifyAuth}
-          style={{
-            width: "100%",
-            padding: "14px 20px",
-            fontSize: 14,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10,
-          }}
+          style={{ width: "100%", padding: "14px 20px", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
         >
           <span style={{ fontSize: 18 }}>♪</span>
           Connect to Spotify
@@ -2481,11 +2535,11 @@ export function MusicBrowserCard({ index = 0 }) {
   }
 
   const tabs = [
-    { id: "playlists", label: "Playlists", count: playlists.length },
-    { id: "recent", label: "Recent", count: recent.length },
+    { id: "search", label: "Search" },
+    { id: "playlists", label: "Playlists" },
+    { id: "queue", label: "Queue" },
+    { id: "recent", label: "Recent" },
   ];
-
-  const items = tab === "playlists" ? playlists : recent;
 
   return (
     <Card
@@ -2496,14 +2550,7 @@ export function MusicBrowserCard({ index = 0 }) {
       headRight={
         <span
           onClick={disconnect}
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 9,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-            color: "var(--ink-3)",
-            cursor: "pointer",
-          }}
+          style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", cursor: "pointer" }}
         >
           Disconnect
         </span>
@@ -2511,12 +2558,8 @@ export function MusicBrowserCard({ index = 0 }) {
     >
       <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
         {tabs.map((t) => (
-          <button
-            key={t.id}
-            className={`preset ${tab === t.id ? "on" : ""}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}{t.count > 0 ? ` (${t.count})` : ""}
+          <button key={t.id} className={`preset ${tab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)}>
+            {t.label}
           </button>
         ))}
       </div>
@@ -2527,75 +2570,80 @@ export function MusicBrowserCard({ index = 0 }) {
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
-        {items.map((item) => {
-          const uri = item.uri;
-          const isPlaying = playing === uri;
-          const img = item.image || null;
-          const subtitle = tab === "playlists"
-            ? `${item.tracks} tracks · ${item.owner}`
-            : `${item.artist} · ${item.album}`;
+      {tab === "search" && (
+        <>
+          <input
+            type="text"
+            placeholder="Search songs, artists, albums..."
+            value={searchQuery}
+            onChange={(e) => handleSearch(e.target.value)}
+            style={{
+              background: "var(--glass-bg-2)",
+              border: "1px solid var(--glass-stroke)",
+              borderRadius: 10,
+              padding: "10px 12px",
+              fontSize: 13,
+              fontFamily: "var(--font-mono)",
+              color: "var(--ink)",
+              outline: "none",
+              width: "100%",
+              boxSizing: "border-box",
+              marginBottom: 10,
+            }}
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+            {searchResults.map((item) => renderTrackRow(item))}
+          </div>
+          {!loading && searchQuery && searchResults.length === 0 && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
+              No results for "{searchQuery}"
+            </div>
+          )}
+          {!searchQuery && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
+              Type to search Spotify
+            </div>
+          )}
+        </>
+      )}
 
-          return (
-            <button
-              key={uri + (item.name || "")}
-              style={{ ...itemStyle, opacity: isPlaying ? 0.6 : 1 }}
-              onClick={() => play(tab === "recent" ? (item.contextUri || uri) : uri)}
-            >
-              <div
-                style={{
-                  ...thumbStyle,
-                  backgroundImage: img ? `url(${img})` : undefined,
-                }}
-              />
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {item.name}
-                </div>
-                <div
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 9,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    color: "var(--ink-3)",
-                    marginTop: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {subtitle}
-                </div>
-              </div>
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 9,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  color: "var(--ink-3)",
-                  flexShrink: 0,
-                }}
-              >
-                {isPlaying ? "..." : "▶"}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      {tab === "playlists" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+          {playlists.map((item) =>
+            renderTrackRow(item, { subtitle: `${item.tracks} tracks · ${item.owner}` })
+          )}
+          {!loading && playlists.length === 0 && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
+              No playlists found.
+            </div>
+          )}
+        </div>
+      )}
 
-      {!loading && items.length === 0 && (
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
-          {tab === "playlists" ? "No playlists found." : "No recent tracks."}
+      {tab === "queue" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+          {queueData.current && renderTrackRow(queueData.current, { label: "Now", keyPrefix: "now-" })}
+          {queueData.queue.map((item, i) =>
+            renderTrackRow(item, { label: `${i + 1}`, keyPrefix: `q${i}-` })
+          )}
+          {!loading && !queueData.current && queueData.queue.length === 0 && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
+              Nothing in the queue — play something first.
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "recent" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+          {recent.map((item) =>
+            renderTrackRow(item, { playUri: item.contextUri || item.uri })
+          )}
+          {!loading && recent.length === 0 && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
+              No recent tracks.
+            </div>
+          )}
         </div>
       )}
     </Card>

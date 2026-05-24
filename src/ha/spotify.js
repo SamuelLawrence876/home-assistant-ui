@@ -204,6 +204,35 @@ export async function playUri(uri, deviceId) {
   await spotifyPut(`/me/player/play${qs}`, body);
 }
 
+export async function searchTracks(query, limit = 15) {
+  if (!query.trim()) return [];
+  const q = encodeURIComponent(query.trim());
+  const data = await spotifyApi(`/search?q=${q}&type=track&limit=${limit}`);
+  return (data?.tracks?.items || []).map((t) => ({
+    name: t.name,
+    artist: t.artists?.map((a) => a.name).join(", ") || "",
+    album: t.album?.name || "",
+    image: t.album?.images?.[0]?.url || null,
+    uri: t.uri,
+  }));
+}
+
+export async function getQueue() {
+  const data = await spotifyApi("/me/player/queue");
+  if (!data) return { current: null, queue: [] };
+  const mapTrack = (t) => ({
+    name: t.name,
+    artist: t.artists?.map((a) => a.name).join(", ") || "",
+    album: t.album?.name || "",
+    image: t.album?.images?.[0]?.url || null,
+    uri: t.uri,
+  });
+  return {
+    current: data.currently_playing ? mapTrack(data.currently_playing) : null,
+    queue: (data.queue || []).slice(0, 20).map(mapTrack),
+  };
+}
+
 export async function transferPlayback(deviceId) {
   const token = await getToken();
   if (!token) return;
