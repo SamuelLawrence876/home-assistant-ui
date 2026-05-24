@@ -2194,6 +2194,12 @@ export function NowPlayingHero({ index = 0 }) {
   );
 }
 
+function useSpotifyConnect() {
+  const [connected, setConnected] = useState(isSpotifyConnected);
+  useEffect(() => { callbackReady.then((ok) => { if (ok) setConnected(true); }); }, []);
+  return [connected, setConnected];
+}
+
 export function SpotifyConnectCard({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
   const { entity: m } = useEntityStatus(ENTITY);
@@ -2202,6 +2208,8 @@ export function SpotifyConnectCard({ index = 0 }) {
   const activeSource = a.source || null;
   const playing = m?.state === "playing";
   const paused = m?.state === "paused";
+  const [spotifyConnected, setSpotifyConnected] = useSpotifyConnect();
+  const configured = isSpotifyConfigured();
 
   const steps = [
     { n: "1", text: "Open Spotify on your phone" },
@@ -2361,291 +2369,268 @@ export function SpotifyConnectCard({ index = 0 }) {
           </div>
         </div>
       )}
+
+      {configured && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
+          {spotifyConnected ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#1db954", boxShadow: "0 0 6px #1db954" }} />
+                Spotify connected
+              </div>
+              <span
+                onClick={() => { clearSpotifyToken(); setSpotifyConnected(false); }}
+                style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", cursor: "pointer" }}
+              >
+                Disconnect
+              </span>
+            </div>
+          ) : (
+            <button
+              className="btn primary"
+              onClick={startSpotifyAuth}
+              style={{ width: "100%", padding: "10px 16px", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+            >
+              <span style={{ fontSize: 16 }}>♪</span>
+              Connect to Spotify
+            </button>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
 
-export function MusicBrowserCard({ index = 0 }) {
-  const [connected, setConnected] = useState(isSpotifyConnected);
-  const [playlists, setPlaylists] = useState([]);
-  const [recent, setRecent] = useState([]);
-  const [searchResults, setSearchResults] = useState([]);
-  const [queueData, setQueueData] = useState({ current: null, queue: [] });
-  const [tab, setTab] = useState("playlists");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(false);
+const _spotifyItemStyle = {
+  background: "var(--glass-bg-2)",
+  border: "1px solid var(--glass-stroke)",
+  borderRadius: 12,
+  padding: "10px 12px",
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  cursor: "pointer",
+  fontFamily: "inherit",
+  textAlign: "left",
+  color: "var(--ink)",
+  transition: "background 0.2s ease, opacity 0.2s ease",
+  width: "100%",
+};
+
+const _spotifyThumbStyle = {
+  width: 40,
+  height: 40,
+  borderRadius: 8,
+  backgroundSize: "cover",
+  backgroundPosition: "center",
+  backgroundColor: "color-mix(in oklch, var(--ink), transparent 88%)",
+  flexShrink: 0,
+};
+
+function useSpotifyPlay() {
   const [playing, setPlaying] = useState(null);
   const [error, setError] = useState(null);
-  const searchTimer = useRef(null);
-  const configured = isSpotifyConfigured();
+  const [, setConnected] = useSpotifyConnect();
+  async function play(uri) {
+    setPlaying(uri);
+    setError(null);
+    try { await playUri(uri); }
+    catch (e) {
+      if (e.message?.includes("expired")) { setConnected(false); setError("Session expired"); }
+      else setError("Open Spotify on a device first");
+    }
+    setTimeout(() => setPlaying(null), 2000);
+  }
+  return { playing, error, play };
+}
 
-  useEffect(() => {
-    callbackReady.then((handled) => {
-      if (handled) setConnected(true);
-    });
-  }, []);
+function SpotifyTrackRow({ item, playing, onPlay, subtitle, label, keyPrefix }) {
+  const uri = item.uri;
+  const isPlaying = playing === uri;
+  const img = item.image || null;
+  const sub = subtitle || `${item.artist} · ${item.album}`;
+  return (
+    <button
+      style={{ ..._spotifyItemStyle, opacity: isPlaying ? 0.6 : 1 }}
+      onClick={() => onPlay(uri)}
+    >
+      <div style={{ ..._spotifyThumbStyle, backgroundImage: img ? `url(${img})` : undefined }} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {label && (
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--accent)", marginRight: 6 }}>
+              {label}
+            </span>
+          )}
+          {item.name}
+        </div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {sub}
+        </div>
+      </div>
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", flexShrink: 0 }}>
+        {isPlaying ? "..." : "▶"}
+      </span>
+    </button>
+  );
+}
+
+const _emptyMsg = (text) => (
+  <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>{text}</div>
+);
+
+const _notConnected = (
+  <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
+    Connect to Spotify to use this card.
+  </div>
+);
+
+export function SpotifySearchCard({ index = 0 }) {
+  const [connected] = useSpotifyConnect();
+  const [results, setResults] = useState([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const { playing, error, play } = useSpotifyPlay();
+  const timer = useRef(null);
+
+  function handleSearch(q) {
+    setQuery(q);
+    if (timer.current) clearTimeout(timer.current);
+    if (!q.trim()) { setResults([]); return; }
+    timer.current = setTimeout(() => {
+      setLoading(true);
+      searchTracks(q).then(setResults).catch(() => setResults([])).finally(() => setLoading(false));
+    }, 400);
+  }
+
+  if (!isSpotifyConfigured() || !connected) {
+    return <Card index={index} eyebrow="Search · Spotify" title="Search">{_notConnected}</Card>;
+  }
+
+  return (
+    <Card index={index} eyebrow="Search · Spotify" title="Search" meta={loading ? "Loading" : null}>
+      <input
+        type="text"
+        placeholder="Search songs, artists, albums..."
+        value={query}
+        onChange={(e) => handleSearch(e.target.value)}
+        style={{
+          background: "var(--glass-bg-2)", border: "1px solid var(--glass-stroke)", borderRadius: 10,
+          padding: "10px 12px", fontSize: 13, fontFamily: "var(--font-mono)", color: "var(--ink)",
+          outline: "none", width: "100%", boxSizing: "border-box", marginBottom: 10,
+        }}
+      />
+      {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>{error}</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+        {results.map((item) => (
+          <SpotifyTrackRow key={item.uri} item={item} playing={playing} onPlay={play} />
+        ))}
+      </div>
+      {!loading && query && results.length === 0 && _emptyMsg(`No results for "${query}"`)}
+      {!query && _emptyMsg("Type to search Spotify")}
+    </Card>
+  );
+}
+
+export function SpotifyPlaylistsCard({ index = 0 }) {
+  const [connected] = useSpotifyConnect();
+  const [playlists, setPlaylists] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const { playing, error, play } = useSpotifyPlay();
 
   useEffect(() => {
     if (!connected) return;
     setLoading(true);
-    Promise.all([
-      getPlaylists(30).catch(() => []),
-      getRecentlyPlayed(15).catch(() => []),
-    ]).then(([pl, rc]) => {
-      setPlaylists(pl);
-      setRecent(rc);
-      setLoading(false);
-    });
+    getPlaylists(30).then(setPlaylists).catch(() => []).finally(() => setLoading(false));
   }, [connected]);
 
+  if (!isSpotifyConfigured() || !connected) {
+    return <Card index={index} eyebrow="Playlists · Spotify" title="Playlists">{_notConnected}</Card>;
+  }
+
+  return (
+    <Card index={index} eyebrow="Playlists · Spotify" title="Playlists" meta={loading ? "Loading" : `${playlists.length}`}>
+      {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>{error}</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+        {playlists.map((item) => (
+          <SpotifyTrackRow key={item.uri} item={item} playing={playing} onPlay={play} subtitle={`${item.tracks} tracks · ${item.owner}`} />
+        ))}
+      </div>
+      {!loading && playlists.length === 0 && _emptyMsg("No playlists found.")}
+    </Card>
+  );
+}
+
+export function SpotifyQueueCard({ index = 0 }) {
+  const [connected] = useSpotifyConnect();
+  const [queueData, setQueueData] = useState({ current: null, queue: [] });
+  const [loading, setLoading] = useState(false);
+  const { playing, error, play } = useSpotifyPlay();
+
   useEffect(() => {
-    if (tab !== "queue" || !connected) return;
+    if (!connected) return;
     setLoading(true);
-    getQueue()
-      .then((q) => setQueueData(q))
-      .catch(() => setQueueData({ current: null, queue: [] }))
-      .finally(() => setLoading(false));
-  }, [tab, connected]);
+    getQueue().then(setQueueData).catch(() => setQueueData({ current: null, queue: [] })).finally(() => setLoading(false));
+  }, [connected]);
 
-  function handleSearch(q) {
-    setSearchQuery(q);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (!q.trim()) { setSearchResults([]); return; }
-    searchTimer.current = setTimeout(() => {
-      setLoading(true);
-      searchTracks(q)
-        .then((r) => setSearchResults(r))
-        .catch(() => setSearchResults([]))
-        .finally(() => setLoading(false));
-    }, 400);
+  function refresh() {
+    setLoading(true);
+    getQueue().then(setQueueData).catch(() => {}).finally(() => setLoading(false));
   }
 
-  async function play(uri) {
-    setPlaying(uri);
-    setError(null);
-    try {
-      await playUri(uri);
-    } catch (e) {
-      console.warn("[spotify] play failed", e);
-      if (e.message?.includes("expired")) {
-        setConnected(false);
-        setError("Session expired — reconnect");
-      } else {
-        setError("Open Spotify on a device first");
-      }
-    }
-    setTimeout(() => setPlaying(null), 2000);
+  if (!isSpotifyConfigured() || !connected) {
+    return <Card index={index} eyebrow="Queue · Spotify" title="Up next">{_notConnected}</Card>;
   }
-
-  function disconnect() {
-    clearSpotifyToken();
-    setConnected(false);
-    setPlaylists([]);
-    setRecent([]);
-  }
-
-  const itemStyle = {
-    background: "var(--glass-bg-2)",
-    border: "1px solid var(--glass-stroke)",
-    borderRadius: 12,
-    padding: "10px 12px",
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    cursor: "pointer",
-    fontFamily: "inherit",
-    textAlign: "left",
-    color: "var(--ink)",
-    transition: "background 0.2s ease, opacity 0.2s ease",
-    width: "100%",
-  };
-
-  const thumbStyle = {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    backgroundSize: "cover",
-    backgroundPosition: "center",
-    backgroundColor: "color-mix(in oklch, var(--ink), transparent 88%)",
-    flexShrink: 0,
-  };
-
-  function renderTrackRow(item, opts = {}) {
-    const uri = item.uri;
-    const isPlaying = playing === uri;
-    const img = item.image || null;
-    const subtitle = opts.subtitle || `${item.artist} · ${item.album}`;
-    const playable = opts.playable !== false;
-
-    return (
-      <button
-        key={(opts.keyPrefix || "") + uri + item.name}
-        style={{ ...itemStyle, opacity: isPlaying ? 0.6 : 1, cursor: playable ? "pointer" : "default" }}
-        onClick={playable ? () => play(opts.playUri || uri) : undefined}
-      >
-        <div style={{ ...thumbStyle, backgroundImage: img ? `url(${img})` : undefined }} />
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {opts.label && (
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--accent)", marginRight: 6 }}>
-                {opts.label}
-              </span>
-            )}
-            {item.name}
-          </div>
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {subtitle}
-          </div>
-        </div>
-        {playable && (
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", flexShrink: 0 }}>
-            {isPlaying ? "..." : "▶"}
-          </span>
-        )}
-      </button>
-    );
-  }
-
-  if (!configured) {
-    return (
-      <Card index={index} eyebrow="Library · Spotify" title="Music">
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", lineHeight: 1.5 }}>
-          Set VITE_SPOTIFY_CLIENT_ID to enable Spotify integration.
-        </div>
-      </Card>
-    );
-  }
-
-  if (!connected) {
-    return (
-      <Card index={index} eyebrow="Library · Spotify" title="Music">
-        <button
-          className="btn primary"
-          onClick={startSpotifyAuth}
-          style={{ width: "100%", padding: "14px 20px", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
-        >
-          <span style={{ fontSize: 18 }}>♪</span>
-          Connect to Spotify
-        </button>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--ink-3)", marginTop: 8, textAlign: "center" }}>
-          Browse your playlists and play music from the dashboard
-        </div>
-      </Card>
-    );
-  }
-
-  const tabs = [
-    { id: "search", label: "Search" },
-    { id: "playlists", label: "Playlists" },
-    { id: "queue", label: "Queue" },
-    { id: "recent", label: "Recent" },
-  ];
 
   return (
     <Card
       index={index}
-      eyebrow="Library · Spotify"
-      title="Music"
-      meta={loading ? "Loading" : null}
+      eyebrow="Queue · Spotify"
+      title="Up next"
+      meta={loading ? "Loading" : queueData.queue.length > 0 ? `${queueData.queue.length} tracks` : null}
       headRight={
-        <span
-          onClick={disconnect}
-          style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", cursor: "pointer" }}
-        >
-          Disconnect
+        <span onClick={refresh} style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", cursor: "pointer" }}>
+          Refresh
         </span>
       }
     >
-      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-        {tabs.map((t) => (
-          <button key={t.id} className={`preset ${tab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)}>
-            {t.label}
-          </button>
+      {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>{error}</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+        {queueData.current && <SpotifyTrackRow item={queueData.current} playing={playing} onPlay={play} label="Now" />}
+        {queueData.queue.map((item, i) => (
+          <SpotifyTrackRow key={`q${i}-${item.uri}`} item={item} playing={playing} onPlay={play} label={`${i + 1}`} />
         ))}
       </div>
+      {!loading && !queueData.current && queueData.queue.length === 0 && _emptyMsg("Nothing in the queue — play something first.")}
+    </Card>
+  );
+}
 
-      {error && (
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>
-          {error}
-        </div>
-      )}
+export function SpotifyRecentCard({ index = 0 }) {
+  const [connected] = useSpotifyConnect();
+  const [recent, setRecent] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const { playing, error, play } = useSpotifyPlay();
 
-      {tab === "search" && (
-        <>
-          <input
-            type="text"
-            placeholder="Search songs, artists, albums..."
-            value={searchQuery}
-            onChange={(e) => handleSearch(e.target.value)}
-            style={{
-              background: "var(--glass-bg-2)",
-              border: "1px solid var(--glass-stroke)",
-              borderRadius: 10,
-              padding: "10px 12px",
-              fontSize: 13,
-              fontFamily: "var(--font-mono)",
-              color: "var(--ink)",
-              outline: "none",
-              width: "100%",
-              boxSizing: "border-box",
-              marginBottom: 10,
-            }}
-          />
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
-            {searchResults.map((item) => renderTrackRow(item))}
-          </div>
-          {!loading && searchQuery && searchResults.length === 0 && (
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
-              No results for "{searchQuery}"
-            </div>
-          )}
-          {!searchQuery && (
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
-              Type to search Spotify
-            </div>
-          )}
-        </>
-      )}
+  useEffect(() => {
+    if (!connected) return;
+    setLoading(true);
+    getRecentlyPlayed(15).then(setRecent).catch(() => []).finally(() => setLoading(false));
+  }, [connected]);
 
-      {tab === "playlists" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
-          {playlists.map((item) =>
-            renderTrackRow(item, { subtitle: `${item.tracks} tracks · ${item.owner}` })
-          )}
-          {!loading && playlists.length === 0 && (
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
-              No playlists found.
-            </div>
-          )}
-        </div>
-      )}
+  if (!isSpotifyConfigured() || !connected) {
+    return <Card index={index} eyebrow="Recent · Spotify" title="Recently played">{_notConnected}</Card>;
+  }
 
-      {tab === "queue" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
-          {queueData.current && renderTrackRow(queueData.current, { label: "Now", keyPrefix: "now-" })}
-          {queueData.queue.map((item, i) =>
-            renderTrackRow(item, { label: `${i + 1}`, keyPrefix: `q${i}-` })
-          )}
-          {!loading && !queueData.current && queueData.queue.length === 0 && (
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
-              Nothing in the queue — play something first.
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "recent" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
-          {recent.map((item) =>
-            renderTrackRow(item, { playUri: item.contextUri || item.uri })
-          )}
-          {!loading && recent.length === 0 && (
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "8px 4px" }}>
-              No recent tracks.
-            </div>
-          )}
-        </div>
-      )}
+  return (
+    <Card index={index} eyebrow="Recent · Spotify" title="Recently played" meta={loading ? "Loading" : null}>
+      {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>{error}</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+        {recent.map((item, i) => (
+          <SpotifyTrackRow key={`r${i}-${item.uri}`} item={item} playing={playing} onPlay={() => play(item.contextUri || item.uri)} />
+        ))}
+      </div>
+      {!loading && recent.length === 0 && _emptyMsg("No recent tracks.")}
     </Card>
   );
 }
