@@ -220,7 +220,19 @@ export async function signOut() {
 
 export function sendWsMessage(message) {
   if (!connection) return Promise.reject(new Error("Not connected"));
-  return connection.sendMessagePromise(message);
+  return connection.sendMessagePromise(message).catch((err) => {
+    console.warn("[ha-ws] sendMessagePromise failed", message.type, err);
+    throw err;
+  });
+}
+
+export function waitForConnection() {
+  if (connectionStatus === "ready" && connection) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsub = onConnectionChange((s) => {
+      if (s === "ready") { unsub(); resolve(); }
+    });
+  });
 }
 
 /* Auto-connect on first import. */

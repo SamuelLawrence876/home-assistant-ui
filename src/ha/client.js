@@ -6,7 +6,7 @@
    flow via home-assistant-js-websocket. The library refreshes access
    tokens automatically — callers always get a fresh one. */
 
-import { getAccessToken, getHaUrl, sendWsMessage } from "./socket.js";
+import { getAccessToken, getHaUrl, sendWsMessage, waitForConnection } from "./socket.js";
 
 export const getHAConfig = () => ({
   url: getHaUrl(),
@@ -79,6 +79,7 @@ export async function getTodoItems(entityId, status) {
 }
 
 export async function browseMedia(entityId, mediaContentType, mediaContentId) {
+  await waitForConnection();
   const msg = { type: "media_player/browse_media", entity_id: entityId };
   if (mediaContentType) msg.media_content_type = mediaContentType;
   if (mediaContentId) msg.media_content_id = mediaContentId;

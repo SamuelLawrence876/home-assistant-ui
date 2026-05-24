@@ -2382,7 +2382,7 @@ export function MusicBrowserCard({ index = 0 }) {
         }
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((e) => { console.warn("[browse] root fetch failed", e); setLoading(false); });
   }, []);
 
   const browse = useCallback(async (item) => {
