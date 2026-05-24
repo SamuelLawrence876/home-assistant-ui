@@ -1,5 +1,5 @@
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID || "";
-const REDIRECT_URI = `${window.location.origin}/?tab=media`;
+const REDIRECT_URI = `${window.location.origin}/`;
 const SCOPES = [
   "user-read-playback-state",
   "user-modify-playback-state",
@@ -99,6 +99,7 @@ export async function handleSpotifyCallback() {
 
   url.searchParams.delete("code");
   url.searchParams.delete("state");
+  url.searchParams.set("tab", "media");
   window.history.replaceState(null, "", url.toString());
   return true;
 }
