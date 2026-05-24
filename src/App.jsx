@@ -328,15 +328,16 @@ function WorkshopView() {
 function SystemView() {
   return (
     <div className="grid">
-      <div className="col-7"><PiCard index={0} /></div>
-      <div className="col-5"><UptimeCard index={1} /></div>
+      <div className="col-6"><PiCard index={0} /></div>
+      <div className="col-6"><UptimeCard index={1} /></div>
 
-      <div className="col-7"><AddonsCard index={2} /></div>
-      <div className="col-5"><AdGuardSimpleCard index={3} /></div>
+      <div className="col-6"><AddonsCard index={2} /></div>
+      <div className="col-6"><AdGuardSimpleCard index={3} /></div>
 
-      <div className="col-12"><BackupCard index={4} /></div>
-      <div className="col-7"><EntityHealthCard index={5} /></div>
-      <div className="col-5"><SystemActionsCard index={6} /></div>
+      <div className="col-8"><BackupCard index={4} /></div>
+      <div className="col-4"><SystemActionsCard index={5} /></div>
+
+      <div className="col-12"><EntityHealthCard index={6} /></div>
     </div>
   );
 }

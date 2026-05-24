@@ -816,6 +816,9 @@ export function VacuumCard({ index = 0 }) {
 /* ----------------------------------------------------------------
    Air purifier — Levoit Core 300S
    ----------------------------------------------------------------*/
+const SPEED_TO_PCT = { low: 33, medium: 67, high: 100 };
+const PCT_TO_SPEED = (pct) => pct <= 33 ? "low" : pct <= 67 ? "medium" : "high";
+
 export function AirPurifierCard({ index = 0 }) {
   const { entity: liveFan, status: fanStatus } = useEntityStatus("fan.core_300s_series");
   const liveQ = useEntity("sensor.core_300s_series_air_quality");
@@ -825,23 +828,30 @@ export function AirPurifierCard({ index = 0 }) {
   const q = liveQ?.state ?? "—";
   const pm = Number(livePm?.state ?? 0);
   const filt = Number(liveFilt?.state ?? 0);
-  const [preset, setPreset] = useState(liveFan?.attributes?.preset_mode ?? "auto");
+  const [mode, setMode] = useState(liveFan?.attributes?.preset_mode ?? "auto");
   const [on, setOn] = useState(liveFan?.state === "on");
   useEffect(() => {
     if (!liveFan) return;
     setOn(liveFan.state === "on");
-    if (liveFan.attributes?.preset_mode) setPreset(liveFan.attributes.preset_mode);
-  }, [liveFan?.state, liveFan?.attributes?.preset_mode]);
+    const attrs = liveFan.attributes;
+    if (attrs?.preset_mode) setMode(attrs.preset_mode);
+    else if (attrs?.percentage) setMode(PCT_TO_SPEED(attrs.percentage));
+  }, [liveFan?.state, liveFan?.attributes?.preset_mode, liveFan?.attributes?.percentage]);
   function toggleFan() {
     if (unavailable) return;
     const next = !on;
     setOn(next);
     callService("fan", next ? "turn_on" : "turn_off", { entity_id: "fan.core_300s_series" }).catch(() => setOn(on));
   }
-  function setFanPreset(p) {
-    setPreset(p);
+  function pickMode(m) {
+    setMode(m);
     if (!on) setOn(true);
-    callService("fan", "set_preset_mode", { entity_id: "fan.core_300s_series", preset_mode: p }).catch(() => {});
+    const eid = "fan.core_300s_series";
+    if (SPEED_TO_PCT[m] != null) {
+      callService("fan", "set_percentage", { entity_id: eid, percentage: SPEED_TO_PCT[m] }).catch(() => {});
+    } else {
+      callService("fan", "set_preset_mode", { entity_id: eid, preset_mode: m }).catch(() => {});
+    }
   }
 
   const C = 2 * Math.PI * 90;
@@ -877,11 +887,11 @@ export function AirPurifierCard({ index = 0 }) {
             Air is <b>{q}</b>. Filter has <b style={{ color: "var(--ink)" }}>{filt}%</b> life left.
           </div>
           <div className="dek">
-            Currently running <b>{preset}</b>. Display is on. Last filter check 12 days ago.
+            Currently running <b>{mode}</b>. Display is on. Last filter check 12 days ago.
           </div>
           <div className="preset-row">
             {["sleep", "auto", "low", "medium", "high"].map((p) => (
-              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => setFanPreset(p)} disabled={unavailable}>
+              <button key={p} className={`preset ${mode === p ? "on" : ""}`} onClick={() => pickMode(p)} disabled={unavailable}>
                 {p}
               </button>
             ))}
