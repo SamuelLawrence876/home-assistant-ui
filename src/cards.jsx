@@ -477,62 +477,60 @@ export function ScenesCard({ index = 0 }) {
 }
 
 /* ----------------------------------------------------------------
-   Media — Spotify now playing (compact)
+   Media — Spotify now playing (compact, Overview tab)
    ----------------------------------------------------------------*/
 export function MediaCard({ index = 0 }) {
-  const { entity: m, status } = useEntityStatus("media_player.spotify_samuel_lawrence");
+  const ENTITY = "media_player.spotify_samuel_lawrence";
+  const { entity: m, status } = useEntityStatus(ENTITY);
   const a = m?.attributes || {};
-  const duration = a.media_duration || 1;
-  const [pos, setPos] = useState(a.media_position || 0);
-  const [playing, setPlaying] = useState(m?.state === "playing");
-  useEffect(() => {
-    if (m) {
-      setPlaying(m.state === "playing");
-      if (m.attributes?.media_position != null) setPos(m.attributes.media_position);
-    }
-  }, [m?.state, m?.attributes?.media_position]);
-  useEffect(() => {
-    if (!playing) return;
-    const id = setInterval(() => setPos((p) => (p + 1) % duration), 1000);
-    return () => clearInterval(id);
-  }, [playing, duration]);
-  const pct = (pos / duration) * 100;
-  const t = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const playing = m?.state === "playing";
+  const paused = m?.state === "paused";
+  const idle = !playing && !paused;
+  const [isPlaying, setIsPlaying] = useState(playing);
+  useEffect(() => { if (m) setIsPlaying(m.state === "playing"); }, [m?.state]);
+
   function playPause() {
-    const next = !playing;
-    setPlaying(next);
-    callService("media_player", next ? "media_play" : "media_pause", { entity_id: "media_player.spotify_samuel_lawrence" }).catch(() => setPlaying(playing));
-  }
-  function seek(toSec) {
-    setPos(toSec);
-    callService("media_player", "media_seek", { entity_id: "media_player.spotify_samuel_lawrence", seek_position: toSec }).catch(() => {});
+    const next = !isPlaying;
+    setIsPlaying(next);
+    callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY }).catch(() => setIsPlaying(isPlaying));
   }
 
+  const haUrl = import.meta.env.VITE_HA_URL || "";
+  const art = a.entity_picture && !idle ? `${haUrl}${a.entity_picture}` : null;
+
   return (
-    <Card index={index} eyebrow="Spotify · samuel_lawrence" meta={playing ? "Playing" : "Paused"}>
-      <EntityGuard status={status} entityId="media_player.spotify_samuel_lawrence">
-      <div className="media-row">
-        <div className="media-art" />
-        <div className="media-info">
-          <div className="t">{a.media_title}</div>
-          <div className="a">
-            {a.media_artist} · {a.media_album_name}
+    <Card index={index} eyebrow="Spotify · Now playing" meta={idle ? "Idle" : isPlaying ? "Playing" : "Paused"}>
+      <EntityGuard status={status} entityId={ENTITY}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 10,
+            backgroundImage: art ? `url(${art})` : undefined,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundColor: "color-mix(in oklch, var(--ink), transparent 88%)",
+            flexShrink: 0,
+            opacity: idle ? 0.4 : 1,
+            transition: "opacity 0.3s",
+          }}
+        />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {idle ? "Nothing playing" : a.media_title}
           </div>
+          {!idle && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {a.media_artist}
+            </div>
+          )}
         </div>
-      </div>
-      <div className="media-bar">
-        <span style={{ "--p": `${pct}%` }} />
-      </div>
-      <div className="media-times">
-        <span>{t(Math.floor(pos))}</span>
-        <span>-{t(Math.floor(a.media_duration - pos))}</span>
-      </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "center" }}>
-        <button className="btn icon" onClick={() => seek(Math.max(0, pos - 15))}>⏮</button>
-        <button className="btn icon primary" onClick={playPause}>
-          {playing ? "⏸" : "▶"}
-        </button>
-        <button className="btn icon" onClick={() => seek(Math.min(duration - 1, pos + 15))}>⏭</button>
+        {!idle && (
+          <button className="btn icon" onClick={playPause} style={{ flexShrink: 0 }}>
+            {isPlaying ? "⏸" : "▶"}
+          </button>
+        )}
       </div>
       </EntityGuard>
     </Card>
