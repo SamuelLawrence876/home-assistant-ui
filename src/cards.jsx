@@ -1678,6 +1678,168 @@ export function LightCard({ index = 0, entityId }) {
 }
 
 /* ----------------------------------------------------------------
+   Desk strip — Govee H6159 (cloud API via rest_command)
+   No HA light entity; state is local + optimistic.
+   ----------------------------------------------------------------*/
+export function DeskStripCard({ index = 0 }) {
+  const [on, setOn] = useState(false);
+  const [bright, setB] = useState(100);
+  const [rgb, setRgb] = useState([255, 198, 130]);
+  const [kelvin, setKelvin] = useState(2700);
+
+  function toggle() {
+    const next = !on;
+    setOn(next);
+    callService("rest_command", "govee_desk_strip_turn", { value: next ? "on" : "off" }).catch(() => setOn(on));
+  }
+
+  function commitBrightness(v) {
+    setB(v);
+    if (!on) return;
+    callService("rest_command", "govee_desk_strip_brightness", { value: v }).catch(() => {});
+  }
+
+  function pickColor(p) {
+    if (!on) setOn(true);
+    if (p.kelvin) {
+      setKelvin(p.kelvin);
+      setRgb(kelvinToRgb(p.kelvin));
+      callService("rest_command", "govee_desk_strip_color_temp", { value: p.kelvin }).catch(() => {});
+    } else {
+      setRgb(p.rgb);
+      callService("rest_command", "govee_desk_strip_color", { r: p.rgb[0], g: p.rgb[1], b: p.rgb[2] }).catch(() => {});
+    }
+  }
+
+  function commitKelvin(v) {
+    setKelvin(v);
+    setRgb(kelvinToRgb(v));
+    if (!on) return;
+    callService("rest_command", "govee_desk_strip_color_temp", { value: v }).catch(() => {});
+  }
+
+  const glow = on
+    ? `0 0 24px ${rgbStr(rgb)}33, 0 0 80px ${rgbStr(rgb)}1f`
+    : "none";
+
+  return (
+    <Card
+      index={index}
+      eyebrow="Light · Govee H6159"
+      title="Desk strip"
+      meta={on ? `On · ${bright}%` : "Off"}
+      headRight={
+        <div className={`toggle ${on ? "on" : ""}`} onClick={toggle} role="switch" aria-checked={on} />
+      }
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "72px 1fr",
+          gap: 18,
+          alignItems: "center",
+          marginTop: 4,
+        }}
+      >
+        <div
+          style={{
+            width: 72,
+            height: 72,
+            borderRadius: "50%",
+            background: on
+              ? `radial-gradient(circle at 32% 32%, white 0%, ${rgbStr(rgb)} 55%, ${rgbStr([
+                  Math.max(0, rgb[0] - 60),
+                  Math.max(0, rgb[1] - 60),
+                  Math.max(0, rgb[2] - 60),
+                ])} 100%)`
+              : "color-mix(in oklch, var(--ink), transparent 88%)",
+            boxShadow: glow,
+            transition: "background 0.3s ease, box-shadow 0.4s ease",
+            border: "1px solid var(--glass-stroke)",
+          }}
+        />
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+            <span className="eyebrow" style={{ fontSize: 9 }}>Brightness</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
+              {bright}%
+            </span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value={bright}
+            disabled={!on}
+            onChange={(ev) => setB(Number(ev.target.value))}
+            onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
+            onKeyUp={(ev) => commitBrightness(Number(ev.target.value))}
+            className="gh-slider"
+            style={{ width: "100%", accentColor: on ? rgbStr(rgb) : "var(--ink-4)" }}
+          />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+          <span className="eyebrow" style={{ fontSize: 9 }}>Color temperature</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
+            {kelvin}K
+          </span>
+        </div>
+        <input
+          type="range"
+          min={2000}
+          max={9000}
+          step="100"
+          value={kelvin}
+          disabled={!on}
+          onChange={(ev) => { setKelvin(Number(ev.target.value)); setRgb(kelvinToRgb(Number(ev.target.value))); }}
+          onPointerUp={(ev) => commitKelvin(Number(ev.target.value))}
+          onKeyUp={(ev) => commitKelvin(Number(ev.target.value))}
+          className="gh-slider"
+          style={{
+            width: "100%",
+            background: on
+              ? `linear-gradient(to right, rgb(255,147,41), rgb(255,198,130), rgb(255,235,200), rgb(220,235,255))`
+              : "var(--glass-bg-2)",
+            borderRadius: 6,
+          }}
+        />
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
+        <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {LIGHT_PRESETS.map((p) => {
+            const selected = rgb[0] === p.rgb[0] && rgb[1] === p.rgb[1] && rgb[2] === p.rgb[2];
+            return (
+              <button
+                key={p.id}
+                onClick={() => pickColor(p)}
+                title={p.label}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  background: rgbStr(p.rgb),
+                  border: selected ? "2px solid var(--ink)" : "2px solid var(--glass-stroke-2)",
+                  cursor: "pointer",
+                  padding: 0,
+                  boxShadow: selected ? "0 0 0 2px var(--glass-bg-2)" : "0 1px 3px rgba(0,0,0,0.08)",
+                  transition: "transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.2s ease",
+                }}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------
    Fan
    ----------------------------------------------------------------*/
 export function FanCard({ index = 0 }) {
