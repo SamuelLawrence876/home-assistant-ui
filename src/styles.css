@@ -2346,7 +2346,7 @@ body.viewport-phone .weekcal {
    ============================================================ */
 .tweaks-fab {
   position: fixed;
-  top: 14px;
+  top: calc(14px + env(safe-area-inset-top, 0px));
   right: 14px;
   z-index: 60;
   width: 38px;
@@ -2578,13 +2578,13 @@ body.viewport-phone .weekcal {
 }
 
 body.viewport-phone .tweaks-fab {
-  top: 12px;
+  top: calc(12px + env(safe-area-inset-top, 0px));
   right: 12px;
   width: 34px;
   height: 34px;
 }
 body.viewport-phone .tweaks-drawer {
-  top: 12px;
+  top: calc(12px + env(safe-area-inset-top, 0px));
   right: 12px;
   width: calc(100vw - 24px);
 }

@@ -1009,23 +1009,11 @@ export function AdGuardCard({ index = 0 }) {
 }
 
 export function BlockedDomainsCard({ index = 0 }) {
-  const top = GH_DATA.adguard.top_blocked;
-  const max = top[0].count;
   return (
     <Card index={index} eyebrow="Top blocked domains · 24h" title="Loudest offenders">
-      <div className="domains">
-        {top.map((d, i) => (
-          <div key={i} className="domain">
-            <span className="ix">{String(i + 1).padStart(2, "0")}</span>
-            <span className="nm">{d.name}</span>
-            <span className="right">
-              <span className="bar">
-                <span style={{ "--w": `${(d.count / max) * 100}%` }} />
-              </span>
-              <span className="count">{d.count}</span>
-            </span>
-          </div>
-        ))}
+      <div className="entity-warning">
+        <span className="entity-warning-icon">{"⚠️"}</span>
+        <span className="entity-warning-text">Needs AdGuard Home API integration</span>
       </div>
     </Card>
   );
@@ -1200,7 +1188,6 @@ export function BackupCard({ index = 0 }) {
 }
 
 export function EntityHealthCard({ index = 0 }) {
-  const h = GH_DATA.health;
   const { entity: liveAvail, status: healthStatus } = useEntityStatus("sensor.available_entities_count");
   const liveUnavail = useEntity("sensor.unavailable_entities_count");
   const available = Number(liveAvail?.state ?? 0);
@@ -1210,20 +1197,11 @@ export function EntityHealthCard({ index = 0 }) {
       index={index}
       eyebrow={`Entity registry · ${available} online · ${unavailable} unavailable`}
       title="Unavailable groups"
-      meta="known, expected"
     >
       <EntityGuard status={healthStatus} entityId="sensor.available_entities_count">
-      <div className="health">
-        {h.groups.map((g, i) => (
-          <div key={i} className="health-row">
-            <div className="ct">{g.count}</div>
-            <div>
-              <div className="nm">{g.name}</div>
-              <div className="note">{g.note}</div>
-            </div>
-            <span className="pill">expected</span>
-          </div>
-        ))}
+      <div className="entity-warning">
+        <span className="entity-warning-icon">{"⚠️"}</span>
+        <span className="entity-warning-text">Needs unavailable-entity group sensors</span>
       </div>
       </EntityGuard>
     </Card>
@@ -2522,89 +2500,22 @@ export function TVCard({ index = 0 }) {
 }
 
 export function QueueCard({ index = 0 }) {
-  const q = GH_DATA.media.queue;
-  // Still mock. HA's Spotify integration doesn't expose the queue. Music
-  // Assistant (installed on the Pi) holds queues internally but doesn't
-  // surface them as HA entities — only as `music_assistant.get_queue`
-  // service calls that need WS-with-response handling. Either path is
-  // a real piece of work; left as mock until prioritised.
   return (
-    <Card index={index} eyebrow={`Queue · ${q.length} tracks`} title="Up next" meta="preview">
-      <div className="domains" style={{ marginTop: 4 }}>
-        {q.map((track, i) => (
-          <div key={i} className="domain" style={{ gridTemplateColumns: "24px 1fr auto" }}>
-            <span className="ix">{track.now ? "▶" : String(i + 1).padStart(2, "0")}</span>
-            <div>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 500,
-                  color: track.now ? "var(--accent)" : "var(--ink)",
-                  letterSpacing: "-0.005em",
-                }}
-              >
-                {track.title}
-              </div>
-              <div
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  color: "var(--ink-3)",
-                  letterSpacing: "0.04em",
-                  marginTop: 2,
-                }}
-              >
-                {track.artist}
-              </div>
-            </div>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)" }}>{track.dur}</span>
-          </div>
-        ))}
+    <Card index={index} eyebrow="Queue" title="Up next">
+      <div className="entity-warning">
+        <span className="entity-warning-icon">{"⚠️"}</span>
+        <span className="entity-warning-text">Needs Music Assistant queue integration</span>
       </div>
     </Card>
   );
 }
 
 export function RecentCard({ index = 0 }) {
-  const r = GH_DATA.media.recent;
-  // Same caveat as QueueCard — no native entity. Music Assistant exposes
-  // a "favorite current song" button per player but not a play history.
-  // Real history would come from HA's recorder API (state changes on
-  // media_player.spotify_*) or MA's library service.
   return (
-    <Card index={index} eyebrow="Recent · playback history" title="Recently played" meta="preview">
-      <div className="domains" style={{ marginTop: 4 }}>
-        {r.map((t, i) => (
-          <div key={i} className="domain" style={{ gridTemplateColumns: "1fr auto" }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink)", letterSpacing: "-0.005em" }}>
-                {t.title}
-              </div>
-              <div
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  color: "var(--ink-3)",
-                  letterSpacing: "0.04em",
-                  marginTop: 2,
-                }}
-              >
-                {t.artist}
-              </div>
-            </div>
-            <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                color: "var(--ink-4)",
-              }}
-            >
-              {t.played}
-            </span>
-          </div>
-        ))}
+    <Card index={index} eyebrow="Recent" title="Recently played">
+      <div className="entity-warning">
+        <span className="entity-warning-icon">{"⚠️"}</span>
+        <span className="entity-warning-text">Needs recorder or Music Assistant history</span>
       </div>
     </Card>
   );
