@@ -218,5 +218,10 @@ export async function signOut() {
   window.location.reload();
 }
 
+export function sendWsMessage(message) {
+  if (!connection) return Promise.reject(new Error("Not connected"));
+  return connection.sendMessagePromise(message);
+}
+
 /* Auto-connect on first import. */
 if (typeof window !== "undefined") setup();

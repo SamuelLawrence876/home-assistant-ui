@@ -1,10 +1,10 @@
 /* Glasshouse v2 — atomic card components. */
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
 import { useEntity, useEntitiesByDomain, useConnectionStatus, useEntityStatus, combineStatuses } from "./ha/useEntity.js";
-import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js";
+import { callService, imageUrl, getTodoItems, getForecast, browseMedia } from "./ha/client.js";
 import { useCalendarEvents } from "./ha/useCalendarEvents.js";
 
 /* ----------------------------------------------------------------
@@ -2351,6 +2351,238 @@ export function SpotifyConnectCard({ index = 0 }) {
               </span>
             ))}
           </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const SPOTIFY_ENTITY = "media_player.spotify_samuel_lawrence";
+
+export function MusicBrowserCard({ index = 0 }) {
+  const [root, setRoot] = useState(null);
+  const [playlists, setPlaylists] = useState([]);
+  const [browseStack, setBrowseStack] = useState([]);
+  const [currentItems, setCurrentItems] = useState([]);
+  const [currentTitle, setCurrentTitle] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [playing, setPlaying] = useState(null);
+
+  useEffect(() => {
+    browseMedia(SPOTIFY_ENTITY)
+      .then((data) => {
+        setRoot(data);
+        const playlistDir = (data.children || []).find(
+          (c) => c.media_content_type === "spotify://current_user_playlists"
+        );
+        if (playlistDir) {
+          browseMedia(SPOTIFY_ENTITY, playlistDir.media_content_type, playlistDir.media_content_id)
+            .then((pl) => setPlaylists((pl.children || []).slice(0, 6)))
+            .catch(() => {});
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const browse = useCallback(async (item) => {
+    setLoading(true);
+    try {
+      const data = await browseMedia(SPOTIFY_ENTITY, item.media_content_type, item.media_content_id);
+      setBrowseStack((s) => [...s, { title: currentTitle || "Library", items: currentItems }]);
+      setCurrentItems(data.children || []);
+      setCurrentTitle(data.title);
+    } catch (e) {
+      console.warn("[browse] failed", e);
+    }
+    setLoading(false);
+  }, [currentTitle, currentItems]);
+
+  function goBack() {
+    const prev = browseStack[browseStack.length - 1];
+    if (prev) {
+      setCurrentItems(prev.items);
+      setCurrentTitle(prev.title);
+      setBrowseStack((s) => s.slice(0, -1));
+    } else {
+      setCurrentItems([]);
+      setCurrentTitle(null);
+    }
+  }
+
+  async function play(item) {
+    setPlaying(item.media_content_id);
+    try {
+      await callService("media_player", "play_media", {
+        entity_id: SPOTIFY_ENTITY,
+        media_content_type: item.media_content_type,
+        media_content_id: item.media_content_id,
+      });
+    } catch (e) {
+      console.warn("[play] failed", e);
+    }
+    setTimeout(() => setPlaying(null), 2000);
+  }
+
+  const browsing = currentItems.length > 0;
+  const categories = (root?.children || []).filter((c) => c.can_expand);
+
+  const itemStyle = {
+    background: "var(--glass-bg-2)",
+    border: "1px solid var(--glass-stroke)",
+    borderRadius: 12,
+    padding: "10px 12px",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    textAlign: "left",
+    color: "var(--ink)",
+    transition: "background 0.2s ease",
+    width: "100%",
+  };
+
+  const thumbStyle = {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+    backgroundColor: "color-mix(in oklch, var(--ink), transparent 88%)",
+    flexShrink: 0,
+  };
+
+  function renderItem(item) {
+    const isPlaying = playing === item.media_content_id;
+    return (
+      <button
+        key={item.media_content_id || item.title}
+        style={{ ...itemStyle, opacity: isPlaying ? 0.6 : 1 }}
+        onClick={() => item.can_play ? play(item) : item.can_expand ? browse(item) : null}
+      >
+        <div
+          style={{
+            ...thumbStyle,
+            backgroundImage: item.thumbnail ? `url(${item.thumbnail})` : undefined,
+          }}
+        />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 500,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {item.title}
+          </div>
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 9,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--ink-3)",
+              marginTop: 1,
+            }}
+          >
+            {item.media_class || item.media_content_type?.replace("spotify://", "")}
+          </div>
+        </div>
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 9,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: "var(--ink-3)",
+            flexShrink: 0,
+          }}
+        >
+          {isPlaying ? "..." : item.can_play ? "▶" : item.can_expand ? "→" : ""}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <Card
+      index={index}
+      eyebrow="Library · Spotify"
+      title={browsing ? currentTitle : "Music"}
+      meta={loading ? "Loading" : null}
+    >
+      {playlists.length > 0 && !browsing && (
+        <>
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 9,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              color: "var(--ink-3)",
+              marginBottom: 8,
+            }}
+          >
+            Quick play
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+            {playlists.map((pl) => (
+              <button
+                key={pl.media_content_id}
+                className={`preset ${playing === pl.media_content_id ? "on" : ""}`}
+                onClick={() => play(pl)}
+                style={{ maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              >
+                {pl.title}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {browsing && (
+        <button
+          onClick={goBack}
+          style={{
+            background: "none",
+            border: "none",
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            color: "var(--accent)",
+            cursor: "pointer",
+            padding: "0 0 10px 0",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          ← Back
+        </button>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {browsing
+          ? currentItems.map(renderItem)
+          : categories.map(renderItem)
+        }
+      </div>
+
+      {!loading && !browsing && categories.length === 0 && (
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--ink-3)",
+            padding: "12px 4px",
+          }}
+        >
+          Connect Spotify to browse your library.
         </div>
       )}
     </Card>

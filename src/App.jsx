@@ -45,6 +45,7 @@ import {
   AddonsCard,
   NowPlayingHero,
   SpotifyConnectCard,
+  MusicBrowserCard,
   WeeklyCalendarCard,
   KanbanBoardCard,
 } from "./cards.jsx";
@@ -277,6 +278,7 @@ function MediaView() {
     <div className="grid">
       <div className="col-8"><NowPlayingHero index={0} /></div>
       <div className="col-4"><SpotifyConnectCard index={1} /></div>
+      <div className="col-12"><MusicBrowserCard index={2} /></div>
     </div>
   );
 }
