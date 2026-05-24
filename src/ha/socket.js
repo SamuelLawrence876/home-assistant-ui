@@ -201,6 +201,14 @@ export function getAccessToken() {
   return auth?.accessToken ?? null;
 }
 
+export async function getFreshAccessToken() {
+  if (!auth) return null;
+  if (auth.expired) {
+    await auth.refreshAccessToken();
+  }
+  return auth.accessToken;
+}
+
 export function getHaUrl() {
   return HA_URL;
 }

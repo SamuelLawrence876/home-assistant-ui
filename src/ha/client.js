@@ -6,7 +6,7 @@
    flow via home-assistant-js-websocket. The library refreshes access
    tokens automatically — callers always get a fresh one. */
 
-import { getAccessToken, getHaUrl, sendWsMessage, waitForConnection } from "./socket.js";
+import { getAccessToken, getFreshAccessToken, getHaUrl, sendWsMessage, waitForConnection } from "./socket.js";
 
 export const getHAConfig = () => ({
   url: getHaUrl(),
@@ -18,15 +18,12 @@ export const haConfigured = () => {
   return Boolean(url && token);
 };
 
-const headers = () => ({
-  Authorization: `Bearer ${getHAConfig().token}`,
-  "Content-Type": "application/json",
-});
-
 async function req(path, init = {}) {
-  const { url: URL } = getHAConfig();
-  if (!URL) throw new Error("HA URL not configured");
-  const res = await fetch(`${URL}${path}`, { ...init, headers: { ...headers(), ...(init.headers || {}) } });
+  const url = getHaUrl();
+  if (!url) throw new Error("HA URL not configured");
+  const token = await getFreshAccessToken();
+  const hdrs = { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init.headers || {}) };
+  const res = await fetch(`${url}${path}`, { ...init, headers: hdrs });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`HA ${init.method || "GET"} ${path} → ${res.status} ${body.slice(0, 200)}`);
