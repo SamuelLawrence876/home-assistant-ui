@@ -3079,16 +3079,15 @@ export function WeeklyCalendarCard({ index = 0 }) {
 }
 
 /* ----------------------------------------------------------------
-   Kanban — live iCloud Reminders via HA CalDAV todo entities.
-   Columns: Backlog (todo.reminders) → Next (todo.today) →
-   In Progress (todo.doing) → Done (completed items across all lists).
+   Kanban — local todo lists stored on the Pi (local_todo integration).
+   Columns: Backlog → Next → In Progress → Done.
    Tags stored as #tag in description. Due dates optional.
    ----------------------------------------------------------------*/
 const KANBAN_COLS = [
-  { id: "todo.reminders", label: "Backlog" },
-  { id: "todo.today",     label: "Next" },
-  { id: "todo.doing",     label: "In Progress" },
-  { id: "__done__",        label: "Done" },
+  { id: "todo.backlog", label: "Backlog" },
+  { id: "todo.next",    label: "Next" },
+  { id: "todo.doing",   label: "In Progress" },
+  { id: "__done__",      label: "Done" },
 ];
 const KANBAN_ENTITY_IDS = KANBAN_COLS.filter((c) => c.id !== "__done__").map((c) => c.id);
 
@@ -3285,7 +3284,7 @@ export function KanbanBoardCard({ index = 0 }) {
   return (
     <Card
       index={index}
-      eyebrow={`Kanban · iCloud Reminders${loading ? "" : ` · ${liveCount} items`}`}
+      eyebrow={`Kanban${loading ? "" : ` · ${liveCount} items`}`}
       title="Project board"
       meta={loading ? "loading…" : "drag cards between columns"}
     >
