@@ -29,6 +29,7 @@ import {
   PiCard,
   BackupCard,
   EntityHealthCard,
+  SystemActionsCard,
   InProgressCard,
   StatBox,
   RoomClimateCard,
@@ -334,7 +335,8 @@ function SystemView() {
       <div className="col-5"><AdGuardSimpleCard index={3} /></div>
 
       <div className="col-12"><BackupCard index={4} /></div>
-      <div className="col-12"><EntityHealthCard index={5} /></div>
+      <div className="col-7"><EntityHealthCard index={5} /></div>
+      <div className="col-5"><SystemActionsCard index={6} /></div>
     </div>
   );
 }
@@ -461,6 +463,15 @@ export default function App() {
   const [clockOverride, setClockOverride] = useState(initial.clockOverride);
   const [clock, setClock] = useState(initial.clock);
   const [tab, setTab] = useState(initial.tab);
+
+  // Clean ?tab= from URL after reading it so refreshes default to overview
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("tab")) {
+      url.searchParams.delete("tab");
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, []);
 
   // Persist tweaks
   useEffect(() => {
