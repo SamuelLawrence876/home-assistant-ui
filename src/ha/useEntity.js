@@ -4,9 +4,10 @@
    useEntities(["light.a", "light.b"]) -> Record<entityId, state>
    useEntitiesByDomain("update")     -> array of state objects whose entity_id starts with "update."
    useConnectionStatus()             -> "connecting" | "authenticating" | "ready" | "disconnected"
-   useEntityCounts()                 -> { available, unavailable, total } */
+   useEntityCounts()                 -> { available, unavailable, total }
+   useStatistics(ids, hours)         -> { data, loading } — hourly mean from recorder */
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import {
   subscribe,
   onConnectionChange,
@@ -16,6 +17,8 @@ import {
   getAllStates,
   getEntity,
   getConnectionStatus,
+  sendWsMessage,
+  waitForConnection,
 } from "./socket.js";
 
 export function useEntity(entityId) {
@@ -107,4 +110,54 @@ export function combineStatuses(...statuses) {
   if (statuses.includes("not_found")) return "not_found";
   if (statuses.includes("unavailable")) return "unavailable";
   return "ready";
+}
+
+/**
+ * Fetch hourly mean statistics from HA's recorder for the last N hours.
+ * Returns { data: { [statistic_id]: number[] }, loading: boolean }
+ * Each array has one value per hour (oldest first), using the "mean" field.
+ */
+export function useStatistics(statisticIds, hours = 24) {
+  const key = statisticIds.join(",");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const lastKey = useRef("");
+
+  const fetch = useCallback(async () => {
+    await waitForConnection();
+    const startTime = new Date(Date.now() - hours * 3600_000).toISOString();
+    try {
+      const result = await sendWsMessage({
+        type: "recorder/statistics_during_period",
+        start_time: startTime,
+        statistic_ids: statisticIds,
+        period: "hour",
+        types: ["mean"],
+      });
+      const parsed = {};
+      for (const id of statisticIds) {
+        const points = result[id] || [];
+        parsed[id] = points.map((p) => p.mean ?? null).filter((v) => v !== null);
+      }
+      setData(parsed);
+    } catch (e) {
+      console.warn("[useStatistics] fetch failed", e);
+    }
+    setLoading(false);
+  }, [key, hours]);
+
+  useEffect(() => {
+    if (key === lastKey.current) return;
+    lastKey.current = key;
+    setLoading(true);
+    fetch();
+  }, [key, fetch]);
+
+  // Refresh every 10 minutes
+  useEffect(() => {
+    const id = setInterval(fetch, 10 * 60_000);
+    return () => clearInterval(id);
+  }, [fetch]);
+
+  return { data, loading };
 }

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { GH_DATA } from "./data.js";
 import { nowFractionalHour } from "./theme.js";
-import { useEntity, useEntitiesByDomain, useConnectionStatus, useEntityStatus, combineStatuses } from "./ha/useEntity.js";
+import { useEntity, useEntitiesByDomain, useConnectionStatus, useEntityStatus, combineStatuses, useStatistics } from "./ha/useEntity.js";
 import { callService, imageUrl, getTodoItems, getForecast } from "./ha/client.js";
 import { getAllStates, onStatesChanged } from "./ha/socket.js";
 import {
@@ -4031,10 +4031,7 @@ export function StatBox({ index = 0, eyebrow, value, unit, caption, pct, color }
 /* Live-wired StatBox variants for Overview. Each subscribes to its own
    entities so a single tile updating doesn't re-render the others. */
 
-/* Mock 24h history arrays — 24 data-points, will be replaced with real
-   HA history calls later. Shaped to look plausible for a bedroom. */
-const MOCK_TEMP_HIST = [19.8, 19.6, 19.4, 19.3, 19.2, 19.1, 19.0, 19.1, 19.3, 19.6, 20.0, 20.4, 20.8, 21.1, 21.3, 21.4, 21.3, 21.1, 20.9, 20.7, 20.5, 20.4, 20.3, 20.2];
-const MOCK_HUM_HIST  = [52, 53, 54, 55, 55, 56, 56, 55, 54, 52, 50, 48, 46, 45, 44, 44, 45, 46, 47, 48, 49, 50, 51, 51];
+const CLIMATE_STAT_IDS = ["sensor.h5075_4fb6_temperature", "sensor.h5075_4fb6_humidity"];
 
 /* Catmull-Rom -> cubic Bezier for smooth SVG curves */
 function smoothPath(pts) {
@@ -4061,6 +4058,7 @@ function smoothPath(pts) {
 export function RoomClimateCard({ index = 0, compact }) {
   const { entity: liveTemp, status: tempStatus } = useEntityStatus("sensor.h5075_4fb6_temperature");
   const { entity: liveHum, status: humStatus } = useEntityStatus("sensor.h5075_4fb6_humidity");
+  const { data: statsData } = useStatistics(CLIMATE_STAT_IDS, 24);
   const combined = combineStatuses(tempStatus, humStatus);
 
   if (combined !== "ready") {
@@ -4074,9 +4072,11 @@ export function RoomClimateCard({ index = 0, compact }) {
   const temp = Number(liveTemp?.state ?? 0);
   const humidity = Number(liveHum?.state ?? 0);
 
-  // Build history with live value as the last point
-  const tempHist = [...MOCK_TEMP_HIST.slice(0, 23), temp];
-  const humHist = [...MOCK_HUM_HIST.slice(0, 23), humidity];
+  // Use real recorder stats when available, append current live reading as the latest point
+  const rawTemp = statsData?.["sensor.h5075_4fb6_temperature"] || [];
+  const rawHum = statsData?.["sensor.h5075_4fb6_humidity"] || [];
+  const tempHist = rawTemp.length > 0 ? [...rawTemp.slice(-23), temp] : [temp];
+  const humHist = rawHum.length > 0 ? [...rawHum.slice(-23), humidity] : [humidity];
 
   const tempMin = Math.min(...tempHist);
   const tempMax = Math.max(...tempHist);
@@ -4110,7 +4110,8 @@ export function RoomClimateCard({ index = 0, compact }) {
   const C = 2 * Math.PI * R;
   const humOffset = C * (1 - humidity / 100);
 
-  // ---- Chart geometry ----
+  // ---- Chart geometry (needs ≥2 points) ----
+  const hasHistory = tempHist.length >= 2;
   const SW = 640, SH = 150;
   const PAD_L = 8, PAD_R = 44, PAD_T = 26, PAD_B = 22;
   const innerW = SW - PAD_L - PAD_R;
@@ -4129,7 +4130,7 @@ export function RoomClimateCard({ index = 0, compact }) {
   const hLo = hMin - hRange * 0.18;
   const hHi = hMax + hRange * 0.18;
 
-  const xAt = (i) => PAD_L + (i / (tempHist.length - 1)) * innerW;
+  const xAt = (i) => PAD_L + (i / Math.max(1, tempHist.length - 1)) * innerW;
   const yTemp = (v) => PAD_T + (1 - (v - tLo) / (tHi - tLo)) * innerH;
   const yHum  = (v) => PAD_T + (1 - (v - hLo) / (hHi - hLo)) * innerH;
 
@@ -4138,7 +4139,7 @@ export function RoomClimateCard({ index = 0, compact }) {
   const tempLine = smoothPath(tempPts);
   const humLine  = smoothPath(humPts);
   const baseY = PAD_T + innerH;
-  const tempArea = `${tempLine} L ${tempPts[tempPts.length - 1].x.toFixed(1)} ${baseY} L ${tempPts[0].x.toFixed(1)} ${baseY} Z`;
+  const tempArea = hasHistory ? `${tempLine} L ${tempPts[tempPts.length - 1].x.toFixed(1)} ${baseY} L ${tempPts[0].x.toFixed(1)} ${baseY} Z` : "";
 
   // Min/max points
   const maxIdx = tempHist.indexOf(tMax);
@@ -4229,7 +4230,11 @@ export function RoomClimateCard({ index = 0, compact }) {
             <span className="li"><span className="sw hum" />Humidity</span>
           </span>
         </div>
-        <div className="chart-canvas">
+        {!hasHistory ? (
+          <div className="chart-canvas" style={{ display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.5 }}>
+            Loading history…
+          </div>
+        ) : <div className="chart-canvas">
           <svg viewBox={`0 0 ${SW} ${SH}`} preserveAspectRatio="none" className="chart-svg">
             <defs>
               <linearGradient id="rc-temp-grad" x1="0" y1="0" x2="0" y2="1">
@@ -4306,7 +4311,7 @@ export function RoomClimateCard({ index = 0, compact }) {
             <span className="val">{temp.toFixed(1)}°</span>
             <span className="lbl">{maxIdx === nowIdx ? "NOW · HIGH" : "NOW"}</span>
           </div>
-        </div>
+        </div>}
         <div className="chart-axis">
           <span>24h ago</span>
           <span>18h</span>
@@ -4328,6 +4333,7 @@ export function RoomClimateStrip({ index = 0 }) {
   const { entity: liveHum, status: humStatus } = useEntityStatus("sensor.h5075_4fb6_humidity");
   const { entity: liveAirQ, status: airQStatus } = useEntityStatus("sensor.core_300s_series_air_quality");
   const livePm = useEntity("sensor.core_300s_series_pm2_5");
+  const { data: statsData } = useStatistics(CLIMATE_STAT_IDS, 24);
   const combined = combineStatuses(tempStatus, humStatus, airQStatus);
 
   if (combined !== "ready") {
@@ -4343,7 +4349,8 @@ export function RoomClimateStrip({ index = 0 }) {
   const airQ = liveAirQ?.state ?? "—";
   const pm = Number(livePm?.state ?? 0);
 
-  const tempHist = [...MOCK_TEMP_HIST.slice(0, 23), temp];
+  const rawTemp = statsData?.["sensor.h5075_4fb6_temperature"] || [];
+  const tempHist = rawTemp.length > 0 ? [...rawTemp.slice(-23), temp] : [temp];
 
   // Trend over last 3h
   const prev = tempHist[tempHist.length - 4];
@@ -4365,11 +4372,12 @@ export function RoomClimateStrip({ index = 0 }) {
   const humOffset = C * (1 - humidity / 100);
 
   // Sparkline
+  const hasHistory = tempHist.length >= 2;
   const SW = 260, SH = 44, PAD = 3;
   const tMin = Math.min(...tempHist);
   const tMax = Math.max(...tempHist);
   const tRange = Math.max(0.5, tMax - tMin);
-  const xAt = (i) => PAD + (i / (tempHist.length - 1)) * (SW - PAD * 2);
+  const xAt = (i) => PAD + (i / Math.max(1, tempHist.length - 1)) * (SW - PAD * 2);
   const yAt = (v) => PAD + (1 - (v - tMin) / tRange) * (SH - PAD * 2);
   const linePath = tempHist.map((v, i) => `${i === 0 ? "M" : "L"} ${xAt(i).toFixed(1)} ${yAt(v).toFixed(1)}`).join(" ");
   const areaPath = `${linePath} L ${xAt(tempHist.length - 1).toFixed(1)} ${SH - PAD} L ${xAt(0).toFixed(1)} ${SH - PAD} Z`;
