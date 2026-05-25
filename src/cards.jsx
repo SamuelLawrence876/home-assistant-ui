@@ -1679,35 +1679,115 @@ export function LightCard({ index = 0, entityId }) {
 
 /* ----------------------------------------------------------------
    Desk strip — Govee H6159 (cloud API via rest_command)
-   No HA light entity; state is local + optimistic.
+   State synced from sensor.desk_strip_state (REST polling).
    ----------------------------------------------------------------*/
+function parseGoveeProps(attrs) {
+  const props = attrs?.properties;
+  if (!Array.isArray(props)) return {};
+  const out = {};
+  for (const p of props) {
+    if (p.powerState !== undefined) out.power = p.powerState;
+    if (p.brightness !== undefined) out.brightness = p.brightness;
+    if (p.color !== undefined) out.color = [p.color.r, p.color.g, p.color.b];
+  }
+  return out;
+}
+
+const GOVEE_GAP = 2000;
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const GOVEE_PRESETS = [
+  { id: "warm", label: "Warm 2200K", rgb: [255, 170, 110], kelvin: 2200 },
+  { id: "amber", label: "Amber 2700K", rgb: [255, 198, 130], kelvin: 2700 },
+  { id: "neutral", label: "Neutral 4000K", rgb: [255, 235, 200], kelvin: 4000 },
+  { id: "cool", label: "Cool 5500K", rgb: [220, 235, 255], kelvin: 5500 },
+  { id: "red", label: "Red", rgb: [255, 0, 0] },
+  { id: "orange", label: "Orange", rgb: [255, 100, 0] },
+  { id: "green", label: "Forest", rgb: [0, 255, 50] },
+  { id: "blue", label: "Blue", rgb: [0, 50, 255] },
+  { id: "purple", label: "Purple", rgb: [150, 0, 255] },
+  { id: "pink", label: "Pink", rgb: [255, 0, 150] },
+];
+
 export function DeskStripCard({ index = 0 }) {
+  const live = useEntity("sensor.desk_strip_state");
+  const hw = useMemo(() => parseGoveeProps(live?.attributes), [live?.attributes?.properties]);
+
   const [on, setOn] = useState(false);
   const [bright, setB] = useState(100);
   const [rgb, setRgb] = useState([255, 198, 130]);
   const [kelvin, setKelvin] = useState(2700);
+  const userActedAt = useRef(0);
+  const lastCmdTime = useRef(0);
+  const cmdQueue = useRef(Promise.resolve());
+  const cmdEpoch = useRef(0);
+  const verifyTimer = useRef(null);
+
+  useEffect(() => {
+    if (Date.now() - userActedAt.current < 5000) return;
+    if (live) setOn(live.state === "on");
+    if (hw.brightness != null) setB(hw.brightness);
+    if (hw.color) setRgb(hw.color);
+  }, [live?.state, hw.brightness, hw.color?.join(",")]);
+
+  function scheduleVerify() {
+    clearTimeout(verifyTimer.current);
+    verifyTimer.current = setTimeout(() => {
+      callService("homeassistant", "update_entity", { entity_id: "sensor.desk_strip_state" }).catch(() => {});
+    }, 3000);
+  }
+
+  function govee(cmd, data) {
+    userActedAt.current = Date.now();
+    const epoch = ++cmdEpoch.current;
+    const p = cmdQueue.current.then(async () => {
+      if (cmdEpoch.current !== epoch) return;
+      const wait = GOVEE_GAP - (Date.now() - lastCmdTime.current);
+      if (wait > 0) await delay(wait);
+      if (cmdEpoch.current !== epoch) return;
+      lastCmdTime.current = Date.now();
+      await callService("rest_command", `govee_desk_strip_${cmd}`, data);
+      scheduleVerify();
+    });
+    cmdQueue.current = p.catch(() => {});
+    return p;
+  }
 
   function toggle() {
     const next = !on;
     setOn(next);
-    callService("rest_command", "govee_desk_strip_turn", { value: next ? "on" : "off" }).catch(() => setOn(on));
+    cmdEpoch.current++;
+    const epoch = cmdEpoch.current;
+    const p = cmdQueue.current.then(async () => {
+      if (cmdEpoch.current !== epoch) return;
+      const wait = GOVEE_GAP - (Date.now() - lastCmdTime.current);
+      if (wait > 0) await delay(wait);
+      lastCmdTime.current = Date.now();
+      await callService("rest_command", "govee_desk_strip_turn", { value: next ? "on" : "off" });
+      scheduleVerify();
+    });
+    cmdQueue.current = p.catch(() => {});
+    p.catch(() => setOn(!next));
   }
 
   function commitBrightness(v) {
     setB(v);
     if (!on) return;
-    callService("rest_command", "govee_desk_strip_brightness", { value: v }).catch(() => {});
+    govee("brightness", { value: v }).catch(() => {});
   }
 
   function pickColor(p) {
-    if (!on) setOn(true);
+    const wasOff = !on;
+    if (wasOff) setOn(true);
     if (p.kelvin) {
       setKelvin(p.kelvin);
       setRgb(kelvinToRgb(p.kelvin));
-      callService("rest_command", "govee_desk_strip_color_temp", { value: p.kelvin }).catch(() => {});
+      const send = () => govee("color_temp", { value: p.kelvin });
+      wasOff ? govee("turn", { value: "on" }).then(send).catch(() => {}) : send().catch(() => {});
     } else {
       setRgb(p.rgb);
-      callService("rest_command", "govee_desk_strip_color", { r: p.rgb[0], g: p.rgb[1], b: p.rgb[2] }).catch(() => {});
+      const send = () => govee("color", { r: p.rgb[0], g: p.rgb[1], b: p.rgb[2] });
+      wasOff ? govee("turn", { value: "on" }).then(send).catch(() => {}) : send().catch(() => {});
     }
   }
 
@@ -1715,7 +1795,7 @@ export function DeskStripCard({ index = 0 }) {
     setKelvin(v);
     setRgb(kelvinToRgb(v));
     if (!on) return;
-    callService("rest_command", "govee_desk_strip_color_temp", { value: v }).catch(() => {});
+    govee("color_temp", { value: v }).catch(() => {});
   }
 
   const glow = on
@@ -1812,7 +1892,7 @@ export function DeskStripCard({ index = 0 }) {
       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {LIGHT_PRESETS.map((p) => {
+          {GOVEE_PRESETS.map((p) => {
             const selected = rgb[0] === p.rgb[0] && rgb[1] === p.rgb[1] && rgb[2] === p.rgb[2];
             return (
               <button
