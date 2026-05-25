@@ -40,9 +40,12 @@ export function onServiceError(cb) { errorListeners.add(cb); return () => errorL
 
 export const callService = async (domain, service, data = {}, target = undefined) => {
   try {
-    return await req(`/api/services/${domain}/${service}`, {
-      method: "POST",
-      body: JSON.stringify(target ? { ...data, ...target } : data),
+    const serviceData = target ? { ...data, ...target } : data;
+    return await sendWsMessage({
+      type: "call_service",
+      domain,
+      service,
+      service_data: serviceData,
     });
   } catch (e) {
     errorListeners.forEach((cb) => cb({ domain, service, data, error: e }));
@@ -58,21 +61,27 @@ export const imageUrl = (entityId, ts) => {
 
 /* Get forecasts via the modern service (HA changed this in 2024 — legacy `forecast` attribute is gone). */
 export async function getForecast(entityId, type = "daily") {
-  const res = await req(`/api/services/weather/get_forecasts?return_response`, {
-    method: "POST",
-    body: JSON.stringify({ entity_id: entityId, type }),
+  const res = await sendWsMessage({
+    type: "call_service",
+    domain: "weather",
+    service: "get_forecasts",
+    service_data: { entity_id: entityId, type },
+    return_response: true,
   });
-  return res?.service_response?.[entityId]?.forecast || [];
+  return res?.response?.[entityId]?.forecast || [];
 }
 
 export async function getTodoItems(entityId, status) {
   const data = { entity_id: entityId };
   if (status) data.status = status;
-  const res = await req(`/api/services/todo/get_items?return_response`, {
-    method: "POST",
-    body: JSON.stringify(data),
+  const res = await sendWsMessage({
+    type: "call_service",
+    domain: "todo",
+    service: "get_items",
+    service_data: data,
+    return_response: true,
   });
-  return res?.service_response?.[entityId]?.items || [];
+  return res?.response?.[entityId]?.items || [];
 }
 
 export async function browseMedia(entityId, mediaContentType, mediaContentId) {
