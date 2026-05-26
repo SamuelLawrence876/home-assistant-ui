@@ -1202,6 +1202,605 @@ body.viewport-phone .health-row .pill { display: none; }
 .vacuum-stats .v.good { color: var(--good); }
 
 /* ============================================================
+   Workshop tab — printer & vacuum (v2 rebuild)
+   ============================================================ */
+
+.ws-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px 5px 9px;
+  border-radius: 999px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.ws-status-pill .dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--good);
+}
+.ws-status-pill.live .dot {
+  background: var(--bad);
+  box-shadow: 0 0 0 0 color-mix(in oklch, var(--bad), transparent 40%);
+  animation: ws-pulse 1.8s ease-out infinite;
+}
+@keyframes ws-pulse {
+  0%   { box-shadow: 0 0 0 0   color-mix(in oklch, currentColor, transparent 50%); }
+  70%  { box-shadow: 0 0 0 8px color-mix(in oklch, currentColor, transparent 100%); }
+  100% { box-shadow: 0 0 0 0   color-mix(in oklch, currentColor, transparent 100%); }
+}
+
+/* ---------- Printer card ---------- */
+.ws-printer { padding: 22px 24px; container-type: inline-size; }
+
+.ws-printer-grid {
+  display: grid;
+  grid-template-columns: 244px 1fr;
+  gap: 22px;
+  align-items: stretch;
+}
+@container (max-width: 640px) {
+  .ws-printer-grid { grid-template-columns: 1fr; }
+  .ws-printer-tile { aspect-ratio: 16 / 11; max-height: 260px; }
+  .ws-therm-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .ws-ams-trays { grid-template-columns: repeat(2, 1fr) !important; }
+}
+
+.ws-printer-tile {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,0.18), transparent 60%),
+    linear-gradient(180deg, #1d1410 0%, #2a1f17 60%, #120a07 100%);
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    0 12px 30px rgba(40, 22, 12, 0.32);
+}
+.ws-printer-tile::before {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 18px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 18px);
+  pointer-events: none;
+}
+.ws-printer-tile .pp-svg {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+}
+.ws-tile-overlay {
+  position: absolute;
+  left: 10px; right: 10px; top: 10px;
+  display: flex; justify-content: space-between; align-items: center;
+  pointer-events: none;
+}
+.ws-tile-live {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: rgba(255,255,255,0.85);
+  background: rgba(0,0,0,0.5);
+  padding: 4px 8px;
+  border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.ws-tile-live .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #ff6644;
+  animation: blink 1.4s ease-in-out infinite;
+}
+.ws-tile-layer {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: rgba(255,255,255,0.78);
+  background: rgba(0,0,0,0.42);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.ws-tile-layer b { color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.ws-tile-toggles {
+  position: absolute;
+  left: 10px; right: 10px; bottom: 10px;
+  display: flex; gap: 6px;
+}
+.ws-tog {
+  flex: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px;
+  font-family: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.78);
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.ws-tog:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.ws-tog.on {
+  background: rgba(255,255,255,0.92);
+  border-color: rgba(255,255,255,0.92);
+  color: #1a1410;
+}
+
+.ws-printer-info {
+  display: flex; flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.ws-file .ws-file-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-file-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  margin-top: 3px;
+}
+.ws-file-sub b { color: var(--ink-2); font-weight: 600; }
+
+.ws-progress-block { display: flex; flex-direction: column; gap: 8px; }
+.ws-progress-readout {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px;
+}
+.ws-progress-readout .big {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-weight: 300;
+  font-size: 56px;
+  letter-spacing: -0.03em;
+  line-height: 0.9;
+  font-feature-settings: "tnum";
+  color: var(--ink);
+}
+.ws-progress-readout .big .u {
+  font-family: var(--font-body);
+  font-style: normal;
+  font-size: 0.34em;
+  color: var(--ink-3);
+  margin-left: 2px;
+}
+.ws-progress-readout .rem {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  font-feature-settings: "tnum";
+}
+.ws-progress-readout .rem .muted { color: var(--ink-3); }
+
+.ws-progress-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in oklch, var(--ink), transparent 92%);
+  overflow: visible;
+}
+.ws-progress-track > span {
+  display: block; height: 100%;
+  width: var(--p, 0%);
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.ws-progress-track > span::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 2.4s linear infinite;
+}
+.ws-progress-track > em {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid var(--glass-bg);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+}
+
+/* Thermals grid */
+.ws-therm-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+.ws-therm {
+  display: flex; flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--glass-bg-2), transparent 30%);
+  border: 1px solid var(--glass-stroke);
+}
+.ws-therm .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ws-therm .v {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-weight: 400;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  margin-top: 2px;
+  color: var(--ink);
+  font-feature-settings: "tnum";
+}
+.ws-therm .v i {
+  font-family: var(--font-body);
+  font-style: normal;
+  font-size: 0.55em;
+  color: var(--ink-3);
+  margin-left: 1px;
+}
+.ws-therm .tgt {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--accent-2);
+  letter-spacing: 0.06em;
+  margin-top: 4px;
+}
+
+/* AMS tray strip */
+.ws-ams {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+.ws-ams-head, .ws-hist-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 8px;
+}
+.ws-ams-head .lbl, .ws-hist-head .lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ws-ams-head .hint, .ws-hist-head .hint {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-4);
+}
+.ws-ams-trays {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.ws-ams-tray {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+.ws-ams-tray:hover { transform: translateY(-1px); }
+.ws-ams-tray.active {
+  border-color: color-mix(in oklch, var(--accent), transparent 40%);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent), transparent 70%);
+}
+.ws-ams-tray .swatch {
+  width: 32px; height: 32px;
+  border-radius: 9px;
+  position: relative;
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.25),
+    inset 0 -6px 10px rgba(0,0,0,0.18),
+    0 1px 2px rgba(0,0,0,0.12);
+}
+.ws-ams-tray .swatch .active-mark {
+  position: absolute; top: -3px; right: -3px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--good);
+  border: 2px solid var(--glass-bg);
+}
+.ws-ams-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ws-ams-meta .slot {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ink-3);
+}
+.ws-ams-meta .mat {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+
+/* ---------- Vacuum card ---------- */
+.ws-vacuum { padding: 22px 24px; display: flex; flex-direction: column; gap: 16px; }
+
+.ws-floorplan {
+  border-radius: 16px;
+  border: 1px solid var(--glass-stroke);
+  background:
+    radial-gradient(110% 80% at 50% 0%, color-mix(in oklch, var(--accent-2), transparent 90%), transparent 60%),
+    color-mix(in oklch, var(--glass-bg-2), transparent 25%);
+  padding: 14px;
+  position: relative;
+  overflow: hidden;
+}
+.ws-floorplan .fp-svg {
+  width: 100%; height: auto; display: block;
+  aspect-ratio: 320 / 220;
+}
+.ws-floorplan img {
+  width: 100%; height: auto; display: block;
+  border-radius: 8px;
+}
+.fp-svg .rm {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  fill: var(--ink-2);
+  font-weight: 600;
+}
+.fp-svg .rm-sub {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  letter-spacing: 0.1em;
+  fill: var(--ink-4);
+}
+.fp-svg .dock-lbl {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  fill: var(--good);
+  font-weight: 600;
+}
+
+.ws-vac-actions {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 24px;
+  align-items: center;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.ws-vac-stat { display: flex; flex-direction: column; gap: 4px; }
+.ws-vac-stat .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ws-vac-stat .v {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-weight: 300;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+  line-height: 0.9;
+  font-feature-settings: "tnum";
+  color: var(--ink);
+}
+.ws-vac-stat .v.small {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.ws-vac-stat .v i {
+  font-family: var(--font-body);
+  font-style: normal;
+  font-size: 0.45em;
+  color: var(--ink-3);
+  margin-left: 1px;
+}
+.ws-vac-actbtns {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.ws-vac-actbtns .btn { padding: 8px 14px; font-size: 12px; }
+.ws-vac-actbtns .btn.ghost { background: transparent; }
+
+/* Mop intensity / mode segmented controls */
+.ws-vac-controls { display: flex; flex-direction: column; gap: 8px; }
+.ws-control-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ws-control-row > .k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  min-width: 110px;
+  flex-shrink: 0;
+}
+.ws-control-row .seg {
+  display: inline-flex;
+  background: color-mix(in oklch, var(--glass-bg-2), transparent 30%);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.ws-control-row .seg button {
+  background: transparent;
+  border: 0;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+}
+.ws-control-row .seg button:hover { color: var(--ink); }
+.ws-control-row .seg button.on {
+  background: var(--ink);
+  color: var(--sky-top, #fff);
+}
+.ws-control-row .seg.compact button { padding: 6px 14px; font-weight: 500; }
+
+.ws-flag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-stroke);
+  background: var(--glass-bg-2);
+}
+.ws-flag.ok { color: var(--good); }
+.ws-flag .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--good);
+}
+.ws-flag .mini-tog {
+  position: relative;
+  width: 22px; height: 12px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--ink), transparent 80%);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.ws-flag .mini-tog::after {
+  content: "";
+  position: absolute;
+  top: 1px; left: 1px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+  transition: left 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ws-flag .mini-tog.on { background: var(--good); }
+.ws-flag .mini-tog.on::after { left: 11px; }
+
+/* Brushes & filter wear bars */
+.ws-wear {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+.ws-wear-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 110px;
+  align-items: center;
+  gap: 14px;
+}
+.ws-wear-row .lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.ws-wear-row .bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in oklch, var(--ink), transparent 92%);
+  overflow: hidden;
+  position: relative;
+}
+.ws-wear-row .bar > span {
+  display: block; height: 100%;
+  width: var(--p, 0%);
+  background: var(--c, var(--good));
+  border-radius: 3px;
+  transition: width 1.4s ease;
+}
+.ws-wear-row .val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+.ws-wear-row .val i {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 9px;
+  color: var(--ink-3);
+  margin-left: 5px;
+  letter-spacing: 0.06em;
+}
+
+/* ---------- Workshop phone overrides ---------- */
+body.viewport-phone .ws-printer-grid {
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+body.viewport-phone .ws-printer-tile {
+  aspect-ratio: 16 / 11;
+  max-height: 240px;
+}
+body.viewport-phone .ws-therm-grid {
+  grid-template-columns: repeat(2, 1fr) !important;
+}
+body.viewport-phone .ws-ams-trays {
+  grid-template-columns: repeat(2, 1fr) !important;
+}
+body.viewport-phone .ws-vac-actions {
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+body.viewport-phone .ws-vac-actbtns {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+body.viewport-phone .ws-control-row > .k { min-width: 100%; }
+body.viewport-phone .ws-wear-row {
+  grid-template-columns: 80px 1fr 90px;
+  gap: 10px;
+}
+
+/* ============================================================
    Air purifier
    ============================================================ */
 .purifier-body {

@@ -579,7 +579,69 @@ export function MediaCard({ index = 0 }) {
 /* ----------------------------------------------------------------
    Printer — Bambu X1C
    ----------------------------------------------------------------*/
-export function PrinterCard({ index = 0, compact }) {
+function PrinterPreview({ progress = 0, color = "#d97757" }) {
+  const H = 220, W = 240;
+  const layers = 36;
+  const printedLayers = Math.floor((progress / 100) * layers);
+  const baseY = H - 24;
+  const profile = (i) => {
+    const t = i / layers;
+    const r = 48 + Math.sin(t * Math.PI * 1.2) * 12 - t * 14;
+    return Math.max(22, r);
+  };
+  const stripes = [];
+  for (let i = 0; i < layers; i++) {
+    const y = baseY - (i + 0.5) * ((H - 60) / layers);
+    const r = profile(i);
+    stripes.push({ y, r, printed: i < printedLayers, i });
+  }
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="pp-svg">
+      <defs>
+        <linearGradient id="pp-plate" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="rgba(255,255,255,0.05)" />
+          <stop offset="50%" stopColor="rgba(255,255,255,0.18)" />
+          <stop offset="100%" stopColor="rgba(255,255,255,0.05)" />
+        </linearGradient>
+        <radialGradient id="pp-floor" cx="0.5" cy="0.5" r="0.5">
+          <stop offset="0%" stopColor="rgba(255,255,255,0.22)" />
+          <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+        </radialGradient>
+      </defs>
+      <ellipse cx={W / 2} cy={baseY + 4} rx="84" ry="14" fill="url(#pp-floor)" />
+      <rect x={W / 2 - 78} y={baseY} width="156" height="6" rx="2" fill="url(#pp-plate)" />
+      <line x1={W / 2 - 78} y1={baseY + 6} x2={W / 2 + 78} y2={baseY + 6} stroke="rgba(255,255,255,0.22)" strokeWidth="0.6" />
+      <g>
+        {stripes.filter(s => s.printed).map((s) => (
+          <ellipse key={s.i} cx={W / 2} cy={s.y} rx={s.r} ry="3.2"
+            fill={color} opacity={0.92 - (s.i / layers) * 0.05} />
+        ))}
+        {printedLayers > 0 && (() => {
+          const top = stripes[printedLayers - 1];
+          return (
+            <>
+              <ellipse cx={W / 2} cy={top.y - 1} rx={top.r} ry="2" fill="rgba(255,255,255,0.35)" />
+              <g>
+                <line x1={W / 2} x2={W / 2} y1={top.y - 36} y2={top.y - 6}
+                  stroke="rgba(255,255,255,0.55)" strokeWidth="1.5" />
+                <polygon points={`${W / 2 - 5},${top.y - 6} ${W / 2 + 5},${top.y - 6} ${W / 2},${top.y + 2}`}
+                  fill="rgba(255,255,255,0.85)" />
+              </g>
+            </>
+          );
+        })()}
+      </g>
+      <g opacity="0.18">
+        {stripes.filter(s => !s.printed).map((s) => (
+          <ellipse key={`g${s.i}`} cx={W / 2} cy={s.y} rx={s.r} ry="2.2"
+            fill="none" stroke="rgba(255,255,255,0.8)" strokeWidth="0.5" strokeDasharray="1 2" />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
+export function PrinterCard({ index = 0 }) {
   const PREFIX = "x1c_00m09d522400385";
   const { entity: liveProg, status } = useEntityStatus(`sensor.${PREFIX}_print_progress`);
   const liveStage = useEntity(`sensor.${PREFIX}_current_stage`);
@@ -658,13 +720,35 @@ export function PrinterCard({ index = 0, compact }) {
   }
   const coverSrc = liveImage ? imageUrl(`image.${PREFIX}_cover_image`, liveImage.last_updated) : null;
 
-  const fmtTime = (iso) => {
+  const fmtIsoTime = (iso) => {
     if (!iso || iso === "unknown") return "—";
     try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; }
   };
 
+  const formatRemaining = (m) => {
+    if (!m && m !== 0) return "—";
+    if (m < 60) return `${Math.round(m)}m`;
+    const h = Math.floor(m / 60), mm = Math.round(m % 60);
+    return mm ? `${h}h ${mm}m` : `${h}h`;
+  };
+
+  const trayColors = ["#d97757", "#4a9eff", "#6ecf6e", "#f5d442"];
+  const activeTrayIdx = amsTrayNames.findIndex(n => n && n === tray);
+
   return (
-    <Card index={index} eyebrow="3D Printer · Bambu X1C" title={printing ? "Printing" : printStatus === "unknown" ? "Idle" : printStatus.charAt(0).toUpperCase() + printStatus.slice(1)} meta={`stage · ${stage}`}>
+    <Card
+      index={index}
+      className="ws-printer"
+      eyebrow="3D Printer · Bambu X1C"
+      title={printing ? "Printing" : printStatus === "unknown" ? "Idle" : printStatus.charAt(0).toUpperCase() + printStatus.slice(1)}
+      meta={`Stage · ${stage}`}
+      headRight={
+        <span className={`ws-status-pill ${printing ? "live" : online ? "ok" : ""}`}>
+          <span className="dot" style={!printing && online ? { background: "var(--good)" } : !online ? { background: "var(--ink-4)" } : undefined} />
+          {printing ? "live" : online ? "online" : "offline"}
+        </span>
+      }
+    >
       <EntityGuard status={status} entityId={`sensor.${PREFIX}_print_progress`}>
       {(hasHmsError || hasPrintError) && (
         <div style={{ color: "var(--bad)", fontSize: 12, fontFamily: "var(--font-mono)", marginBottom: 8, letterSpacing: "0.04em" }}>
@@ -673,138 +757,132 @@ export function PrinterCard({ index = 0, compact }) {
           {hasPrintError && "PRINT ERROR"}
         </div>
       )}
-      <div className="printer-body" style={compact ? { gridTemplateColumns: "120px 1fr", gap: 14 } : null}>
-        <div
-          className="printer-tile"
-          style={{
-            ...(compact ? { width: 120, height: 120 } : null),
-            backgroundImage: coverSrc ? `url(${coverSrc})` : undefined,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
-        >
-          <span className="live">{coverSrc ? "LIVE · cover" : "cover_image"}</span>
-          <span className="file">{fileName}</span>
+      <div className="ws-printer-grid">
+        {/* LEFT: live preview tile */}
+        <div className="ws-printer-tile" style={coverSrc ? {
+          backgroundImage: `url(${coverSrc})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        } : undefined}>
+          {!coverSrc && <PrinterPreview progress={prog} color={activeTrayIdx >= 0 ? trayColors[activeTrayIdx] : "#d97757"} />}
+          <div className="ws-tile-overlay">
+            <span className="ws-tile-live">
+              <span className="dot" /> {coverSrc ? "LIVE · cover" : "cover_image"}
+            </span>
+            <span className="ws-tile-layer">
+              Layer <b>{String(curLayer).padStart(3, "0")}</b> / {totalLayers}
+            </span>
+          </div>
+          <div className="ws-tile-toggles">
+            <button className={`ws-tog ${cameraOn ? "on" : ""}`} onClick={toggleCamera}>
+              <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <rect x="1" y="4" width="10" height="8" rx="1.5" />
+                <path d="M11 7l4-2v6l-4-2z" />
+              </svg>
+              Cam
+            </button>
+            <button className={`ws-tog ${light ? "on" : ""}`} onClick={toggleLight}>
+              <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <path d="M5 7a3 3 0 1 1 6 0c0 1.5-1.2 2.2-1.2 3.5H6.2C6.2 9.2 5 8.5 5 7z" />
+                <path d="M6.5 13h3M7 14.5h2" strokeLinecap="round" />
+              </svg>
+              Light
+            </button>
+          </div>
         </div>
-        <div className="printer-info">
-          <div>
-            <div className="printer-stage" style={{ marginBottom: 8 }}>{fileName}</div>
-            <div className="progress">
-              <span style={{ "--p": `${prog}%` }} />
+
+        {/* RIGHT: file + progress + temps */}
+        <div className="ws-printer-info">
+          <div className="ws-file">
+            <div className="ws-file-name" title={fileName}>{fileName}</div>
+            <div className="ws-file-sub">
+              {startTime && startTime !== "unknown" ? `Started ${fmtIsoTime(startTime)}` : "—"}
+              {endTime && endTime !== "unknown" && <> · ETA <b>{fmtIsoTime(endTime)}</b></>}
+              {doorOpen && <span style={{ color: "var(--accent-2)", marginLeft: 6 }}>· door open</span>}
             </div>
-            <div className="progress-foot">
-              <span>
-                <b>{prog}%</b> complete
-              </span>
-              <span>
-                <b>{remaining} min</b> remaining
-              </span>
+          </div>
+
+          <div className="ws-progress-block">
+            <div className="ws-progress-readout">
+              <span className="big">{prog}<span className="u">%</span></span>
+              <span className="rem">{formatRemaining(remaining)} <span className="muted">remaining</span></span>
+            </div>
+            <div className="ws-progress-track">
+              <span style={{ "--p": `${prog}%` }} />
+              <em style={{ left: `${prog}%` }} />
             </div>
             {printing && (
-              <div className="progress-foot" style={{ marginTop: 4 }}>
-                <span>
-                  Layer <b>{curLayer}</b> / <b>{totalLayers}</b>
-                </span>
-                <span>
-                  Speed · <b>{speedProfile}</b>
-                </span>
+              <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--ink-3)", fontFamily: "var(--font-mono)", marginTop: 4 }}>
+                <span>Speed · <b style={{ color: "var(--ink-2)" }}>{speedProfile}</b></span>
+                {printWeight && printWeight !== "unknown" && <span>Weight · <b style={{ color: "var(--ink-2)" }}>{printWeight}g</b></span>}
               </div>
             )}
           </div>
-          <div className="printer-stats">
-            <div>
-              <div className="k">Nozzle</div>
-              <div className="v">{nozzle}°{nozzleTarget > 0 && <span style={{ color: "var(--ink-3)", fontSize: 11 }}> / {nozzleTarget}°</span>}</div>
+
+          <div className="ws-therm-grid">
+            <div className="ws-therm">
+              <span className="k">Nozzle</span>
+              <span className="v">{nozzle}<i>°</i></span>
+              <span className="tgt">{nozzleTarget > 0 ? `→ ${nozzleTarget}°` : "idle"}</span>
             </div>
-            <div>
-              <div className="k">Bed</div>
-              <div className="v">{bed}°{bedTarget > 0 && <span style={{ color: "var(--ink-3)", fontSize: 11 }}> / {bedTarget}°</span>}</div>
+            <div className="ws-therm">
+              <span className="k">Bed</span>
+              <span className="v">{bed}<i>°</i></span>
+              <span className="tgt">{bedTarget > 0 ? `→ ${bedTarget}°` : "idle"}</span>
             </div>
-            <div>
-              <div className="k">Chamber</div>
-              <div className="v">{chamber}°</div>
+            <div className="ws-therm">
+              <span className="k">Chamber</span>
+              <span className="v">{chamber}<i>°</i></span>
+              <span className="tgt">passive</span>
             </div>
-            <div>
-              <div className="k">AMS RH</div>
-              <div className="v">{ams}%</div>
+            <div className="ws-therm">
+              <span className="k">AMS RH</span>
+              <span className="v">{ams}<i>%</i></span>
+              <span className="tgt">{ams < 50 ? "ok < 50%" : "high"}</span>
             </div>
           </div>
+
           {printing && (
-            <div className="printer-stats" style={{ marginTop: 8 }}>
-              <div>
-                <div className="k">Part fan</div>
-                <div className="v">{coolingFan}%</div>
+            <div className="ws-therm-grid" style={{ paddingTop: 0, borderTop: "none" }}>
+              <div className="ws-therm">
+                <span className="k">Part fan</span>
+                <span className="v">{coolingFan}<i>%</i></span>
               </div>
-              <div>
-                <div className="k">Aux fan</div>
-                <div className="v">{auxFan}%</div>
+              <div className="ws-therm">
+                <span className="k">Aux fan</span>
+                <span className="v">{auxFan}<i>%</i></span>
               </div>
-              <div>
-                <div className="k">Chamber fan</div>
-                <div className="v">{chamberFan}%</div>
+              <div className="ws-therm">
+                <span className="k">Cham. fan</span>
+                <span className="v">{chamberFan}<i>%</i></span>
               </div>
-              {printWeight && printWeight !== "unknown" && (
-                <div>
-                  <div className="k">Weight</div>
-                  <div className="v">{printWeight}g</div>
-                </div>
-              )}
             </div>
           )}
-          {printing && (startTime || endTime) && (
-            <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--font-mono)", marginTop: 8 }}>
-              {startTime && <span>Start · {fmtTime(startTime)}</span>}
-              {endTime && <span>ETA · {fmtTime(endTime)}</span>}
-            </div>
-          )}
-          {amsTrayNames.some(Boolean) && (
-            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-              {amsTrayNames.map((name, i) => (
-                <span
-                  key={i}
-                  style={{
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    padding: "2px 8px",
-                    borderRadius: 4,
-                    background: name ? "color-mix(in oklch, var(--accent), transparent 88%)" : "var(--surface-2)",
-                    color: name ? "var(--ink-2)" : "var(--ink-4)",
-                    border: tray === name ? "1px solid var(--accent)" : "1px solid transparent",
-                  }}
-                >
-                  {i + 1}: {name || "—"}
-                </span>
-              ))}
-            </div>
-          )}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
-              marginTop: 8,
-            }}
-          >
-            <span className="meta">
-              Filament · <b style={{ color: "var(--ink-2)" }}>{tray}</b>
-              {doorOpen && <span style={{ color: "var(--accent-2)", marginLeft: 8 }}>· door open</span>}
-              {!online && <span style={{ color: "var(--bad)", marginLeft: 8 }}>· offline</span>}
-            </span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button className={`chamber-btn ${cameraOn ? "on" : ""}`} onClick={toggleCamera}>
-                <span className="sw" />
-                Cam · {cameraOn ? "on" : "off"}
-              </button>
-              <button className={`chamber-btn ${light ? "on" : ""}`} onClick={toggleLight}>
-                <span className="sw" />
-                Light · {light ? "on" : "off"}
-              </button>
-            </div>
-          </div>
         </div>
       </div>
+
+      {/* AMS tray strip */}
+      {amsTrayNames.some(Boolean) && (
+        <div className="ws-ams">
+          <div className="ws-ams-head">
+            <span className="lbl">AMS · {amsTrayNames.filter(Boolean).length} trays loaded</span>
+            <span className="hint">active · {tray}</span>
+          </div>
+          <div className="ws-ams-trays">
+            {amsTrayNames.map((name, i) => (
+              <button key={i} className={`ws-ams-tray ${name && name === tray ? "active" : ""}`}>
+                <span className="swatch" style={{ background: name ? trayColors[i] : "var(--ink-4)" }}>
+                  {name && name === tray && <span className="active-mark" />}
+                </span>
+                <span className="ws-ams-meta">
+                  <span className="slot">Tray {i + 1}</span>
+                  <span className="mat">{name || "Empty"}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       </EntityGuard>
     </Card>
   );
@@ -813,6 +891,73 @@ export function PrinterCard({ index = 0, compact }) {
 /* ----------------------------------------------------------------
    Vacuum — Roborock S8 "Gregory"
    ----------------------------------------------------------------*/
+function FloorPlan({ cleaning }) {
+  const W = 320, H = 220;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="fp-svg">
+      <defs>
+        <pattern id="fp-grid" width="10" height="10" patternUnits="userSpaceOnUse">
+          <path d="M 10 0 L 0 0 0 10" fill="none" stroke="var(--rule)" strokeWidth="0.4" />
+        </pattern>
+        <linearGradient id="fp-floor" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="color-mix(in oklch, var(--accent-2), transparent 92%)" />
+          <stop offset="100%" stopColor="color-mix(in oklch, var(--accent), transparent 92%)" />
+        </linearGradient>
+      </defs>
+      <rect x="6" y="6" width={W - 12} height={H - 12} rx="10" fill="url(#fp-grid)" />
+      <g className="fp-rooms">
+        <g>
+          <rect x="14" y="86" width="160" height="124" rx="6" fill="url(#fp-floor)" stroke="var(--ink-3)" strokeWidth="0.9" />
+          <text x="22" y="104" className="rm">LIVING</text>
+          <text x="22" y="118" className="rm-sub">24 m²</text>
+        </g>
+        <g>
+          <rect x="180" y="86" width="126" height="78" rx="6" fill="url(#fp-floor)" stroke="var(--ink-3)" strokeWidth="0.9" />
+          <text x="188" y="104" className="rm">KITCHEN</text>
+          <text x="188" y="118" className="rm-sub">11 m²</text>
+        </g>
+        <g>
+          <rect x="180" y="170" width="58" height="40" rx="6" fill="url(#fp-floor)" stroke="var(--ink-3)" strokeWidth="0.9" />
+          <text x="188" y="186" className="rm">BATH</text>
+        </g>
+        <g>
+          <rect x="244" y="170" width="62" height="40" rx="6" fill="url(#fp-floor)" stroke="var(--ink-3)" strokeWidth="0.9" />
+          <text x="252" y="186" className="rm">BED</text>
+        </g>
+        <g>
+          <rect x="14" y="14" width="292" height="60" rx="6" fill="url(#fp-floor)" stroke="var(--ink-3)" strokeWidth="0.9" opacity="0.85" />
+          <text x="22" y="32" className="rm">HALL · OFFICE</text>
+          <text x="22" y="46" className="rm-sub">7 m²</text>
+        </g>
+      </g>
+      <g className="fp-path">
+        <path
+          d="M 34 196 Q 60 170 100 188 T 160 178 Q 168 152 130 140 T 60 130 Q 38 118 60 100 T 130 100 Q 160 96 188 110 T 254 124 Q 290 132 280 152"
+          fill="none"
+          stroke={cleaning ? "var(--accent)" : "var(--ink-3)"}
+          strokeWidth={cleaning ? "1.6" : "1.2"}
+          strokeDasharray={cleaning ? "0" : "2 3"}
+          opacity={cleaning ? 0.85 : 0.45}
+          strokeLinecap="round"
+        />
+      </g>
+      <g className="fp-dock">
+        <rect x="20" y="192" width="20" height="14" rx="3" fill="var(--good)" opacity="0.18" stroke="var(--good)" strokeWidth="0.8" />
+        <circle cx="30" cy="199" r="3" fill="var(--good)" />
+        <text x="46" y="203" className="dock-lbl">DOCK</text>
+      </g>
+      {cleaning && (
+        <g>
+          <circle cx="160" cy="178" r="6" fill="var(--accent)" opacity="0.22">
+            <animate attributeName="r" values="6;10;6" dur="1.6s" repeatCount="indefinite" />
+          </circle>
+          <circle cx="160" cy="178" r="3.5" fill="var(--accent)" stroke="var(--glass-bg)" strokeWidth="1.2" />
+        </g>
+      )}
+    </svg>
+  );
+}
+
 export function VacuumCard({ index = 0 }) {
   const { entity: liveVac, status: vacStatus } = useEntityStatus("vacuum.roborock_s8");
   const liveBat = useEntity("sensor.roborock_s8_battery");
@@ -860,6 +1005,9 @@ export function VacuumCard({ index = 0 }) {
   const mainBrushLeft = toHours(mainBrushRaw);
   const sideBrushLeft = toHours(sideBrushRaw);
   const filterLeft = toHours(filterRaw);
+  const maxBrush = 300;
+  const brushPct = (v) => Math.max(0, Math.min(100, (v / maxBrush) * 100));
+  const brushColor = (v) => brushPct(v) > 50 ? "var(--good)" : brushPct(v) > 20 ? "var(--warn)" : "var(--bad)";
   const vacError = liveError?.state;
   const hasError = vacError && vacError !== "none" && vacError !== "0" && vacError !== "unknown";
   const mapImgSrc = liveMapImage ? imageUrl("image.roborock_s8_map_0", liveMapImage.last_updated) : null;
@@ -906,174 +1054,159 @@ export function VacuumCard({ index = 0 }) {
     callService("switch", dndOn ? "turn_off" : "turn_on", { entity_id: "switch.roborock_s8_do_not_disturb" }).catch(() => {});
   }
 
-  const statusLine = unavailable
-    ? "Unavailable — reauth in HA Settings → Devices → Roborock"
-    : hasError
-    ? `Error · ${vacError}`
-    : cleaning
-    ? `Cleaning${currentRoom && currentRoom !== "unknown" ? ` · ${currentRoom}` : ""}`
-    : paused
-    ? "Paused"
+  const charge = cleaning ? "var(--accent)" : "var(--good)";
+  const chargeLabel = cleaning
+    ? `cleaning · ${battery}%`
     : charging
-    ? `Charging · ${battery}%`
-    : `Docked · ${vStatus}`;
+    ? `charging · ${battery}%`
+    : `${vStatus} · ${battery}%`;
 
   return (
-    <Card index={index} eyebrow="Vacuum · roborock_s8" title="Gregory" meta={unavailable ? "Reauth required" : `Last clean · ${last}`}>
+    <Card
+      index={index}
+      className="ws-vacuum"
+      eyebrow="Vacuum · roborock_s8"
+      title="Gregory"
+      meta={`Last clean · ${last}`}
+      headRight={
+        <span className={`ws-status-pill ${cleaning ? "live" : "ok"}`}>
+          <span className="dot" style={{ background: charge }} /> {chargeLabel}
+        </span>
+      }
+    >
       <EntityGuard status={vacStatus} entityId="vacuum.roborock_s8">
-      <div className="vacuum-state">
-        {statusLine}
-        {waterShortage && <span style={{ color: "var(--bad)", marginLeft: 8, fontSize: 11 }}>· water low</span>}
-      </div>
-      <div className="vacuum-map">
+      {hasError && (
+        <div style={{ color: "var(--bad)", fontSize: 12, fontFamily: "var(--font-mono)", marginBottom: 8, letterSpacing: "0.04em" }}>
+          Error · {vacError}
+        </div>
+      )}
+      {waterShortage && (
+        <div style={{ color: "var(--bad)", fontSize: 12, fontFamily: "var(--font-mono)", marginBottom: 8, letterSpacing: "0.04em" }}>
+          Water shortage
+        </div>
+      )}
+
+      {/* Floor plan / live map */}
+      <div className="ws-floorplan">
         {mapImgSrc && !mapBroken ? (
           <img src={mapImgSrc} alt="Vacuum map" onError={() => setMapBroken(true)} style={{ width: "100%", height: "auto", borderRadius: 8, opacity: 0.9 }} />
         ) : (
-          <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid meet">
-            <defs>
-              <pattern id="gh-grid" width="14" height="14" patternUnits="userSpaceOnUse">
-                <path d="M 14 0 L 0 0 0 14" fill="none" stroke="var(--rule)" strokeWidth="0.5" />
-              </pattern>
-            </defs>
-            <rect width="320" height="180" fill="url(#gh-grid)" />
-            <g fill="color-mix(in oklch, var(--accent), transparent 88%)" stroke="var(--ink-3)" strokeWidth="0.8">
-              <rect x="20" y="22" width="118" height="74" />
-              <rect x="142" y="22" width="80" height="74" />
-              <rect x="226" y="22" width="74" height="100" />
-              <rect x="20" y="100" width="78" height="58" />
-              <rect x="102" y="100" width="120" height="58" />
-            </g>
-            <circle cx="40" cy="135" r="5" fill="var(--good)" />
-            <text x="48" y="139" fontFamily="var(--font-mono)" fontSize="9" fill="var(--ink-3)" letterSpacing="0.1em">
-              DOCK
-            </text>
-          </svg>
+          <FloorPlan cleaning={cleaning} />
         )}
       </div>
+
+      {/* Stats + actions */}
+      <div className="ws-vac-actions">
+        <div className="ws-vac-stat">
+          <span className="k">Battery</span>
+          <span className="v" style={{ color: battery >= 90 ? "var(--good)" : "var(--ink)" }}>
+            {battery}<i>%</i>
+          </span>
+        </div>
+        <div className="ws-vac-stat">
+          <span className="k">Status</span>
+          <span className="v small">{cleaning ? "ACTIVE" : paused ? "PAUSED" : (vStatus || "—").toUpperCase()}</span>
+        </div>
+        <div className="ws-vac-actbtns">
+          {cleaning ? (
+            <>
+              <button className="btn primary" onClick={pause} disabled={unavailable}>Pause</button>
+              <button className="btn" onClick={dock} disabled={unavailable}>Return</button>
+            </>
+          ) : paused ? (
+            <>
+              <button className="btn accent" onClick={start} disabled={unavailable}>Resume</button>
+              <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
+            </>
+          ) : (
+            <>
+              <button className="btn accent" onClick={start} disabled={unavailable}>Start</button>
+              <button className="btn" onClick={fullClean} disabled={unavailable}>Full</button>
+            </>
+          )}
+          <button className="btn ghost" onClick={locate} disabled={unavailable} title="Beep so I can find it">Locate</button>
+        </div>
+      </div>
+
       {(cleaning || paused) && (
-        <div className="vacuum-stats" style={{ marginBottom: 8 }}>
-          <div>
-            <div className="k">Progress</div>
-            <div className="v">{cleanProgress}%</div>
+        <div className="ws-therm-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          <div className="ws-therm">
+            <span className="k">Progress</span>
+            <span className="v">{cleanProgress}<i>%</i></span>
           </div>
-          <div>
-            <div className="k">Area</div>
-            <div className="v">{cleanArea ?? "—"} m²</div>
+          <div className="ws-therm">
+            <span className="k">Area</span>
+            <span className="v">{cleanArea ?? "—"}<i>m²</i></span>
           </div>
-          <div>
-            <div className="k">Time</div>
-            <div className="v">{cleanTime ?? "—"} min</div>
+          <div className="ws-therm">
+            <span className="k">Time</span>
+            <span className="v">{cleanTime ?? "—"}<i>min</i></span>
           </div>
         </div>
       )}
-      <div className="vacuum-stats">
-        <div>
-          <div className="k">Battery</div>
-          <div className={`v ${battery >= 90 ? "good" : ""}`}>{battery}%</div>
-        </div>
-        <div>
-          <div className="k">Status</div>
-          <div
-            className="v"
-            style={{
-              fontSize: 13,
-              color: hasError ? "var(--bad)" : "var(--ink-2)",
-              letterSpacing: "0.06em",
-              textTransform: "uppercase",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            {cleaning ? "ACTIVE" : paused ? "PAUSED" : (vStatus || "—").toUpperCase()}
+
+      {/* Mop intensity + mode + map controls */}
+      <div className="ws-vac-controls">
+        {mopIntensityOptions.length > 0 && (
+          <div className="ws-control-row">
+            <span className="k">Mop intensity</span>
+            <div className="seg">
+              {mopIntensityOptions.map((p) => (
+                <button key={p} className={currentMopIntensity === p ? "on" : ""} onClick={() => pickMopIntensity(p)} disabled={unavailable}>{p}</button>
+              ))}
+            </div>
           </div>
-        </div>
-        <div>
-          <div className="k">Action</div>
-          <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-            {cleaning ? (
-              <>
-                <button className="btn" onClick={pause} disabled={unavailable}>Pause</button>
-                <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
-              </>
-            ) : paused ? (
-              <>
-                <button className="btn accent" onClick={start} disabled={unavailable}>Resume</button>
-                <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
-              </>
-            ) : (
-              <>
-                <button className="btn accent" onClick={start} disabled={unavailable}>Start</button>
-                <button className="btn" onClick={fullClean} disabled={unavailable}>Full</button>
-                <button className="btn" onClick={locate} disabled={unavailable}>Locate</button>
-              </>
-            )}
+        )}
+        {mopModeOptions.length > 0 && (
+          <div className="ws-control-row">
+            <span className="k">Mop mode</span>
+            <div className="seg">
+              {mopModeOptions.map((p) => (
+                <button key={p} className={currentMopMode === p ? "on" : ""} onClick={() => pickMopMode(p)} disabled={unavailable}>{p}</button>
+              ))}
+            </div>
           </div>
+        )}
+        <div className="ws-control-row">
+          {mapOptions.length > 0 && (
+            <>
+              <span className="k">Map</span>
+              <div className="seg compact">
+                {mapOptions.map((opt) => (
+                  <button key={opt} className={currentMap === opt ? "on" : ""} onClick={() => pickMap(opt)} disabled={unavailable}>{opt}</button>
+                ))}
+              </div>
+            </>
+          )}
+          <span className="ws-flag" title="Do not disturb">
+            <span className={`mini-tog ${dndOn ? "on" : ""}`} onClick={toggleDnd} />
+            DND
+          </span>
+          {mopAttached && (
+            <span className="ws-flag ok">
+              <span className="dot" /> Mop attached
+            </span>
+          )}
         </div>
       </div>
-      {mopAttached && mopIntensityOptions.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-          <span className="eyebrow" style={{ fontSize: 9 }}>Mop intensity</span>
-          {mopIntensityOptions.map((opt) => (
-            <button
-              key={opt}
-              className={`preset ${currentMopIntensity === opt ? "on" : ""}`}
-              onClick={() => pickMopIntensity(opt)}
-              disabled={unavailable}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
-      {mopAttached && mopModeOptions.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-          <span className="eyebrow" style={{ fontSize: 9 }}>Mop mode</span>
-          {mopModeOptions.map((opt) => (
-            <button
-              key={opt}
-              className={`preset ${currentMopMode === opt ? "on" : ""}`}
-              onClick={() => pickMopMode(opt)}
-              disabled={unavailable}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
-      {mapOptions.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-          <span className="eyebrow" style={{ fontSize: 9 }}>Map</span>
-          {mapOptions.map((opt) => (
-            <button
-              key={opt}
-              className={`preset ${currentMap === opt ? "on" : ""}`}
-              onClick={() => pickMap(opt)}
-              disabled={unavailable}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
-        <button className={`chamber-btn ${dndOn ? "on" : ""}`} onClick={toggleDnd} disabled={unavailable}>
-          <span className="sw" />
-          DND · {dndOn ? "on" : "off"}
-        </button>
-        {mopAttached && <span className="meta" style={{ fontSize: 11 }}>Mop attached</span>}
-      </div>
-      <div className="vacuum-stats" style={{ marginTop: 12 }}>
-        <div>
-          <div className="k">Main brush</div>
-          <div className="v" style={{ color: mainBrushLeft < 10 ? "var(--bad)" : undefined }}>{mainBrushLeft}h</div>
-        </div>
-        <div>
-          <div className="k">Side brush</div>
-          <div className="v" style={{ color: sideBrushLeft < 10 ? "var(--bad)" : undefined }}>{sideBrushLeft}h</div>
-        </div>
-        <div>
-          <div className="k">Filter</div>
-          <div className="v" style={{ color: filterLeft < 10 ? "var(--bad)" : undefined }}>{filterLeft}h</div>
-        </div>
+
+      {/* Brushes / filter wear */}
+      <div className="ws-wear">
+        {[
+          { lbl: "Main brush", v: mainBrushLeft },
+          { lbl: "Side brush", v: sideBrushLeft },
+          { lbl: "Filter", v: filterLeft },
+        ].map(({ lbl, v }) => (
+          <div className="ws-wear-row" key={lbl}>
+            <span className="lbl">{lbl}</span>
+            <span className="bar">
+              <span style={{ "--p": `${brushPct(v)}%`, "--c": brushColor(v) }} />
+            </span>
+            <span className="val">
+              {v}<i>h left</i>
+            </span>
+          </div>
+        ))}
       </div>
       </EntityGuard>
     </Card>

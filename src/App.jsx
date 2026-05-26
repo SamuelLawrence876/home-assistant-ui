@@ -321,8 +321,8 @@ function ClimateView({ sky }) {
 function WorkshopView() {
   return (
     <div className="grid">
-      <div className="col-7"><PrinterCard index={0} /></div>
-      <div className="col-5"><VacuumCard index={1} /></div>
+      <div className="col-6"><PrinterCard index={0} /></div>
+      <div className="col-6"><VacuumCard index={1} /></div>
     </div>
   );
 }
