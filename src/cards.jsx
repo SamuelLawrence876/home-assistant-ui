@@ -584,22 +584,67 @@ export function PrinterCard({ index = 0, compact }) {
   const liveStage = useEntity(`sensor.${PREFIX}_current_stage`);
   const liveRemaining = useEntity(`sensor.${PREFIX}_remaining_time`);
   const liveNozzle = useEntity(`sensor.${PREFIX}_nozzle_temperature`);
+  const liveNozzleTarget = useEntity(`sensor.${PREFIX}_nozzle_target_temperature`);
   const liveBed = useEntity(`sensor.${PREFIX}_bed_temperature`);
+  const liveBedTarget = useEntity(`sensor.${PREFIX}_bed_target_temperature`);
   const liveChamber = useEntity(`sensor.${PREFIX}_chamber_temperature`);
   const liveAms = useEntity(`sensor.${PREFIX}_ams_1_humidity`);
   const liveTray = useEntity(`sensor.${PREFIX}_active_tray`);
   const liveLight = useEntity(`light.${PREFIX}_chamber_light`);
   const liveImage = useEntity(`image.${PREFIX}_cover_image`);
+  const liveLayer = useEntity(`sensor.${PREFIX}_current_layer`);
+  const liveTotalLayers = useEntity(`sensor.${PREFIX}_total_layer_count`);
+  const liveSpeed = useEntity(`sensor.${PREFIX}_speed_profile`);
+  const liveAuxFan = useEntity(`sensor.${PREFIX}_aux_fan_speed`);
+  const liveChamberFan = useEntity(`sensor.${PREFIX}_chamber_fan_speed`);
+  const liveCoolingFan = useEntity(`sensor.${PREFIX}_cooling_fan_speed`);
+  const liveStart = useEntity(`sensor.${PREFIX}_start_time`);
+  const liveEnd = useEntity(`sensor.${PREFIX}_end_time`);
+  const livePrintStatus = useEntity(`sensor.${PREFIX}_print_status`);
+  const liveDoor = useEntity(`binary_sensor.${PREFIX}_door`);
+  const liveHmsErrors = useEntity(`binary_sensor.${PREFIX}_hms_errors`);
+  const livePrintError = useEntity(`binary_sensor.${PREFIX}_print_error`);
+  const liveCamera = useEntity(`switch.${PREFIX}_camera`);
+  const liveOnline = useEntity(`binary_sensor.${PREFIX}_online`);
+  const liveTray1 = useEntity(`sensor.${PREFIX}_ams_1_tray_1`);
+  const liveTray2 = useEntity(`sensor.${PREFIX}_ams_1_tray_2`);
+  const liveTray3 = useEntity(`sensor.${PREFIX}_ams_1_tray_3`);
+  const liveTray4 = useEntity(`sensor.${PREFIX}_ams_1_tray_4`);
+  const liveWeight = useEntity(`sensor.${PREFIX}_print_weight`);
+  const liveLength = useEntity(`sensor.${PREFIX}_print_length`);
 
   const prog = Number(liveProg?.state ?? 0);
   const stage = liveStage?.state ?? "—";
   const remaining = Number(liveRemaining?.state ?? 0);
   const nozzle = Number(liveNozzle?.state ?? 0);
+  const nozzleTarget = Number(liveNozzleTarget?.state ?? 0);
   const bed = Number(liveBed?.state ?? 0);
+  const bedTarget = Number(liveBedTarget?.state ?? 0);
   const chamber = Number(liveChamber?.state ?? 0);
   const ams = Number(liveAms?.state ?? 0);
   const tray = liveTray?.state ?? "—";
   const fileName = liveProg?.attributes?.file_name || "—";
+  const curLayer = liveLayer?.state ?? "—";
+  const totalLayers = liveTotalLayers?.state ?? "—";
+  const speedProfile = liveSpeed?.state ?? "—";
+  const auxFan = liveAuxFan?.state ?? "—";
+  const chamberFan = liveChamberFan?.state ?? "—";
+  const coolingFan = liveCoolingFan?.state ?? "—";
+  const startTime = liveStart?.state;
+  const endTime = liveEnd?.state;
+  const printStatus = livePrintStatus?.state ?? "unknown";
+  const doorOpen = liveDoor?.state === "on";
+  const hasHmsError = liveHmsErrors?.state === "on";
+  const hasPrintError = livePrintError?.state === "on";
+  const online = liveOnline?.state === "on";
+  const cameraOn = liveCamera?.state === "on";
+  const printWeight = liveWeight?.state;
+  const printLength = liveLength?.state;
+  const printing = printStatus === "running" || (remaining > 0 && stage !== "idle");
+  const amsTrayNames = [liveTray1, liveTray2, liveTray3, liveTray4].map(
+    (t) => t?.state && t.state !== "unknown" && t.state !== "Empty" ? t.state : null
+  );
+
   const [light, setLight] = useState(liveLight?.state === "on");
   useEffect(() => { if (liveLight) setLight(liveLight.state === "on"); }, [liveLight?.state]);
   function toggleLight() {
@@ -607,11 +652,26 @@ export function PrinterCard({ index = 0, compact }) {
     setLight(next);
     callService("light", next ? "turn_on" : "turn_off", { entity_id: `light.${PREFIX}_chamber_light` }).catch(() => setLight(light));
   }
+  function toggleCamera() {
+    callService("switch", cameraOn ? "turn_off" : "turn_on", { entity_id: `switch.${PREFIX}_camera` }).catch(() => {});
+  }
   const coverSrc = liveImage ? imageUrl(`image.${PREFIX}_cover_image`, liveImage.last_updated) : null;
 
+  const fmtTime = (iso) => {
+    if (!iso || iso === "unknown") return "—";
+    try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; }
+  };
+
   return (
-    <Card index={index} eyebrow="3D Printer · Bambu X1C" title="Printing" meta={`stage · ${stage}`}>
+    <Card index={index} eyebrow="3D Printer · Bambu X1C" title={printing ? "Printing" : printStatus === "unknown" ? "Idle" : printStatus.charAt(0).toUpperCase() + printStatus.slice(1)} meta={`stage · ${stage}`}>
       <EntityGuard status={status} entityId={`sensor.${PREFIX}_print_progress`}>
+      {(hasHmsError || hasPrintError) && (
+        <div style={{ color: "var(--bad)", fontSize: 12, fontFamily: "var(--font-mono)", marginBottom: 8, letterSpacing: "0.04em" }}>
+          {hasHmsError && "HMS ERROR"}
+          {hasHmsError && hasPrintError && " · "}
+          {hasPrintError && "PRINT ERROR"}
+        </div>
+      )}
       <div className="printer-body" style={compact ? { gridTemplateColumns: "120px 1fr", gap: 14 } : null}>
         <div
           className="printer-tile"
@@ -639,15 +699,25 @@ export function PrinterCard({ index = 0, compact }) {
                 <b>{remaining} min</b> remaining
               </span>
             </div>
+            {printing && (
+              <div className="progress-foot" style={{ marginTop: 4 }}>
+                <span>
+                  Layer <b>{curLayer}</b> / <b>{totalLayers}</b>
+                </span>
+                <span>
+                  Speed · <b>{speedProfile}</b>
+                </span>
+              </div>
+            )}
           </div>
           <div className="printer-stats">
             <div>
               <div className="k">Nozzle</div>
-              <div className="v">{nozzle}°</div>
+              <div className="v">{nozzle}°{nozzleTarget > 0 && <span style={{ color: "var(--ink-3)", fontSize: 11 }}> / {nozzleTarget}°</span>}</div>
             </div>
             <div>
               <div className="k">Bed</div>
-              <div className="v">{bed}°</div>
+              <div className="v">{bed}°{bedTarget > 0 && <span style={{ color: "var(--ink-3)", fontSize: 11 }}> / {bedTarget}°</span>}</div>
             </div>
             <div>
               <div className="k">Chamber</div>
@@ -658,6 +728,54 @@ export function PrinterCard({ index = 0, compact }) {
               <div className="v">{ams}%</div>
             </div>
           </div>
+          {printing && (
+            <div className="printer-stats" style={{ marginTop: 8 }}>
+              <div>
+                <div className="k">Part fan</div>
+                <div className="v">{coolingFan}%</div>
+              </div>
+              <div>
+                <div className="k">Aux fan</div>
+                <div className="v">{auxFan}%</div>
+              </div>
+              <div>
+                <div className="k">Chamber fan</div>
+                <div className="v">{chamberFan}%</div>
+              </div>
+              {printWeight && printWeight !== "unknown" && (
+                <div>
+                  <div className="k">Weight</div>
+                  <div className="v">{printWeight}g</div>
+                </div>
+              )}
+            </div>
+          )}
+          {printing && (startTime || endTime) && (
+            <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink-3)", fontFamily: "var(--font-mono)", marginTop: 8 }}>
+              {startTime && <span>Start · {fmtTime(startTime)}</span>}
+              {endTime && <span>ETA · {fmtTime(endTime)}</span>}
+            </div>
+          )}
+          {amsTrayNames.some(Boolean) && (
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              {amsTrayNames.map((name, i) => (
+                <span
+                  key={i}
+                  style={{
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                    padding: "2px 8px",
+                    borderRadius: 4,
+                    background: name ? "color-mix(in oklch, var(--accent), transparent 88%)" : "var(--surface-2)",
+                    color: name ? "var(--ink-2)" : "var(--ink-4)",
+                    border: tray === name ? "1px solid var(--accent)" : "1px solid transparent",
+                  }}
+                >
+                  {i + 1}: {name || "—"}
+                </span>
+              ))}
+            </div>
+          )}
           <div
             style={{
               display: "flex",
@@ -665,15 +783,24 @@ export function PrinterCard({ index = 0, compact }) {
               alignItems: "center",
               gap: 8,
               flexWrap: "wrap",
+              marginTop: 8,
             }}
           >
             <span className="meta">
               Filament · <b style={{ color: "var(--ink-2)" }}>{tray}</b>
+              {doorOpen && <span style={{ color: "var(--accent-2)", marginLeft: 8 }}>· door open</span>}
+              {!online && <span style={{ color: "var(--bad)", marginLeft: 8 }}>· offline</span>}
             </span>
-            <button className={`chamber-btn ${light ? "on" : ""}`} onClick={toggleLight}>
-              <span className="sw" />
-              Chamber light · {light ? "on" : "off"}
-            </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className={`chamber-btn ${cameraOn ? "on" : ""}`} onClick={toggleCamera}>
+                <span className="sw" />
+                Cam · {cameraOn ? "on" : "off"}
+              </button>
+              <button className={`chamber-btn ${light ? "on" : ""}`} onClick={toggleLight}>
+                <span className="sw" />
+                Light · {light ? "on" : "off"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -691,20 +818,61 @@ export function VacuumCard({ index = 0 }) {
   const liveStatus = useEntity("sensor.roborock_s8_status");
   const liveLast = useEntity("sensor.roborock_s8_last_clean_end");
   const liveMap = useEntity("select.roborock_s8_selected_map");
+  const liveMopIntensity = useEntity("select.roborock_s8_mop_intensity");
+  const liveMopMode = useEntity("select.roborock_s8_mop_mode");
+  const liveRoom = useEntity("sensor.roborock_s8_current_room");
+  const liveArea = useEntity("sensor.roborock_s8_cleaning_area");
+  const liveTime = useEntity("sensor.roborock_s8_cleaning_time");
+  const liveProgress = useEntity("sensor.roborock_s8_cleaning_progress");
+  const liveDnd = useEntity("switch.roborock_s8_do_not_disturb");
+  const liveCharging = useEntity("binary_sensor.roborock_s8_charging");
+  const liveMopAttached = useEntity("binary_sensor.roborock_s8_mop_attached");
+  const liveWaterShortage = useEntity("binary_sensor.roborock_s8_water_shortage");
+  const liveMainBrush = useEntity("sensor.roborock_s8_main_brush_time_left");
+  const liveSideBrush = useEntity("sensor.roborock_s8_side_brush_time_left");
+  const liveFilter = useEntity("sensor.roborock_s8_filter_time_left");
+  const liveMapImage = useEntity("image.roborock_s8_map_0");
+  const liveError = useEntity("sensor.roborock_s8_vacuum_error");
+
   const battery = Number(liveBat?.state ?? 0);
   const vStatus = liveStatus?.state ?? "—";
   const last = formatRelativeIso(liveLast?.state) || "—";
   const mapOptions = liveMap?.attributes?.options || [];
   const currentMap = liveMap?.state;
+  const mopIntensityOptions = liveMopIntensity?.attributes?.options || [];
+  const currentMopIntensity = liveMopIntensity?.state;
+  const mopModeOptions = liveMopMode?.attributes?.options || [];
+  const currentMopMode = liveMopMode?.state;
+  const currentRoom = liveRoom?.state;
+  const cleanArea = liveArea?.state;
+  const cleanTime = liveTime?.state;
+  const cleanProgress = Number(liveProgress?.state ?? 0);
+  const dndOn = liveDnd?.state === "on";
+  const charging = liveCharging?.state === "on";
+  const mopAttached = liveMopAttached?.state === "on";
+  const waterShortage = liveWaterShortage?.state === "on";
+  const mainBrushLeft = Number(liveMainBrush?.state ?? 0);
+  const sideBrushLeft = Number(liveSideBrush?.state ?? 0);
+  const filterLeft = Number(liveFilter?.state ?? 0);
+  const vacError = liveError?.state;
+  const hasError = vacError && vacError !== "none" && vacError !== "0" && vacError !== "unknown";
+  const mapImgSrc = liveMapImage ? imageUrl("image.roborock_s8_map_0", liveMapImage.last_updated) : null;
+
   const [state, setState] = useState(liveVac?.state ?? "docked");
   const unavailable = liveVac?.state === "unavailable";
   useEffect(() => {
     if (liveVac?.state) setState(liveVac.state);
   }, [liveVac?.state]);
   const cleaning = state === "cleaning";
+  const paused = state === "paused";
+
   function start() {
     setState("cleaning");
     callService("vacuum", "start", { entity_id: "vacuum.roborock_s8" }).catch(() => setState(liveVac?.state || "docked"));
+  }
+  function pause() {
+    setState("paused");
+    callService("vacuum", "pause", { entity_id: "vacuum.roborock_s8" }).catch(() => setState(liveVac?.state || "cleaning"));
   }
   function dock() {
     setState("returning");
@@ -714,51 +882,82 @@ export function VacuumCard({ index = 0 }) {
     setState("cleaning");
     callService("button", "press", { entity_id: "button.roborock_s8_full_cleaning" }).catch(() => setState(liveVac?.state || "docked"));
   }
+  function locate() {
+    callService("vacuum", "locate", { entity_id: "vacuum.roborock_s8" }).catch(() => {});
+  }
   function pickMap(opt) {
     callService("select", "select_option", { entity_id: "select.roborock_s8_selected_map", option: opt }).catch(() => {});
   }
+  function pickMopIntensity(opt) {
+    callService("select", "select_option", { entity_id: "select.roborock_s8_mop_intensity", option: opt }).catch(() => {});
+  }
+  function pickMopMode(opt) {
+    callService("select", "select_option", { entity_id: "select.roborock_s8_mop_mode", option: opt }).catch(() => {});
+  }
+  function toggleDnd() {
+    callService("switch", dndOn ? "turn_off" : "turn_on", { entity_id: "switch.roborock_s8_do_not_disturb" }).catch(() => {});
+  }
+
+  const statusLine = unavailable
+    ? "Unavailable — reauth in HA Settings → Devices → Roborock"
+    : hasError
+    ? `Error · ${vacError}`
+    : cleaning
+    ? `Cleaning${currentRoom && currentRoom !== "unknown" ? ` · ${currentRoom}` : ""}`
+    : paused
+    ? "Paused"
+    : charging
+    ? `Charging · ${battery}%`
+    : `Docked · ${vStatus}`;
 
   return (
     <Card index={index} eyebrow="Vacuum · roborock_s8" title="Gregory" meta={unavailable ? "Reauth required" : `Last clean · ${last}`}>
       <EntityGuard status={vacStatus} entityId="vacuum.roborock_s8">
       <div className="vacuum-state">
-        {unavailable ? "Unavailable — reauth in HA Settings → Devices → Roborock" : (cleaning ? "Cleaning · main floor" : `Docked · ${vStatus}`)}
+        {statusLine}
+        {waterShortage && <span style={{ color: "var(--bad)", marginLeft: 8, fontSize: 11 }}>· water low</span>}
       </div>
       <div className="vacuum-map">
-        <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid meet">
-          <defs>
-            <pattern id="gh-grid" width="14" height="14" patternUnits="userSpaceOnUse">
-              <path d="M 14 0 L 0 0 0 14" fill="none" stroke="var(--rule)" strokeWidth="0.5" />
-            </pattern>
-          </defs>
-          <rect width="320" height="180" fill="url(#gh-grid)" />
-          <g fill="color-mix(in oklch, var(--accent), transparent 88%)" stroke="var(--ink-3)" strokeWidth="0.8">
-            <rect x="20" y="22" width="118" height="74" />
-            <rect x="142" y="22" width="80" height="74" />
-            <rect x="226" y="22" width="74" height="100" />
-            <rect x="20" y="100" width="78" height="58" />
-            <rect x="102" y="100" width="120" height="58" />
-          </g>
-          <path
-            d="M 60 60 Q 90 40 120 60 T 200 60 T 270 70 T 220 130 T 130 130 T 60 130"
-            fill="none"
-            stroke="var(--accent)"
-            strokeWidth="1.5"
-            strokeDasharray={cleaning ? "0" : "3 4"}
-            opacity="0.7"
-          />
-          <circle cx="40" cy="135" r="5" fill="var(--good)" />
-          <text x="48" y="139" fontFamily="var(--font-mono)" fontSize="9" fill="var(--ink-3)" letterSpacing="0.1em">
-            DOCK
-          </text>
-          {cleaning ? (
-            <circle cx="200" cy="100" r="4" fill="var(--accent-2)">
-              <animate attributeName="cx" values="60;120;200;270;220;130;60" dur="6s" repeatCount="indefinite" />
-              <animate attributeName="cy" values="60;60;60;70;130;130;130" dur="6s" repeatCount="indefinite" />
-            </circle>
-          ) : null}
-        </svg>
+        {mapImgSrc ? (
+          <img src={mapImgSrc} alt="Vacuum map" style={{ width: "100%", height: "auto", borderRadius: 8, opacity: 0.9 }} />
+        ) : (
+          <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <pattern id="gh-grid" width="14" height="14" patternUnits="userSpaceOnUse">
+                <path d="M 14 0 L 0 0 0 14" fill="none" stroke="var(--rule)" strokeWidth="0.5" />
+              </pattern>
+            </defs>
+            <rect width="320" height="180" fill="url(#gh-grid)" />
+            <g fill="color-mix(in oklch, var(--accent), transparent 88%)" stroke="var(--ink-3)" strokeWidth="0.8">
+              <rect x="20" y="22" width="118" height="74" />
+              <rect x="142" y="22" width="80" height="74" />
+              <rect x="226" y="22" width="74" height="100" />
+              <rect x="20" y="100" width="78" height="58" />
+              <rect x="102" y="100" width="120" height="58" />
+            </g>
+            <circle cx="40" cy="135" r="5" fill="var(--good)" />
+            <text x="48" y="139" fontFamily="var(--font-mono)" fontSize="9" fill="var(--ink-3)" letterSpacing="0.1em">
+              DOCK
+            </text>
+          </svg>
+        )}
       </div>
+      {(cleaning || paused) && (
+        <div className="vacuum-stats" style={{ marginBottom: 8 }}>
+          <div>
+            <div className="k">Progress</div>
+            <div className="v">{cleanProgress}%</div>
+          </div>
+          <div>
+            <div className="k">Area</div>
+            <div className="v">{cleanArea ?? "—"} m²</div>
+          </div>
+          <div>
+            <div className="k">Time</div>
+            <div className="v">{cleanTime ?? "—"} min</div>
+          </div>
+        </div>
+      )}
       <div className="vacuum-stats">
         <div>
           <div className="k">Battery</div>
@@ -770,29 +969,68 @@ export function VacuumCard({ index = 0 }) {
             className="v"
             style={{
               fontSize: 13,
-              color: "var(--ink-2)",
+              color: hasError ? "var(--bad)" : "var(--ink-2)",
               letterSpacing: "0.06em",
               textTransform: "uppercase",
               fontFamily: "var(--font-mono)",
             }}
           >
-            {cleaning ? "ACTIVE" : (vStatus || "—").toUpperCase()}
+            {cleaning ? "ACTIVE" : paused ? "PAUSED" : (vStatus || "—").toUpperCase()}
           </div>
         </div>
         <div>
           <div className="k">Action</div>
           <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
             {cleaning ? (
-              <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
+              <>
+                <button className="btn" onClick={pause} disabled={unavailable}>Pause</button>
+                <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
+              </>
+            ) : paused ? (
+              <>
+                <button className="btn accent" onClick={start} disabled={unavailable}>Resume</button>
+                <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
+              </>
             ) : (
               <>
                 <button className="btn accent" onClick={start} disabled={unavailable}>Start</button>
                 <button className="btn" onClick={fullClean} disabled={unavailable}>Full</button>
+                <button className="btn" onClick={locate} disabled={unavailable}>Locate</button>
               </>
             )}
           </div>
         </div>
       </div>
+      {mopAttached && mopIntensityOptions.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <span className="eyebrow" style={{ fontSize: 9 }}>Mop intensity</span>
+          {mopIntensityOptions.map((opt) => (
+            <button
+              key={opt}
+              className={`preset ${currentMopIntensity === opt ? "on" : ""}`}
+              onClick={() => pickMopIntensity(opt)}
+              disabled={unavailable}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+      {mopAttached && mopModeOptions.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <span className="eyebrow" style={{ fontSize: 9 }}>Mop mode</span>
+          {mopModeOptions.map((opt) => (
+            <button
+              key={opt}
+              className={`preset ${currentMopMode === opt ? "on" : ""}`}
+              onClick={() => pickMopMode(opt)}
+              disabled={unavailable}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
       {mapOptions.length > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
           <span className="eyebrow" style={{ fontSize: 9 }}>Map</span>
@@ -808,6 +1046,27 @@ export function VacuumCard({ index = 0 }) {
           ))}
         </div>
       )}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+        <button className={`chamber-btn ${dndOn ? "on" : ""}`} onClick={toggleDnd} disabled={unavailable}>
+          <span className="sw" />
+          DND · {dndOn ? "on" : "off"}
+        </button>
+        {mopAttached && <span className="meta" style={{ fontSize: 11 }}>Mop attached</span>}
+      </div>
+      <div className="vacuum-stats" style={{ marginTop: 12 }}>
+        <div>
+          <div className="k">Main brush</div>
+          <div className="v" style={{ color: mainBrushLeft < 10 ? "var(--bad)" : undefined }}>{mainBrushLeft}h</div>
+        </div>
+        <div>
+          <div className="k">Side brush</div>
+          <div className="v" style={{ color: sideBrushLeft < 10 ? "var(--bad)" : undefined }}>{sideBrushLeft}h</div>
+        </div>
+        <div>
+          <div className="k">Filter</div>
+          <div className="v" style={{ color: filterLeft < 10 ? "var(--bad)" : undefined }}>{filterLeft}h</div>
+        </div>
+      </div>
       </EntityGuard>
     </Card>
   );
