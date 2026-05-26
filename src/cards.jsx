@@ -34,10 +34,10 @@ export function useNow() {
 /* ----------------------------------------------------------------
    Reusable Card shell
    ----------------------------------------------------------------*/
-export function Card({ index = 0, className = "", children, eyebrow, title, meta, headRight, style }) {
+export function Card({ index = 0, className = "", children, eyebrow, title, meta, badge, headRight, style }) {
   return (
     <section className={`card ${className}`} style={{ ...style, "--i": index }}>
-      {(eyebrow || title || meta || headRight) && (
+      {(eyebrow || title || meta || headRight || badge) && (
         <div
           style={{
             display: "flex",
@@ -52,6 +52,7 @@ export function Card({ index = 0, className = "", children, eyebrow, title, meta
             {title && <div className="title">{title}</div>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {badge && <span className="card-badge">{badge}</span>}
             {meta && <span className="meta">{meta}</span>}
             {headRight}
           </div>
@@ -1177,8 +1178,11 @@ export function HeaterCard({ index = 0 }) {
   const roomTempEntity = useEntity("sensor.h5075_4fb6_temperature");
   const roomHumidity = useEntity("sensor.h5075_4fb6_humidity");
 
-  const roomTemp = Number(roomTempEntity?.state ?? 0);
-  const humidity = Number(roomHumidity?.state ?? 0);
+  const roomTempRaw = roomTempEntity?.state;
+  const humRaw = roomHumidity?.state;
+  const roomTempValid = roomTempRaw && roomTempRaw !== "unavailable" && roomTempRaw !== "unknown";
+  const roomTemp = roomTempValid ? Number(roomTempRaw) : null;
+  const humidity = humRaw && humRaw !== "unavailable" && humRaw !== "unknown" ? Number(humRaw) : null;
 
   const [target, setTarget] = useState(Number(liveTarget?.state ?? 20));
   const [on, setOn] = useState(false);
@@ -1216,7 +1220,7 @@ export function HeaterCard({ index = 0 }) {
             <button className="heater-step" onClick={() => commitTemp(Math.min(30, target + 1))}>+</button>
           </div>
           <div className="meta" style={{ marginTop: 8 }}>
-            {roomTempEntity ? `Room is ${roomTemp}° · ${humidity}% humidity` : "Room sensor offline"}
+            {roomTemp != null ? `Room is ${roomTemp}° · ${humidity ?? "—"}% humidity` : "Room sensor offline"}
           </div>
           <button
             className={`btn ${on ? "accent" : "primary"}`}
@@ -4327,7 +4331,16 @@ export function RoomClimateCard({ index = 0, compact }) {
   const { data: statsData } = useStatistics(CLIMATE_STAT_IDS, 24);
   const combined = combineStatuses(tempStatus, humStatus);
 
-  if (combined !== "ready") {
+  const tempStats = statsData?.["sensor.h5075_4fb6_temperature"];
+  const humStats = statsData?.["sensor.h5075_4fb6_humidity"];
+  const rawTemp = tempStats?.mean || [];
+  const rawHum = humStats?.mean || [];
+  const isStale = combined === "unavailable";
+  const lastStatTemp = rawTemp.length > 0 ? rawTemp[rawTemp.length - 1] : null;
+  const lastStatHum = rawHum.length > 0 ? rawHum[rawHum.length - 1] : null;
+
+  if (combined === "loading" || combined === "not_found" ||
+      (isStale && lastStatTemp == null)) {
     return (
       <Card index={index} eyebrow="Climate" title="Room">
         <EntityGuard status={combined} entityId="sensor.h5075_4fb6_temperature" />
@@ -4335,16 +4348,11 @@ export function RoomClimateCard({ index = 0, compact }) {
     );
   }
 
-  const temp = Number(liveTemp?.state ?? 0);
-  const humidity = Number(liveHum?.state ?? 0);
+  const temp = isStale ? lastStatTemp : Number(liveTemp?.state ?? 0);
+  const humidity = isStale ? (lastStatHum ?? 0) : Number(liveHum?.state ?? 0);
 
-  // Use real recorder stats when available, append current live reading as the latest point
-  const tempStats = statsData?.["sensor.h5075_4fb6_temperature"];
-  const humStats = statsData?.["sensor.h5075_4fb6_humidity"];
-  const rawTemp = tempStats?.mean || [];
-  const rawHum = humStats?.mean || [];
-  const tempHist = rawTemp.length > 0 ? [...rawTemp.slice(-23), temp] : [temp];
-  const humHist = rawHum.length > 0 ? [...rawHum.slice(-23), humidity] : [humidity];
+  const tempHist = rawTemp.length > 0 ? (isStale ? [...rawTemp.slice(-24)] : [...rawTemp.slice(-23), temp]) : [temp];
+  const humHist = rawHum.length > 0 ? (isStale ? [...rawHum.slice(-24)] : [...rawHum.slice(-23), humidity]) : [humidity];
 
   // True min/max from recorder (not from hourly means) for accurate HIGH/LOW labels
   const trueMinArr = tempStats?.min || [];
@@ -4439,7 +4447,8 @@ export function RoomClimateCard({ index = 0, compact }) {
       index={index}
       eyebrow={`Climate · ${source}`}
       title="Room"
-      meta={`${lastUp} · ${humBand}`}
+      meta={isStale ? "Sensor offline · last known" : `${lastUp} · ${humBand}`}
+      badge={isStale ? "stale" : undefined}
     >
       <div className="roomclim-body">
         {/* LEFT — big temperature readout */}
@@ -4605,24 +4614,31 @@ export function RoomClimateStrip({ index = 0 }) {
   const { entity: liveAirQ, status: airQStatus } = useEntityStatus("sensor.core_300s_series_air_quality");
   const livePm = useEntity("sensor.core_300s_series_pm2_5");
   const { data: statsData } = useStatistics(CLIMATE_STAT_IDS, 24);
-  const combined = combineStatuses(tempStatus, humStatus, airQStatus);
 
-  if (combined !== "ready") {
+  const climateStatus = combineStatuses(tempStatus, humStatus);
+  const climateStale = climateStatus === "unavailable";
+  const tempStats = statsData?.["sensor.h5075_4fb6_temperature"];
+  const humStats = statsData?.["sensor.h5075_4fb6_humidity"];
+  const rawTemp = tempStats?.mean || [];
+  const rawHum = humStats?.mean || [];
+  const lastStatTemp = rawTemp.length > 0 ? rawTemp[rawTemp.length - 1] : null;
+  const lastStatHum = rawHum.length > 0 ? rawHum[rawHum.length - 1] : null;
+
+  if (climateStatus === "loading" || climateStatus === "not_found" ||
+      (climateStale && lastStatTemp == null)) {
     return (
       <Card index={index} className="roomclim-strip" eyebrow="Climate" title="Room">
-        <EntityGuard status={combined} entityId="sensor.h5075_4fb6_temperature" />
+        <EntityGuard status={climateStatus} entityId="sensor.h5075_4fb6_temperature" />
       </Card>
     );
   }
 
-  const temp = Number(liveTemp?.state ?? 0);
-  const humidity = Number(liveHum?.state ?? 0);
+  const temp = climateStale ? lastStatTemp : Number(liveTemp?.state ?? 0);
+  const humidity = climateStale ? (lastStatHum ?? 0) : Number(liveHum?.state ?? 0);
   const airQ = liveAirQ?.state ?? "—";
   const pm = Number(livePm?.state ?? 0);
 
-  const tempStats = statsData?.["sensor.h5075_4fb6_temperature"];
-  const rawTemp = tempStats?.mean || [];
-  const tempHist = rawTemp.length > 0 ? [...rawTemp.slice(-23), temp] : [temp];
+  const tempHist = rawTemp.length > 0 ? (climateStale ? [...rawTemp.slice(-24)] : [...rawTemp.slice(-23), temp]) : [temp];
 
   // Trend over last 3h
   const prev = tempHist[tempHist.length - 4];
@@ -4666,7 +4682,8 @@ export function RoomClimateStrip({ index = 0 }) {
     <Card index={index} className="roomclim-strip"
           eyebrow="Climate · Govee H5075"
           title="Room"
-          meta={`${lastUp} · ${tempBand}`}>
+          meta={climateStale ? "Sensor offline · last known" : `${lastUp} · ${tempBand}`}
+          badge={climateStale ? "stale" : undefined}>
       <div className="rcstrip-body">
         {/* Temp + trend */}
         <div className="rcstrip-temp">
