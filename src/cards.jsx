@@ -851,12 +851,19 @@ export function VacuumCard({ index = 0 }) {
   const charging = liveCharging?.state === "on";
   const mopAttached = liveMopAttached?.state === "on";
   const waterShortage = liveWaterShortage?.state === "on";
-  const mainBrushLeft = Number(liveMainBrush?.state ?? 0);
-  const sideBrushLeft = Number(liveSideBrush?.state ?? 0);
-  const filterLeft = Number(liveFilter?.state ?? 0);
+  const mainBrushRaw = Number(liveMainBrush?.state ?? 0);
+  const sideBrushRaw = Number(liveSideBrush?.state ?? 0);
+  const filterRaw = Number(liveFilter?.state ?? 0);
+  const consumableUnit = liveMainBrush?.attributes?.unit_of_measurement || "";
+  const toHours = (v) => consumableUnit === "s" || v > 10000 ? Math.round(v / 3600) : v;
+  const mainBrushLeft = toHours(mainBrushRaw);
+  const sideBrushLeft = toHours(sideBrushRaw);
+  const filterLeft = toHours(filterRaw);
   const vacError = liveError?.state;
   const hasError = vacError && vacError !== "none" && vacError !== "0" && vacError !== "unknown";
   const mapImgSrc = liveMapImage ? imageUrl("image.roborock_s8_map_0", liveMapImage.last_updated) : null;
+  const [mapBroken, setMapBroken] = useState(false);
+  useEffect(() => { setMapBroken(false); }, [mapImgSrc]);
 
   const [state, setState] = useState(liveVac?.state ?? "docked");
   const unavailable = liveVac?.state === "unavailable";
@@ -918,8 +925,8 @@ export function VacuumCard({ index = 0 }) {
         {waterShortage && <span style={{ color: "var(--bad)", marginLeft: 8, fontSize: 11 }}>· water low</span>}
       </div>
       <div className="vacuum-map">
-        {mapImgSrc ? (
-          <img src={mapImgSrc} alt="Vacuum map" style={{ width: "100%", height: "auto", borderRadius: 8, opacity: 0.9 }} />
+        {mapImgSrc && !mapBroken ? (
+          <img src={mapImgSrc} alt="Vacuum map" onError={() => setMapBroken(true)} style={{ width: "100%", height: "auto", borderRadius: 8, opacity: 0.9 }} />
         ) : (
           <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMid meet">
             <defs>
