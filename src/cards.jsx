@@ -4073,13 +4073,18 @@ export function RoomClimateCard({ index = 0, compact }) {
   const humidity = Number(liveHum?.state ?? 0);
 
   // Use real recorder stats when available, append current live reading as the latest point
-  const rawTemp = statsData?.["sensor.h5075_4fb6_temperature"] || [];
-  const rawHum = statsData?.["sensor.h5075_4fb6_humidity"] || [];
+  const tempStats = statsData?.["sensor.h5075_4fb6_temperature"];
+  const humStats = statsData?.["sensor.h5075_4fb6_humidity"];
+  const rawTemp = tempStats?.mean || [];
+  const rawHum = humStats?.mean || [];
   const tempHist = rawTemp.length > 0 ? [...rawTemp.slice(-23), temp] : [temp];
   const humHist = rawHum.length > 0 ? [...rawHum.slice(-23), humidity] : [humidity];
 
-  const tempMin = Math.min(...tempHist);
-  const tempMax = Math.max(...tempHist);
+  // True min/max from recorder (not from hourly means) for accurate HIGH/LOW labels
+  const trueMinArr = tempStats?.min || [];
+  const trueMaxArr = tempStats?.max || [];
+  const tempMin = trueMinArr.length > 0 ? Math.min(...trueMinArr, temp) : Math.min(...tempHist);
+  const tempMax = trueMaxArr.length > 0 ? Math.max(...trueMaxArr, temp) : Math.max(...tempHist);
 
   // Dew point approximation (Magnus formula)
   const gamma = Math.log(humidity / 100) + (17.67 * temp) / (243.5 + temp);
@@ -4349,7 +4354,8 @@ export function RoomClimateStrip({ index = 0 }) {
   const airQ = liveAirQ?.state ?? "—";
   const pm = Number(livePm?.state ?? 0);
 
-  const rawTemp = statsData?.["sensor.h5075_4fb6_temperature"] || [];
+  const tempStats = statsData?.["sensor.h5075_4fb6_temperature"];
+  const rawTemp = tempStats?.mean || [];
   const tempHist = rawTemp.length > 0 ? [...rawTemp.slice(-23), temp] : [temp];
 
   // Trend over last 3h
@@ -4363,8 +4369,10 @@ export function RoomClimateStrip({ index = 0 }) {
   const allGood = tempBand === "comfortable" && humBand === "ideal";
   const verdict = allGood ? "Comfortable" : tempBand !== "comfortable" ? `Room is ${tempBand}` : `Air is ${humBand}`;
 
-  const tempMin = Math.min(...tempHist);
-  const tempMax = Math.max(...tempHist);
+  const trueMinArr = tempStats?.min || [];
+  const trueMaxArr = tempStats?.max || [];
+  const tempMin = trueMinArr.length > 0 ? Math.min(...trueMinArr, temp) : Math.min(...tempHist);
+  const tempMax = trueMaxArr.length > 0 ? Math.max(...trueMaxArr, temp) : Math.max(...tempHist);
 
   // Mini humidity ring
   const R = 26;

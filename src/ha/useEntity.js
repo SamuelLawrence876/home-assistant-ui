@@ -113,9 +113,8 @@ export function combineStatuses(...statuses) {
 }
 
 /**
- * Fetch hourly mean statistics from HA's recorder for the last N hours.
- * Returns { data: { [statistic_id]: number[] }, loading: boolean }
- * Each array has one value per hour (oldest first), using the "mean" field.
+ * Fetch hourly statistics from HA's recorder for the last N hours.
+ * Returns { data: { [statistic_id]: { mean: number[], min: number[], max: number[] } }, loading: boolean }
  */
 export function useStatistics(statisticIds, hours = 24) {
   const key = statisticIds.join(",");
@@ -132,12 +131,16 @@ export function useStatistics(statisticIds, hours = 24) {
         start_time: startTime,
         statistic_ids: statisticIds,
         period: "hour",
-        types: ["mean"],
+        types: ["mean", "min", "max"],
       });
       const parsed = {};
       for (const id of statisticIds) {
         const points = result[id] || [];
-        parsed[id] = points.map((p) => p.mean ?? null).filter((v) => v !== null);
+        parsed[id] = {
+          mean: points.map((p) => p.mean ?? null).filter((v) => v !== null),
+          min: points.map((p) => p.min ?? null).filter((v) => v !== null),
+          max: points.map((p) => p.max ?? null).filter((v) => v !== null),
+        };
       }
       setData(parsed);
     } catch (e) {
