@@ -2915,6 +2915,38 @@ export function AddonsCard({ index = 0 }) {
 /* ================================================================
    MEDIA tab
    ================================================================*/
+// ListenHereCard — "Play on this device" stream option (glasshouse-v2 stream-options design)
+export function ListenHereCard({ index = 0 }) {
+  const ENTITY = "media_player.spotify_samuel_lawrence";
+  const live = useEntity(ENTITY);
+  const e = live || (GH_DATA.media && GH_DATA.media[ENTITY]) || {};
+  const playing = e.state === "playing";
+
+  const play = () =>
+    callService("media_player", "media_play", { entity_id: ENTITY }).catch(() => {});
+
+  return (
+    <Card index={index} className={`listen-here${playing ? " active" : ""}`}>
+      <button className="listen-here-row" onClick={play}>
+        <span className="lh-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+        </span>
+        <span className="lh-text">
+          <span className="lh-title">Listen here</span>
+          <span className="lh-sub">{playing ? "Playing on this device" : "Play on this device"}</span>
+        </span>
+        <span className="lh-chev">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </span>
+      </button>
+    </Card>
+  );
+}
+
 export function NowPlayingHero({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
   const { entity: m, status: npStatus } = useEntityStatus(ENTITY);

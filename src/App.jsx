@@ -51,6 +51,7 @@ import {
   AddonsCard,
   NextEventCard,
   NowPlayingHero,
+  ListenHereCard,
   SpotifyConnectCard,
   SpotifySearchCard,
   SpotifyPlaylistsCard,
@@ -211,6 +212,7 @@ function OverviewView({ viewport, sky }) {
       <div className="col-4" style={{ display: "grid", gap: 14 }}>
         <PresenceCard index={1} />
         <MediaCard index={2} />
+        <ListenHereCard index={2} />
         <NextEventCard index={3} />
       </div>
 
@@ -291,6 +293,7 @@ function MediaView() {
   return (
     <div className="grid" style={{ alignItems: "start" }}>
       <div className="col-8"><NowPlayingHero index={0} /></div>
+      <div className="col-4"><ListenHereCard index={1} /></div>
       <div className="col-4"><SpotifyConnectCard index={1} /></div>
       <div className="col-4"><SpotifySearchCard index={2} /></div>
       <div className="col-4"><SpotifyPlaylistsCard index={3} /></div>
