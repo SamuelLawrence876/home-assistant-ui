@@ -414,26 +414,22 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
    ----------------------------------------------------------------*/
 export function PresenceCard({ index = 0 }) {
   const { entity: p, status: pStatus } = useEntityStatus("person.samuel_lawrence");
-  const { entity: dev, status: dStatus } = useEntityStatus("device_tracker.sams_iphone");
-  const status = combineStatuses(pStatus, dStatus);
   const home = p?.state === "home";
-  const battery = dev?.attributes?.battery_level;
   return (
     <Card index={index} eyebrow="Presence · person.samuel_lawrence">
-      <EntityGuard status={status} entityId="person.samuel_lawrence">
+      <EntityGuard status={pStatus} entityId="person.samuel_lawrence">
       <div className="presence-row">
         <div className="presence-avatar">S</div>
         <div className="presence-info">
           <div className="nm">{p?.attributes?.friendly_name || "Samuel"}</div>
           <div className="where">
-            {home ? "Home · iPhone in range" : p?.state === "not_home" ? "Away" : p?.state}
+            {home ? "Home" : p?.state === "not_home" ? "Away" : p?.state}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div className="eyebrow" style={{ fontSize: 9 }}>Battery</div>
-          <div style={{ fontFamily: "var(--font-mono)", fontSize: 15, marginTop: 4 }}>
-            {battery != null ? `${battery}%` : "—"}
-          </div>
+          <span className={`presence-badge ${home ? "home" : "away"}`}>
+            {home ? "Home" : "Away"}
+          </span>
         </div>
       </div>
       </EntityGuard>

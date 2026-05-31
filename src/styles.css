@@ -869,11 +869,21 @@ body.viewport-phone .health-row .pill { display: none; }
   margin-top: 4px;
   display: inline-flex; align-items: center; gap: 6px;
 }
-.presence-info .where::before {
-  content: "";
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--good);
+.presence-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.presence-badge.home {
+  background: color-mix(in oklch, var(--good), transparent 82%);
+  color: var(--good);
+}
+.presence-badge.away {
+  background: color-mix(in oklch, var(--ink-3), transparent 82%);
+  color: var(--ink-3);
 }
 
 /* ============================================================

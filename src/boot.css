@@ -1,0 +1,408 @@
+/* ============================================================
+   Glasshouse — post-login boot / startup animation
+   Ported from the Claude Design handoff (login.css boot section).
+
+   After the HA OAuth login returns, this plays a short (~3s) branded
+   startup sequence (Assemble / Trace / Pixel) over a dark void while
+   the WebSocket connects and the first entity snapshot loads. At the
+   finale a white bloom flashes and the void clears away to reveal the
+   dashboard — already rendered underneath — so it feels like coming
+   into light rather than loading.
+
+   Driven entirely by .gh-boot[data-phase] + CSS; BootScreen.jsx only
+   lays out the DOM and steps the phase. --ts = seconds multiplier.
+   ============================================================ */
+
+.gh-boot {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  --ts: 1;
+  pointer-events: auto; /* block the dashboard underneath while booting */
+}
+/* once the dashboard is revealed it's immediately usable */
+.gh-boot[data-phase="enter"] {
+  pointer-events: none;
+}
+
+/* ============================================================
+   The dark void
+   ============================================================ */
+.gh-boot-void {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    120% 110% at 50% 46%,
+    color-mix(in oklch, var(--sky-top, #1b2330), #0a0d14 62%) 0%,
+    #070a10 78%
+  );
+  transition: opacity calc(0.45s * var(--ts)) ease;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .gh-boot-void {
+  opacity: 1;
+}
+/* the void clears at the finale, revealing the dashboard beneath */
+.gh-boot[data-phase="enter"] .gh-boot-void {
+  opacity: 0;
+  transition: opacity calc(0.55s * var(--ts)) ease calc(0.34s * var(--ts));
+}
+/* faint architectural mullion grid in the void */
+.gh-boot-void::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 calc(11.11% - 1px), rgba(255, 255, 255, 0.025) calc(11.11% - 1px) 11.11%),
+    repeating-linear-gradient(0deg, transparent 0 calc(16.66% - 1px), rgba(255, 255, 255, 0.025) calc(16.66% - 1px) 16.66%);
+  opacity: 0;
+  transition: opacity calc(0.8s * var(--ts)) ease;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .gh-boot-void::before {
+  opacity: 1;
+}
+
+.boot-stage {
+  position: relative;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+  transform: scale(0.98);
+  transition: transform calc(0.5s * var(--ts)) cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* the final whoosh through */
+.gh-boot[data-phase="enter"] .boot-stage {
+  transform: scale(1.35);
+  opacity: 0;
+  transition:
+    transform calc(0.55s * var(--ts)) cubic-bezier(0.4, 0, 0.2, 1),
+    opacity calc(0.4s * var(--ts)) ease calc(0.2s * var(--ts));
+}
+
+/* wordmark (shared) */
+.boot-word {
+  display: flex;
+  gap: 0.12em;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+  padding-left: 0.42em;
+}
+.boot-word span {
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity calc(0.4s * var(--ts)) ease,
+    transform calc(0.4s * var(--ts)) cubic-bezier(0.18, 0.7, 0.18, 1);
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-word span {
+  opacity: 1;
+  transform: none;
+  transition-delay: calc(1.45s * var(--ts) + var(--w, 0) * 0.045s * var(--ts));
+}
+.boot-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.34);
+  margin-top: -16px;
+  opacity: 0;
+  transition: opacity calc(0.5s * var(--ts)) ease;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-tag {
+  opacity: 1;
+  transition-delay: calc(1.75s * var(--ts));
+}
+
+/* bloom wash on exit — flashes bright, then CLEARS to reveal the
+   dashboard that has been sitting rendered underneath the whole time */
+.gh-boot-bloom {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 50% 46%,
+    rgba(255, 251, 242, 1) 0%,
+    color-mix(in oklch, var(--sun-tint, #ffd28a), transparent 18%) 32%,
+    transparent 70%
+  );
+  opacity: 0;
+  transform: scale(0.3);
+  transform-origin: 50% 46%;
+}
+.gh-boot[data-phase="enter"] .gh-boot-bloom {
+  animation: gh-boot-flash calc(1s * var(--ts)) ease-out 1 forwards;
+}
+@keyframes gh-boot-flash {
+  0% { opacity: 0; transform: scale(0.4); }
+  34% { opacity: 1; transform: scale(1.7); }
+  100% { opacity: 0; transform: scale(3.4); }
+}
+
+/* the dashboard, rendered behind everything, "comes to light" as the
+   void + bloom clear — gentle settle so it feels already-there */
+body.gh-boot-enter .shell {
+  animation: gh-dash-rise calc(0.95s * var(--gh-ts, 1)) cubic-bezier(0.2, 0.6, 0.2, 1) calc(0.26s * var(--gh-ts, 1)) both;
+}
+@keyframes gh-dash-rise {
+  from { opacity: 0.55; transform: scale(1.025); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ============================================================
+   BOOT · ASSEMBLE — glass tiles tumble in and snap together
+   ============================================================ */
+.boot-block {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 7px;
+}
+.boot-tile {
+  border-radius: 9px;
+  background: linear-gradient(
+    150deg,
+    color-mix(in oklch, var(--accent-2, #ffd28a), transparent 30%),
+    color-mix(in oklch, var(--accent, #6aa0ff), transparent 25%)
+  );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.4) inset,
+    0 8px 22px rgba(0, 0, 0, 0.35);
+  /* scattered start, set per-tile inline (--tx,--ty,--tr,--d) */
+  opacity: 0;
+  transform: translate(var(--tx, 0), var(--ty, 0)) rotate(var(--tr, 0deg)) scale(0.3);
+  transition:
+    transform calc(0.62s * var(--ts)) cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity calc(0.42s * var(--ts)) ease;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-tile {
+  opacity: 1;
+  transform: translate(0, 0) rotate(0deg) scale(1);
+  transition-delay: calc(var(--d, 0) * 0.06s * var(--ts));
+}
+/* glint sweep once the block locks */
+.boot-block .glint {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.boot-block .glint::after {
+  content: "";
+  position: absolute;
+  top: -40%;
+  left: -60%;
+  width: 50%;
+  height: 180%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.85), transparent);
+  transform: translateX(-150%) rotate(10deg);
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-block .glint::after {
+  animation: gh-boot-sheen calc(0.7s * var(--ts)) cubic-bezier(0.3, 0, 0.2, 1) calc(0.95s * var(--ts)) 1 both;
+}
+@keyframes gh-boot-sheen {
+  to { transform: translateX(380%) rotate(10deg); }
+}
+/* home glyph that scales in over the locked block */
+.boot-block .glyph {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  opacity: 0;
+  transform: scale(0.4);
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.4));
+  transition:
+    opacity calc(0.4s * var(--ts)) ease,
+    transform calc(0.5s * var(--ts)) cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.boot-block .glyph svg {
+  width: 92px;
+  height: 92px;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-block .glyph {
+  opacity: 1;
+  transform: scale(1);
+  transition-delay: calc(1.05s * var(--ts));
+}
+/* a tiny settle-bounce of the whole block right as it locks */
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-block {
+  animation: gh-boot-settle calc(0.5s * var(--ts)) cubic-bezier(0.34, 1.56, 0.64, 1) calc(0.86s * var(--ts)) 1 both;
+}
+@keyframes gh-boot-settle {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+/* ============================================================
+   BOOT · TRACE — a light draws the home glyph, then blooms
+   ============================================================ */
+.boot-trace {
+  position: relative;
+  width: 200px;
+  height: 180px;
+  display: grid;
+  place-items: center;
+}
+.boot-trace svg {
+  width: 200px;
+  height: 180px;
+  overflow: visible;
+}
+.boot-trace .draw {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 8px color-mix(in oklch, var(--sun-tint, #ffd28a), transparent 30%));
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-trace .draw {
+  animation: gh-boot-draw calc(1.25s * var(--ts)) cubic-bezier(0.6, 0, 0.25, 1) calc(0.15s * var(--ts)) 1 forwards;
+}
+@keyframes gh-boot-draw {
+  to { stroke-dashoffset: 0; }
+}
+.boot-trace .fillglyph {
+  fill: color-mix(in oklch, var(--accent-2, #ffd28a), transparent 35%);
+  opacity: 0;
+  transition: opacity calc(0.5s * var(--ts)) ease;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-trace .fillglyph {
+  opacity: 1;
+  transition-delay: calc(1.35s * var(--ts));
+}
+.boot-trace .ring {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in oklch, var(--sun-tint, #ffd28a), transparent 10%);
+  transform: translate(-50%, -50%) scale(0.4);
+  opacity: 0;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-trace .ring {
+  animation: gh-boot-ring calc(0.9s * var(--ts)) ease-out calc(1.4s * var(--ts)) 1 both;
+}
+@keyframes gh-boot-ring {
+  0% { opacity: 0.8; transform: translate(-50%, -50%) scale(0.4); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(22); }
+}
+
+/* ============================================================
+   BOOT · PIXEL — an LED dot grid powers on into the mark
+   ============================================================ */
+.boot-pixel {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border-radius: 14px;
+  background: #0c0f15;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 18px 50px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.boot-pixel .px {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  opacity: 0.5;
+}
+/* power-on noise flicker, then resolve */
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-pixel .px {
+  animation: gh-boot-flick calc(0.5s * var(--ts)) steps(2, end) calc(var(--i, 0) * 0.012s * var(--ts)) 2 both;
+}
+@keyframes gh-boot-flick {
+  0% { opacity: 0.06; }
+  50% { opacity: 0.7; }
+  100% { opacity: 0.18; }
+}
+/* lit dots settle to amber, dim dots fade down */
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-pixel .px[data-on="1"] {
+  background: #ffb74d;
+  box-shadow: 0 0 7px rgba(255, 183, 77, 0.9);
+  opacity: 1;
+  transition:
+    background calc(0.3s * var(--ts)) ease,
+    opacity calc(0.3s * var(--ts)) ease,
+    box-shadow calc(0.3s * var(--ts)) ease;
+  transition-delay: calc(0.6s * var(--ts) + var(--i, 0) * 0.004s * var(--ts));
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-pixel .px[data-on="0"] {
+  opacity: 0.1;
+  transition: opacity calc(0.4s * var(--ts)) ease;
+  transition-delay: calc(0.6s * var(--ts));
+}
+/* scanline sweep across the panel */
+.boot-pixel .scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 30%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), transparent);
+  opacity: 0;
+}
+.gh-boot:is([data-phase="reveal"], [data-phase="enter"]) .boot-pixel .scan {
+  animation: gh-boot-scan calc(0.9s * var(--ts)) ease-in-out calc(0.7s * var(--ts)) 1 both;
+}
+@keyframes gh-boot-scan {
+  0% { opacity: 0.7; transform: translateY(-100%); }
+  100% { opacity: 0; transform: translateY(360%); }
+}
+
+/* ============================================================
+   Responsive — phone
+   ============================================================ */
+@media (max-width: 720px) {
+  .boot-block { width: 138px; height: 138px; }
+  .boot-block .glyph svg { width: 76px; height: 76px; }
+  .boot-trace,
+  .boot-trace svg { width: 168px; height: 150px; }
+  .boot-pixel .px { width: 9px; height: 9px; }
+  .boot-word { font-size: 10px; letter-spacing: 0.34em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-tile,
+  .boot-block .glyph,
+  .boot-word span,
+  .gh-boot-bloom,
+  body.gh-boot-enter .shell {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+  .boot-block,
+  .boot-trace .draw,
+  .boot-pixel .px,
+  .boot-pixel .scan,
+  .boot-block .glint::after {
+    animation: none !important;
+  }
+  .boot-trace .draw { stroke-dashoffset: 0 !important; }
+}

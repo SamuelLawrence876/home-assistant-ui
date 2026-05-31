@@ -13,7 +13,9 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { GH_DATA } from "./data.js";
 import { LEANS, skyColors, nowFractionalHour } from "./theme.js";
 import { useConnectionStatus, useEntityCounts } from "./ha/useEntity.js";
+import { onSnapshotReady, hasSnapshot } from "./ha/socket.js";
 import { onServiceError } from "./ha/client.js";
+import BootScreen from "./BootScreen.jsx";
 import {
   Card,
   fmtTime,
@@ -70,7 +72,7 @@ const TABS = [
 ];
 
 const TWEAKS_KEY = "glasshouse-tweaks";
-const TWEAK_DEFAULTS = { lean: "frosted", mode: "auto", clockOverride: false, clock: 18.5 };
+const TWEAK_DEFAULTS = { lean: "frosted", mode: "auto", clockOverride: false, clock: 18.5, bootStyle: "assemble" };
 
 function readURLParam(name, dflt) {
   const v = new URLSearchParams(window.location.search).get(name);
@@ -240,7 +242,7 @@ function LightsView() {
       <div className="col-6"><LightCard index={0} entityId="light.living_room" /></div>
       <div className="col-6"><LightCard index={1} entityId="light.smartbulb_5c_h" /></div>
       <div className="col-6"><DeskStripCard index={2} /></div>
-      <div className="col-6"><PixooCard index={3} /></div>
+      {/* <div className="col-6"><PixooCard index={3} /></div> */}
 
       <div className="col-12">
         <Card index={4} eyebrow="Future · 4 flood lights" title="Flood lights · coming soon" meta="placeholder">
@@ -442,9 +444,23 @@ function useViewport() {
   return v;
 }
 
+/* Dashboard is "ready" once the WS is connected AND the first entity
+   snapshot has landed — at which point the boot animation can hand off. */
+function useDashReady() {
+  const status = useConnectionStatus();
+  const [snap, setSnap] = useState(() => hasSnapshot());
+  useEffect(() => {
+    if (snap) return;
+    return onSnapshotReady(() => setSnap(true));
+  }, [snap]);
+  return status === "ready" && snap;
+}
+
 export default function App() {
   const viewport = useViewport();
   const tabsRef = useRef(null);
+  const dashReady = useDashReady();
+  const [booting, setBooting] = useState(true);
 
   const initial = useMemo(() => {
     const url = {
@@ -458,6 +474,7 @@ export default function App() {
       mode: url.mode || stored.mode || TWEAK_DEFAULTS.mode,
       clockOverride: stored.clockOverride ?? TWEAK_DEFAULTS.clockOverride,
       clock: stored.clock ?? TWEAK_DEFAULTS.clock,
+      bootStyle: stored.bootStyle || TWEAK_DEFAULTS.bootStyle,
       tab: url.tab,
     };
   }, []);
@@ -466,6 +483,7 @@ export default function App() {
   const [modePref, setModePref] = useState(initial.mode); // 'auto' | 'day' | 'night'
   const [clockOverride, setClockOverride] = useState(initial.clockOverride);
   const [clock, setClock] = useState(initial.clock);
+  const [bootStyle, setBootStyle] = useState(initial.bootStyle);
   const [tab, setTab] = useState(initial.tab);
 
   // Clean ?tab= from URL after reading it so refreshes default to overview
@@ -479,8 +497,8 @@ export default function App() {
 
   // Persist tweaks
   useEffect(() => {
-    persistTweaks({ lean, mode: modePref, clockOverride, clock });
-  }, [lean, modePref, clockOverride, clock]);
+    persistTweaks({ lean, mode: modePref, clockOverride, clock, bootStyle });
+  }, [lean, modePref, clockOverride, clock, bootStyle]);
 
   // Live clock (rerenders every 30s); honors clockOverride
   const liveNow = useNow();
@@ -606,9 +624,15 @@ export default function App() {
         onModeChange={setModePref}
         onClockOverrideChange={setClockOverride}
         onClockChange={setClock}
+        bootStyle={bootStyle}
+        onBootStyleChange={setBootStyle}
       />
 
       <ServiceErrorToast />
+
+      {booting && (
+        <BootScreen ready={dashReady} style={bootStyle} onDone={() => setBooting(false)} />
+      )}
     </>
   );
 }

@@ -14,6 +14,12 @@ const LEAN_OPTIONS = [
 
 const MODE_OPTIONS = ["auto", "day", "night"];
 
+const BOOT_OPTIONS = [
+  { value: "assemble", label: "Assemble", tag: "tiles snap together" },
+  { value: "trace", label: "Trace", tag: "drawn glyph" },
+  { value: "pixel", label: "Pixel", tag: "LED grid" },
+];
+
 export function TweaksDrawer({
   lean,
   modePref,
@@ -23,6 +29,8 @@ export function TweaksDrawer({
   onModeChange,
   onClockOverrideChange,
   onClockChange,
+  bootStyle,
+  onBootStyleChange,
 }) {
   const [open, setOpen] = useState(false);
   const haUrl = getHaUrl();
@@ -148,6 +156,28 @@ export function TweaksDrawer({
             </div>
           )}
         </div>
+
+        {onBootStyleChange && (
+          <div className="tweaks-section">
+            <div className="lbl">Welcome animation</div>
+            {BOOT_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                className={`tweaks-row ${bootStyle === opt.value ? "on" : ""}`}
+                onClick={() => onBootStyleChange(opt.value)}
+              >
+                <span className="rad" />
+                <span>
+                  <span className="nm">{opt.label}</span>
+                  <span className="sub">{opt.tag}</span>
+                </span>
+              </button>
+            ))}
+            <span style={{ fontSize: 10, color: "var(--ink-4)", display: "block", marginTop: 8 }}>
+              Plays after sign-in while the dashboard loads. Reload to preview.
+            </span>
+          </div>
+        )}
 
         <div className="tweaks-hint">
           Settings persist locally. Reload the page to keep them.
