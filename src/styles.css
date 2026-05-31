@@ -29,6 +29,13 @@ body {
   background:
     linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bot) 100%);
   transition: background 1.5s ease;
+  /* iOS Safari: isolate so the sun-bloom's mix-blend-mode stays inside this
+     layer instead of smearing against scrolling content, and promote to its
+     own GPU layer so the fixed backdrop is composited (not repainted) on scroll. */
+  isolation: isolate;
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 /* Soft sun bloom that slides along the horizon */
 .sky::before {
@@ -77,6 +84,12 @@ body {
   pointer-events: none;
   opacity: var(--mullion-opacity, 1);
   transition: opacity 0.6s ease;
+  /* iOS Safari: promote the whole hairline grid to its own composited layer.
+     Without this, the fixed 1px lines + box-shadow repaint against the
+     scrolling body and streak ("racing lines") on every scroll. */
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
 }
 .mullions .vert {
   position: absolute;
