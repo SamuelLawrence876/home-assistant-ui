@@ -310,4 +310,12 @@ export const GH_DATA = {
       { name: "Smart bulb + Pixoo placeholder", count: 5, note: "Orphan + first-load notify entities" },
     ],
   },
+  // SamBox360 — game console on a smart plug. Power-only control.
+  gaming: {
+    name: "SamBox360",
+    output: "Living Room TV · 4K·60·HDR · controller",
+    status: "off",                 // "off" | "turning_on" | "on"
+    plug: "switch.sambox360_plug",
+    status_entity: "sensor.sambox360_status",
+  },
 };

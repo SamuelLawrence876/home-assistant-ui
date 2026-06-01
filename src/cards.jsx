@@ -2915,34 +2915,89 @@ export function AddonsCard({ index = 0 }) {
 /* ================================================================
    MEDIA tab
    ================================================================*/
-// ListenHereCard — "Play on this device" stream option (glasshouse-v2 stream-options design)
-export function ListenHereCard({ index = 0 }) {
-  const ENTITY = "media_player.spotify_samuel_lawrence";
-  const live = useEntity(ENTITY);
-  const e = live || (GH_DATA.media && GH_DATA.media[ENTITY]) || {};
-  const playing = e.state === "playing";
+/* ----------------------------------------------------------------
+   SamBox360 — game console on a smart plug. Power-only control.
+   On/off only; "Turning on…" is a transient the UI owns while the plug
+   restores + the box cold-boots. From the glasshouse-v2 stream-options design.
+   ----------------------------------------------------------------*/
+const GAMING_ENTITY = "switch.sambox360_plug";
 
-  const play = () =>
-    callService("media_player", "media_play", { entity_id: ENTITY }).catch(() => {});
+export function SamBoxStrip({ compact = false }) {
+  const g = GH_DATA.gaming;
+  const [status, setStatus] = useState(g.status); // "off" | "turning_on" | "on"
+  const timer = useRef(null);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  function setOn() {
+    setStatus("turning_on");
+    callService("switch", "turn_on", { entity_id: GAMING_ENTITY }).catch(() => {});
+    timer.current = setTimeout(() => setStatus("on"), 2200);
+  }
+  function setOff() {
+    clearTimeout(timer.current);
+    setStatus("off");
+    callService("switch", "turn_off", { entity_id: GAMING_ENTITY }).catch(() => {});
+  }
+
+  const on = status === "on";
+  const turning = status === "turning_on";
+  const statusLabel = on ? "On" : turning ? "Turning on…" : "Off";
+  const statusColor = on ? "var(--good)" : turning ? "var(--accent-2)" : "var(--ink-4)";
 
   return (
-    <Card index={index} className={`listen-here${playing ? " active" : ""}`}>
-      <button className="listen-here-row" onClick={play}>
-        <span className="lh-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3" />
-          </svg>
-        </span>
-        <span className="lh-text">
-          <span className="lh-title">Listen here</span>
-          <span className="lh-sub">{playing ? "Playing on this device" : "Play on this device"}</span>
-        </span>
-        <span className="lh-chev">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </span>
-      </button>
+    <div className={`sambox ${compact ? "sambox-compact" : ""}`}>
+      <div className="sambox-main">
+        <div className="sambox-id">
+          <div className="sambox-badge" data-on={on}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M6 11h4M8 9v4" strokeLinecap="round" />
+              <circle cx="15.5" cy="10.5" r="1.1" fill="currentColor" stroke="none" />
+              <circle cx="17.5" cy="13" r="1.1" fill="currentColor" stroke="none" />
+              <rect x="2.5" y="5.5" width="19" height="13" rx="3.5" />
+            </svg>
+          </div>
+          <div className="sambox-meta">
+            <div className="sambox-name">{g.name}</div>
+            <div className="sambox-out">{g.output}</div>
+          </div>
+        </div>
+
+        <div className="sambox-control">
+          <div className="sambox-status" style={{ color: statusColor }}>
+            <span className="sambox-dot" style={{ background: statusColor }} data-pulse={turning} />
+            {statusLabel}
+          </div>
+          <button
+            className="sambox-switch"
+            role="switch"
+            aria-checked={on}
+            data-on={on}
+            data-turning={turning}
+            onClick={on || turning ? setOff : setOn}
+          >
+            <span className="sambox-knob" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Media tab: SamBox360 control as a full card row.
+export function SamBoxCard({ index = 0 }) {
+  return (
+    <Card index={index} eyebrow="Gaming" title="SamBox360" meta="Smart plug">
+      <SamBoxStrip />
+    </Card>
+  );
+}
+
+// Overview: the compact "Play strip" pinned at the foot.
+export function PlayStrip({ index = 0 }) {
+  return (
+    <Card index={index} className="playstrip-card" eyebrow="Gaming" title="Play" meta="SamBox360">
+      <SamBoxStrip compact />
     </Card>
   );
 }

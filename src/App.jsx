@@ -51,12 +51,13 @@ import {
   AddonsCard,
   NextEventCard,
   NowPlayingHero,
-  ListenHereCard,
   SpotifyConnectCard,
   SpotifySearchCard,
   SpotifyPlaylistsCard,
   SpotifyQueueCard,
   SpotifyRecentCard,
+  SamBoxCard,
+  PlayStrip,
   WeeklyCalendarCard,
   KanbanBoardCard,
 } from "./cards.jsx";
@@ -212,7 +213,6 @@ function OverviewView({ viewport, sky }) {
       <div className="col-4" style={{ display: "grid", gap: 14 }}>
         <PresenceCard index={1} />
         <MediaCard index={2} />
-        <ListenHereCard index={2} />
         <NextEventCard index={3} />
       </div>
 
@@ -230,10 +230,8 @@ function OverviewView({ viewport, sky }) {
         <InProgressCard index={7} />
       </div>
 
-      <div className="col-3"><BambuStatBox index={8} /></div>
-      <div className="col-3"><LevoitStatBox index={9} /></div>
-      <div className="col-3"><VacuumStatBox index={10} /></div>
-      <div className="col-3"><AdGuardStatBox index={11} /></div>
+      {/* Play strip at the foot — replaces the four stat pills (SamBox360 design) */}
+      <div className="col-12"><PlayStrip index={8} /></div>
     </div>
   );
 }
@@ -293,7 +291,7 @@ function MediaView() {
   return (
     <div className="grid" style={{ alignItems: "start" }}>
       <div className="col-8"><NowPlayingHero index={0} /></div>
-      <div className="col-4"><ListenHereCard index={1} /></div>
+      <div className="col-4"><SamBoxCard index={1} /></div>
       <div className="col-4"><SpotifyConnectCard index={1} /></div>
       <div className="col-4"><SpotifySearchCard index={2} /></div>
       <div className="col-4"><SpotifyPlaylistsCard index={3} /></div>
