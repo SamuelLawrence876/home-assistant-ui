@@ -335,20 +335,20 @@ body {
 /* Corner badge — entity missing/unavailable but the card still renders as a placeholder */
 .entity-warning-badge {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 5px;
+  right: 5px;
   z-index: 3;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   display: grid;
   place-items: center;
-  font-size: 12px;
-  line-height: 1;
+  color: var(--bad);
   border-radius: 50%;
-  background: color-mix(in oklch, var(--bad), transparent 86%);
-  border: 1px solid color-mix(in oklch, var(--bad), transparent 60%);
+  background: color-mix(in oklch, var(--bad), transparent 90%);
+  border: 1px solid color-mix(in oklch, var(--bad), transparent 65%);
   cursor: help;
 }
+.entity-warning-badge svg { display: block; }
 .entity-warning-text {
   font-family: var(--font-mono);
   font-size: 10px;

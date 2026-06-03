@@ -91,7 +91,11 @@ export function EntityGuard({ status, entityId, children, style }) {
       <>
         {children}
         <span className="entity-warning-badge" title={label} aria-label={label} role="img">
-          {"⚠️"}
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
         </span>
       </>
     );
@@ -1883,9 +1887,13 @@ function kelvinToRgb(k) {
 }
 
 export function LightCard({ index = 0, entityId }) {
-  const { entity: e, status } = useEntityStatus(entityId);
+  const { entity: live, status } = useEntityStatus(entityId);
+  // Mock fallback so a missing or unavailable entity still renders as a
+  // normal-looking card (the EntityGuard badge flags the problem); an
+  // unavailable entity has its attributes stripped, so prefer the mock there too.
+  const e = status === "ready" ? live : GH_DATA.lights[entityId] || live;
   const placeholder = e?.attributes?.placeholder;
-  const unavailable = status === "unavailable";
+  const inert = placeholder || status !== "ready";
   const initialRgb = e?.attributes?.rgb_color || [255, 198, 130];
   const supportsColorTemp = e?.attributes?.supported_color_modes?.includes("color_temp");
   const minKelvin = e?.attributes?.min_color_temp_kelvin || 2000;
@@ -1904,14 +1912,14 @@ export function LightCard({ index = 0, entityId }) {
   }, [e?.state, e?.attributes?.brightness, e?.attributes?.rgb_color?.join(","), e?.attributes?.color_temp_kelvin]);
 
   function toggle() {
-    if (placeholder || unavailable) return;
+    if (inert) return;
     const next = !on;
     setOn(next);
     callService("light", next ? "turn_on" : "turn_off", { entity_id: entityId }).catch(() => setOn(on));
   }
 
   function pickColor(p) {
-    if (placeholder || unavailable) return;
+    if (inert) return;
     if (!on) setOn(true);
     if (p.kelvin) {
       setKelvin(p.kelvin);
@@ -1925,14 +1933,14 @@ export function LightCard({ index = 0, entityId }) {
 
   function commitBrightness(v) {
     setB(v);
-    if (placeholder || unavailable || !on) return;
+    if (inert || !on) return;
     callService("light", "turn_on", { entity_id: entityId, brightness: v }).catch(() => {});
   }
 
   function commitKelvin(v) {
     setKelvin(v);
     setRgb(kelvinToRgb(v));
-    if (placeholder || unavailable || !on) return;
+    if (inert || !on) return;
     callService("light", "turn_on", { entity_id: entityId, color_temp_kelvin: v }).catch(() => {});
   }
 
@@ -1945,7 +1953,7 @@ export function LightCard({ index = 0, entityId }) {
       index={index}
       eyebrow={`Light · ${entityId}`}
       title={e?.attributes?.friendly_name || entityId.split(".")[1]}
-      meta={placeholder ? "Not yet added" : unavailable ? "Unavailable" : on ? `On · ${Math.round((bright / 255) * 100)}%` : "Off"}
+      meta={placeholder ? "Not yet added" : on ? `On · ${Math.round((bright / 255) * 100)}%` : "Off"}
       headRight={
         placeholder ? (
           <span
@@ -1963,8 +1971,6 @@ export function LightCard({ index = 0, entityId }) {
           >
             future
           </span>
-        ) : unavailable ? (
-          <span className="pill" style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--bad)", padding: "4px 10px", borderRadius: 999, border: "1px solid var(--bad)" }}>offline</span>
         ) : (
           <div className={`toggle ${on ? "on" : ""}`} onClick={toggle} role="switch" aria-checked={on} />
         )
@@ -1978,7 +1984,7 @@ export function LightCard({ index = 0, entityId }) {
           gap: 18,
           alignItems: "center",
           marginTop: 4,
-          opacity: placeholder || unavailable ? 0.5 : 1,
+          opacity: placeholder ? 0.5 : 1,
         }}
       >
         <div
@@ -2011,7 +2017,7 @@ export function LightCard({ index = 0, entityId }) {
             max="255"
             step="1"
             value={bright}
-            disabled={placeholder || unavailable || !on}
+            disabled={placeholder || !on}
             onChange={(ev) => setB(Number(ev.target.value))}
             onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
             onKeyUp={(ev) => commitBrightness(Number(ev.target.value))}
@@ -2021,7 +2027,7 @@ export function LightCard({ index = 0, entityId }) {
         </div>
       </div>
 
-      {!placeholder && !unavailable && supportsColorTemp && (
+      {!placeholder && supportsColorTemp && (
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
             <span className="eyebrow" style={{ fontSize: 9 }}>Color temperature</span>
@@ -2051,7 +2057,7 @@ export function LightCard({ index = 0, entityId }) {
         </div>
       )}
 
-      {!placeholder && !unavailable && (
+      {!placeholder && (
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -2332,10 +2338,13 @@ export function DeskStripCard({ index = 0 }) {
 export function FanCard({ index = 0 }) {
   const { entity: live, status: fanStatus } = useEntityStatus("fan.ceiling");
   const unavailable = fanStatus === "unavailable" || fanStatus === "not_found";
-  const [on, setOn] = useState(live?.state === "on");
-  const [pct, setPct] = useState(live?.attributes?.percentage || 0);
-  const presets = live?.attributes?.preset_modes || ["sleep", "low", "medium", "high"];
-  const [preset, setPreset] = useState(live?.attributes?.preset_mode);
+  // Mock fallback — missing entity still renders as a normal-looking card,
+  // EntityGuard's corner badge flags the problem.
+  const e = live || GH_DATA.fans["fan.ceiling"];
+  const [on, setOn] = useState(e?.state === "on");
+  const [pct, setPct] = useState(e?.attributes?.percentage || 0);
+  const presets = e?.attributes?.preset_modes || ["sleep", "low", "medium", "high"];
+  const [preset, setPreset] = useState(e?.attributes?.preset_mode);
   useEffect(() => {
     if (!live) return;
     setOn(live.state === "on");
@@ -2362,8 +2371,8 @@ export function FanCard({ index = 0 }) {
       index={index}
       eyebrow="Fan · fan.ceiling"
       title="Ceiling fan"
-      meta={unavailable ? "Entity not found" : on ? `${preset || "manual"} · ${pct}%` : "Off"}
-      headRight={<div className={`toggle ${on && !unavailable ? "on" : ""}`} onClick={toggleFan} role="switch" style={unavailable ? { opacity: 0.4 } : undefined} />}
+      meta={on ? `${preset || "manual"} · ${pct}%` : "Off"}
+      headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={toggleFan} role="switch" />}
     >
       <EntityGuard status={fanStatus} entityId="fan.ceiling">
       <div style={{ display: "flex", alignItems: "center", gap: 18, marginTop: 4 }}>
@@ -2422,7 +2431,7 @@ export function FanCard({ index = 0 }) {
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Speed</div>
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {presets.map((p) => (
-              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => pick(p)} disabled={unavailable}>
+              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => pick(p)}>
                 {p}
               </button>
             ))}
