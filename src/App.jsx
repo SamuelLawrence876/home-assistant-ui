@@ -242,6 +242,7 @@ function LightsView() {
       <div className="col-6"><LightCard index={0} entityId="light.living_room" /></div>
       <div className="col-6"><LightCard index={1} entityId="light.smartbulb_5c_h" /></div>
       <div className="col-6"><DeskStripCard index={2} /></div>
+      <div className="col-6"><LightCard index={3} entityId="light.bathroom" /></div>
       {/* <div className="col-6"><PixooCard index={3} /></div> */}
 
       <div className="col-12">

@@ -255,6 +255,17 @@ export const GH_DATA = {
         supported_color_modes: ["color_temp", "rgb"],
       },
     },
+    "light.bathroom": {
+      state: "on",
+      attributes: {
+        friendly_name: "Bathroom",
+        brightness: 200,
+        color_mode: "color_temp",
+        color_temp_kelvin: 4000,
+        rgb_color: [255, 235, 200],
+        supported_color_modes: ["color_temp", "rgb"],
+      },
+    },
     "light.desk_strip": {
       state: "on",
       attributes: {
