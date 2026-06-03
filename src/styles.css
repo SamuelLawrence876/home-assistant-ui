@@ -332,6 +332,23 @@ body {
   opacity: 0.55;
 }
 .entity-warning-icon { font-size: 22px; line-height: 1; }
+/* Corner badge — entity missing/unavailable but the card still renders as a placeholder */
+.entity-warning-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 50%;
+  background: color-mix(in oklch, var(--bad), transparent 86%);
+  border: 1px solid color-mix(in oklch, var(--bad), transparent 60%);
+  cursor: help;
+}
 .entity-warning-text {
   font-family: var(--font-mono);
   font-size: 10px;

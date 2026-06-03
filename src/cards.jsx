@@ -70,22 +70,30 @@ export function EntityGuard({ status, entityId, children, style }) {
   if (status === "loading") {
     return <div className="entity-loading" style={style} />;
   }
-  if (status === "not_found") {
+  if (status === "not_found" || status === "unavailable") {
+    const label =
+      status === "not_found"
+        ? entityId ? `${entityId} not found` : "Entity not found"
+        : entityId ? `${entityId} unavailable` : "Unavailable";
+    // No children to show as a placeholder — fall back to the centered warning block.
+    if (!children) {
+      return (
+        <div className="entity-warning" style={style}>
+          <span className="entity-warning-icon">{"⚠️"}</span>
+          <span className="entity-warning-text">{label}</span>
+        </div>
+      );
+    }
+    // Render the card as-is (mock/fallback values) with a warning badge pinned
+    // to the card's top-right corner. `.card` is position:relative, so the
+    // badge anchors there without disturbing the card layout.
     return (
-      <div className="entity-warning" style={style}>
-        <span className="entity-warning-icon">{"⚠️"}</span>
-        <span className="entity-warning-text">
-          {entityId ? `${entityId} not found` : "Entity not found"}
+      <>
+        {children}
+        <span className="entity-warning-badge" title={label} aria-label={label} role="img">
+          {"⚠️"}
         </span>
-      </div>
-    );
-  }
-  if (status === "unavailable") {
-    return (
-      <div className="entity-warning" style={style}>
-        <span className="entity-warning-icon">{"⚠️"}</span>
-        <span className="entity-warning-text">Unavailable</span>
-      </div>
+      </>
     );
   }
   return children;
