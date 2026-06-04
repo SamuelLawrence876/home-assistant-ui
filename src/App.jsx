@@ -13,7 +13,7 @@
    so each tab's cards ship as their own chunk. */
 
 import { useState, useEffect, useMemo, useRef, lazy, Suspense } from "react";
-import { LEANS, skyColors, TWEAK_DEFAULTS, loadStoredTweaks, persistTweaks, applyTheme } from "./theme.js";
+import { skyColors, TWEAK_DEFAULTS, loadStoredTweaks, persistTweaks, applyTheme } from "./theme.js";
 import { useConnectionStatus, useEntityCounts } from "./ha/useEntity.js";
 import { readURLParam } from "./lib/url.js";
 import { fmtTime } from "./lib/format.js";

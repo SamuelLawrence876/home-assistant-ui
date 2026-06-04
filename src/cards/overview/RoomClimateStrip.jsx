@@ -9,7 +9,7 @@ import { useClimateDerived } from "../../hooks/useClimateDerived.js";
    ----------------------------------------------------------------*/
 export function RoomClimateStrip({ index = 0 }) {
   const {
-    status, pending, stale: climateStale, liveTemp,
+    status, pending, stale: climateStale,
     temp, humidity, tempHist, tempMin, tempMax,
     delta, trendIcon, tempBand, humBand, allGood, verdict, lastUp,
   } = useClimateDerived();
