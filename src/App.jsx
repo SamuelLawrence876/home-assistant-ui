@@ -60,7 +60,7 @@ import {
   PlayStrip,
   WeeklyCalendarCard,
   KanbanBoardCard,
-} from "./cards.jsx";
+} from "./cards/index.js";
 import { TweaksDrawer } from "./TweaksDrawer.jsx";
 
 const TABS = [

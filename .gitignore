@@ -3,3 +3,7 @@ dist
 .vite
 *.local
 .DS_Store
+
+# refactor verification artifacts (REFACTOR_PLAN.md)
+.refactor-*
+dist-*
