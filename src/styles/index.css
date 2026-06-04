@@ -1,0 +1,22 @@
+/* Glasshouse v2 — style manifest.
+   IMPORT ORDER IS THE CONTRACT: these files are slices of the original
+   styles.css in its exact cascade order. Later files win specificity
+   ties; reordering imports can change rendering. */
+
+@import "./base.css";
+@import "./shell.css";
+@import "./card.css";
+@import "./phone.css";
+@import "./overview.css";
+@import "./media.css";
+@import "./workshop.css";
+@import "./climate.css";
+@import "./system.css";
+@import "./roomclimate.css";
+@import "./backup.css";
+@import "./transition.css";
+@import "./schedule.css";
+@import "./tweaks.css";
+@import "./toast.css";
+@import "./system-cards.css";
+@import "./sambox.css";

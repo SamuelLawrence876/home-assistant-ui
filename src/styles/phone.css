@@ -1,0 +1,243 @@
+/* ============================================================
+   Phone overrides
+   ============================================================ */
+body.viewport-phone {
+  font-size: 13px;
+}
+body.viewport-phone .shell {
+  padding: 14px 14px 90px;
+  padding-top: calc(14px + env(safe-area-inset-top, 0px));
+  max-width: none;
+}
+body.viewport-phone .topbar {
+  grid-template-columns: 1fr auto;
+  margin-bottom: 14px;
+  gap: 10px;
+  padding-right: 42px;
+}
+body.viewport-phone .tabs { display: none; } /* phone uses bottom nav */
+body.viewport-phone .brand-mark { width: 40px; height: 40px; }
+body.viewport-phone .brand-text .nm { font-size: 22px; }
+body.viewport-phone .brand-text .sub { font-size: 9px; letter-spacing: 0.08em; }
+body.viewport-phone .chip { padding: 6px 10px; font-size: 9px; letter-spacing: 0.08em; }
+body.viewport-phone .topbar-right .chip:not(:last-child) { display: none; }
+body.viewport-phone .card { padding: 18px 18px; border-radius: 20px; }
+body.viewport-phone .card .title { font-size: 19px; }
+body.viewport-phone .grid {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+body.viewport-phone .col-3,
+body.viewport-phone .col-4,
+body.viewport-phone .col-5,
+body.viewport-phone .col-6,
+body.viewport-phone .col-7,
+body.viewport-phone .col-8,
+body.viewport-phone .col-12 { grid-column: span 2; }
+body.viewport-phone .col-half { grid-column: span 1; }
+
+/* Bottom tab nav on phone — iPadOS-style: icons by default, active expands to a pill with its label */
+.bottom-nav {
+  display: none;
+}
+body.viewport-phone .bottom-nav {
+  display: flex;
+  position: fixed;
+  left: 10px; right: 10px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 10;
+  background: var(--glass-bg-2);
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 26px;
+  padding: 5px;
+  box-shadow: var(--shadow);
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+body.viewport-phone .bottom-nav button {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  color: var(--ink-3);
+  padding: 9px 6px;
+  border-radius: 16px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+  transition: color 0.3s ease, background 0.3s ease, flex 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  white-space: nowrap;
+  overflow: hidden;
+}
+body.viewport-phone .bottom-nav button .ic {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+body.viewport-phone .bottom-nav button .lbl {
+  display: none;
+  max-width: 0;
+  overflow: hidden;
+  transition: max-width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+body.viewport-phone .bottom-nav button.on {
+  flex: 0 0 auto;
+  background: var(--ink);
+  color: var(--sky-top, #fff);
+  padding: 9px 14px;
+}
+body.viewport-phone .bottom-nav button.on .lbl {
+  display: inline;
+  max-width: 100px;
+}
+
+/* ============================================================
+   Phone — fix every spot where fixed-width inner grids overflow
+   ============================================================ */
+body.viewport-phone .shell { padding-bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
+
+/* Weather hero */
+body.viewport-phone .weather-body {
+  grid-template-columns: 1fr !important;
+  gap: 16px !important;
+}
+body.viewport-phone .weather-now .readout.temp,
+body.viewport-phone .weather-hero .temp {
+  font-size: 84px !important;
+}
+body.viewport-phone .weather-now > div:first-child {
+  gap: 14px !important;
+}
+body.viewport-phone .weather-hero .sun-arc {
+  display: none;
+}
+body.viewport-phone .weather-attrs {
+  grid-template-columns: repeat(3, 1fr);
+}
+body.viewport-phone .forecast {
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+body.viewport-phone .forecast .day .t { font-size: 18px; }
+
+/* Printer */
+body.viewport-phone .printer-body {
+  grid-template-columns: 1fr !important;
+  gap: 14px !important;
+}
+body.viewport-phone .printer-tile {
+  width: 100% !important;
+  height: 160px !important;
+}
+body.viewport-phone .printer-stats {
+  grid-template-columns: repeat(2, 1fr) !important;
+  gap: 10px;
+}
+body.viewport-phone .printer-stats .v { font-size: 16px; }
+
+/* Vacuum stats */
+body.viewport-phone .vacuum-stats {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+body.viewport-phone .vacuum-stats .v { font-size: 15px; }
+
+/* Air purifier */
+body.viewport-phone .purifier-body {
+  grid-template-columns: 1fr !important;
+  gap: 16px !important;
+}
+body.viewport-phone .purifier-ring {
+  width: 170px !important;
+  height: 170px !important;
+  margin: 0 auto;
+}
+body.viewport-phone .purifier-num .big { font-size: 44px; }
+body.viewport-phone .purifier-info .h { font-size: 22px; }
+
+/* Heater */
+body.viewport-phone .heater-body {
+  grid-template-columns: 1fr !important;
+  gap: 16px !important;
+}
+body.viewport-phone .heater-dial {
+  width: 160px !important;
+  height: 160px !important;
+  margin: 0 auto;
+}
+body.viewport-phone .heater-num {
+  font-size: 72px;
+  text-align: center;
+}
+
+/* AdGuard wide card */
+body.viewport-phone .adg-body {
+  grid-template-columns: 1fr !important;
+  gap: 16px !important;
+}
+
+/* Now playing hero — collapse to single column */
+body.viewport-phone .nowplaying-grid {
+  grid-template-columns: 1fr !important;
+  gap: 18px !important;
+  text-align: center;
+}
+body.viewport-phone .nowplaying-grid .media-art {
+  width: 200px !important;
+  height: 200px !important;
+  margin: 0 auto;
+}
+body.viewport-phone .nowplaying-title {
+  font-size: 26px !important;
+  white-space: normal !important;
+  text-overflow: clip !important;
+  overflow: visible !important;
+}
+body.viewport-phone .nowplaying-controls {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px !important;
+}
+
+/* Smaller card title on phone */
+body.viewport-phone .card .title { font-size: 18px; }
+
+/* Weekly calendar — narrower gutter, smaller text */
+body.viewport-phone .weekcal {
+  grid-template-columns: 32px repeat(7, 1fr) !important;
+  --col-h: 20px;
+}
+body.viewport-phone .weekcal-head .dow {
+  padding: 6px 2px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+body.viewport-phone .weekcal-head .dow .num { font-size: 16px; }
+body.viewport-phone .weekcal-times .h { font-size: 8px; padding-right: 3px; }
+body.viewport-phone .weekcal-event { padding: 3px 5px; font-size: 9px; left: 2px; right: 2px; border-radius: 7px; }
+body.viewport-phone .weekcal-event .w { display: none; }
+
+/* Pi rows — tighter labels */
+body.viewport-phone .pi-row {
+  grid-template-columns: 60px 1fr 56px;
+  gap: 8px;
+}
+body.viewport-phone .pi-row .k { font-size: 10px; letter-spacing: 0.06em; }
+body.viewport-phone .pi-row .v { font-size: 11px; }
+
+/* Health row — tighter */
+body.viewport-phone .health-row {
+  grid-template-columns: 32px 1fr;
+}
+body.viewport-phone .health-row .pill { display: none; }

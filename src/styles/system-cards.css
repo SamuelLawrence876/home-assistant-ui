@@ -1,0 +1,236 @@
+/* ----------------------------------------------------------------
+   Storage Card — disk breakdown bar + legend
+   ----------------------------------------------------------------*/
+.storage-bar {
+  display: flex;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  margin-top: 8px;
+  gap: 2px;
+}
+.storage-bar > span {
+  height: 100%;
+  flex: 0 0 var(--p);
+  min-width: 2px;
+  transition: flex-basis 0.5s ease;
+}
+.storage-legend {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px;
+  margin-top: 14px;
+}
+.storage-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.storage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.storage-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.storage-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  margin-left: auto;
+  font-feature-settings: "tnum";
+}
+
+/* ----------------------------------------------------------------
+   Entity Health Card — unavailable entities by domain
+   ----------------------------------------------------------------*/
+.health-all-good {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  text-align: center;
+  padding: 20px 0;
+}
+.health-groups { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.health-group { border-radius: 10px; overflow: hidden; }
+.health-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+  color: var(--ink);
+  font-family: inherit;
+}
+.health-group-header:hover { background: color-mix(in oklch, var(--glass-bg-2), var(--ink) 5%); }
+.health-group-header.open { border-radius: 10px 10px 0 0; }
+.health-domain {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  flex: 1;
+  text-align: left;
+}
+.health-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  background: color-mix(in oklch, var(--bad), transparent 80%);
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.health-chevron {
+  font-size: 14px;
+  color: var(--ink-3);
+  width: 18px;
+  text-align: center;
+}
+.health-entities {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: color-mix(in oklch, var(--glass-bg-2), transparent 50%);
+  border: 1px solid var(--glass-stroke);
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+}
+.health-entities li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid color-mix(in oklch, var(--rule), transparent 60%);
+}
+.health-entities li:last-child { border-bottom: 0; }
+.health-eid {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.health-state {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+.health-state.unavailable {
+  color: oklch(0.65 0.15 25);
+  background: color-mix(in oklch, oklch(0.65 0.15 25), transparent 85%);
+}
+.health-state.unknown {
+  color: var(--ink-3);
+  background: color-mix(in oklch, var(--ink-3), transparent 85%);
+}
+
+/* ----------------------------------------------------------------
+   System Actions Card — restart / reload buttons
+   ----------------------------------------------------------------*/
+.sys-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+.sys-action {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  cursor: pointer;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s ease, border-color 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+}
+.sys-action:hover { transform: translateY(-2px); }
+.sys-action:active { transform: scale(0.98); }
+.sys-action:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.sys-action::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+  z-index: 0;
+}
+.sys-action.firing::after { transform: scaleX(1); }
+.sys-action > * { position: relative; z-index: 1; }
+.sys-action.firing { color: var(--sky-top); }
+.sys-action.firing .sys-action-sub { color: color-mix(in oklch, var(--sky-top), transparent 50%); }
+.sys-action.confirming {
+  border-color: oklch(0.65 0.15 25);
+  background: color-mix(in oklch, oklch(0.65 0.15 25), transparent 88%);
+}
+.sys-action.confirming .sys-action-nm { color: oklch(0.65 0.15 25); }
+.sys-action-ic {
+  width: 36px; height: 36px;
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--ink-2), transparent 85%);
+  color: var(--ink-2);
+  display: grid; place-items: center;
+  font-size: 16px;
+  font-weight: 500;
+  transition: background 0.3s ease, color 0.3s ease, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.sys-action:hover .sys-action-ic { transform: rotate(-8deg) scale(1.08); }
+.sys-action.restart_ha .sys-action-ic { background: color-mix(in oklch, var(--accent), transparent 80%); color: var(--accent); }
+.sys-action.reboot_host .sys-action-ic { background: color-mix(in oklch, var(--bad), transparent 80%); color: var(--bad); }
+.sys-action-nm {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.sys-action-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 1px;
+}
+.sys-action-cancel {
+  display: block;
+  margin: 10px auto 0;
+  background: transparent;
+  border: 1px dashed var(--rule);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+.sys-action-cancel:hover { color: var(--ink); border-color: var(--ink-3); }

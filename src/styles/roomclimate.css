@@ -1,0 +1,456 @@
+/* ============================================================
+   Room climate card (full) + strip variant
+   ============================================================ */
+.roomclim-body {
+  display: grid;
+  grid-template-columns: 1fr 160px;
+  gap: 20px;
+  align-items: center;
+}
+.roomclim-temp {
+  min-width: 0;
+}
+.roomclim-temp .readout.temp {
+  line-height: 0.9;
+  margin-bottom: 8px;
+}
+.roomclim-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+}
+.roomclim-trend .ic { font-size: 13px; }
+.roomclim-trend .muted { color: var(--ink-3); margin-left: 3px; }
+.roomclim-minmax {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.chip-stat {
+  display: flex; flex-direction: column;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  min-width: 78px;
+}
+.chip-stat .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.chip-stat .v {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin-top: 4px;
+  color: var(--ink);
+  font-feature-settings: "tnum";
+}
+
+/* Humidity ring */
+.roomclim-hum {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.roomclim-hum .hum-ring {
+  width: 160px; height: 160px;
+}
+.roomclim-hum .hum-ring .bg {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 7;
+}
+.roomclim-hum .hum-ring .fg {
+  fill: none;
+  stroke: var(--accent-2);
+  stroke-width: 7;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: stroke-dashoffset 1.4s ease;
+}
+.roomclim-hum .hum-label {
+  fill: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+}
+.roomclim-hum .hum-num {
+  fill: var(--ink);
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 36px;
+  letter-spacing: -0.02em;
+}
+.roomclim-hum .hum-pct {
+  font-family: var(--font-body);
+  font-style: normal;
+  font-size: 14px;
+  fill: var(--ink-3);
+}
+.roomclim-hum .hum-band {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+
+/* Verdict row */
+.roomclim-verdict {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  margin-top: 14px;
+  border-radius: 14px;
+  background: color-mix(in oklch, var(--glass-bg-2), transparent 30%);
+  border: 1px solid var(--glass-stroke);
+}
+.roomclim-verdict .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  margin-top: 5px;
+}
+.roomclim-verdict .dot.good {
+  background: var(--good);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--good), transparent 78%);
+}
+.roomclim-verdict .dot.warn {
+  background: var(--warn);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--warn), transparent 78%);
+}
+.roomclim-verdict .h {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.1;
+}
+.roomclim-verdict .d {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+/* 24h chart — temperature + humidity */
+.roomclim-chart {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  overflow: visible;
+}
+.chart-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px;
+}
+.chart-head .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.chart-head .legend {
+  display: inline-flex; gap: 14px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.chart-head .legend .li {
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.chart-head .legend .sw {
+  display: inline-block;
+  width: 18px; height: 2px;
+  border-radius: 2px;
+}
+.chart-head .legend .sw.temp { background: var(--accent-2); }
+.chart-head .legend .sw.hum {
+  background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 8px);
+}
+
+.chart-canvas {
+  position: relative;
+  height: 150px;
+  margin-top: 10px;
+  overflow: visible;
+}
+.chart-svg {
+  width: 100%; height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+/* Chart dot markers — HTML to avoid SVG stretch distortion */
+.chart-dot {
+  position: absolute;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.chart-dot.dot-min {
+  width: 7px; height: 7px;
+  background: var(--glass-bg);
+  border: 1.6px solid var(--accent-2);
+  opacity: 0.7;
+}
+.chart-dot.dot-max {
+  width: 8px; height: 8px;
+  background: var(--accent-2);
+  border: 1.6px solid var(--glass-bg);
+}
+.chart-dot.dot-now-glow {
+  width: 16px; height: 16px;
+  background: var(--accent-2);
+  opacity: 0.18;
+}
+.chart-dot.dot-now {
+  width: 8px; height: 8px;
+  background: var(--accent-2);
+  border: 1.5px solid var(--glass-bg);
+}
+
+/* Floating annotations */
+.chart-tag {
+  position: absolute;
+  display: flex; flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  transform: translate(-50%, calc(-100% - 8px));
+}
+.chart-tag .lbl {
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.chart-tag .val {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  font-feature-settings: "tnum";
+  line-height: 1;
+}
+.chart-tag.tag-low {
+  transform: translate(-50%, 8px);
+}
+.chart-tag.tag-now {
+  background: var(--ink);
+  padding: 5px 9px 6px;
+  border-radius: 9px;
+  box-shadow: 0 6px 18px color-mix(in oklch, var(--ink), transparent 70%);
+  transform: translate(-50%, calc(-100% - 12px));
+}
+.chart-tag.tag-now .lbl {
+  color: color-mix(in oklch, var(--sky-top, #fff), transparent 30%);
+  font-size: 7px;
+  letter-spacing: 0.22em;
+}
+.chart-tag.tag-now .val {
+  color: var(--sky-top, #fff);
+  font-size: 13px;
+}
+.chart-tag.tag-now::after {
+  content: "";
+  position: absolute;
+  bottom: -3px; left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 7px; height: 7px;
+  background: var(--ink);
+}
+
+.chart-axis {
+  display: flex; justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin-top: 6px;
+}
+
+/* Phone overrides — full card */
+body.viewport-phone .roomclim-body {
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+body.viewport-phone .roomclim-temp .readout.temp { font-size: 72px !important; }
+body.viewport-phone .roomclim-hum { flex-direction: row; justify-content: center; gap: 14px; }
+body.viewport-phone .roomclim-hum .hum-ring { width: 120px; height: 120px; }
+body.viewport-phone .roomclim-minmax { gap: 6px; }
+body.viewport-phone .chip-stat { padding: 6px 10px; min-width: 64px; }
+body.viewport-phone .chip-stat .v { font-size: 18px; }
+body.viewport-phone .chart-canvas { height: 130px; }
+body.viewport-phone .chart-tag .val { font-size: 12px; }
+body.viewport-phone .chart-head .legend { gap: 8px; }
+
+/* Strip variant — Overview tab horizontal layout */
+.roomclim-strip .rcstrip-body {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 22px;
+  align-items: center;
+}
+.rcstrip-temp { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.rcstrip-temp .readout.temp { line-height: 0.9; }
+.rcstrip-trend {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  align-self: flex-start;
+}
+.rcstrip-trend .ic { font-size: 12px; color: var(--accent-2); }
+
+.rcstrip-hum {
+  display: flex; align-items: center; gap: 10px;
+}
+.rcstrip-pair {
+  display: flex; align-items: center; gap: 18px;
+  padding: 0 18px;
+  border-left: 1px solid var(--rule);
+  border-right: 1px solid var(--rule);
+}
+.rcstrip-aq {
+  display: flex; align-items: center; gap: 10px;
+}
+.rcstrip-aq-num {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-weight: 300;
+  font-size: 36px;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--ink);
+  font-feature-settings: "tnum";
+  min-width: 58px;
+  text-align: center;
+}
+.rcstrip-aq-num .u {
+  font-family: var(--font-body);
+  font-style: normal;
+  font-size: 11px;
+  color: var(--ink-3);
+  margin-left: 2px;
+  letter-spacing: 0;
+}
+.rcstrip-pair-lbl .k,
+.rcstrip-hum-lbl .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.rcstrip-pair-lbl .v,
+.rcstrip-hum-lbl .v {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-top: 2px;
+}
+
+.rcstrip-verdict {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+}
+.rcstrip-verdict .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  margin-top: 4px;
+}
+.rcstrip-verdict .dot.good {
+  background: var(--good);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--good), transparent 78%);
+}
+.rcstrip-verdict .dot.warn {
+  background: var(--warn);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--warn), transparent 78%);
+}
+.rcstrip-verdict .h {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.1;
+}
+.rcstrip-verdict .d {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 3px;
+}
+
+.rcstrip-spark {
+  width: 260px;
+}
+.rcstrip-spark svg { width: 100%; height: 44px; display: block; }
+.rcstrip-spark-foot {
+  display: flex; justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin-top: 2px;
+}
+
+/* Phone — stack the strip vertically */
+body.viewport-phone .roomclim-strip .rcstrip-body {
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+body.viewport-phone .rcstrip-temp .readout.temp { font-size: 56px !important; }
+body.viewport-phone .rcstrip-pair {
+  padding: 0;
+  border-left: 0; border-right: 0;
+  justify-content: space-between;
+  gap: 10px;
+}
+body.viewport-phone .rcstrip-aq-num { font-size: 28px; min-width: 0; }
+body.viewport-phone .rcstrip-verdict { grid-column: 1 / -1; }
+body.viewport-phone .rcstrip-spark {
+  grid-column: 1 / -1;
+  width: 100%;
+}

@@ -1,0 +1,75 @@
+/* ============================================================
+   Media card
+   ============================================================ */
+.media-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 14px;
+}
+.media-art {
+  width: 64px; height: 64px;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 30% 30%, #b5ddc1, #1db954 45%, #0a4d28 100%);
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 6px 18px color-mix(in oklch, #1db954, transparent 60%);
+}
+.media-art::before {
+  content: "";
+  position: absolute; inset: 22%;
+  border-radius: 50%;
+  background:
+    repeating-radial-gradient(circle, transparent 0 2px, rgba(0,0,0,0.18) 2px 3px);
+  animation: vinyl 8s linear infinite;
+}
+.media-art::after {
+  content: "";
+  position: absolute; inset: 44%;
+  border-radius: 50%;
+  background: #c92a4a;
+}
+@keyframes vinyl { to { transform: rotate(360deg); } }
+.media-info { min-width: 0; }
+.media-info .t {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.media-info .a {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.media-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--rule);
+  margin-top: 10px;
+  overflow: hidden;
+}
+.media-bar > span {
+  display: block;
+  height: 100%;
+  width: var(--p, 40%);
+  background: linear-gradient(90deg, #1db954, var(--ink));
+}
+.media-times {
+  display: flex; justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  color: var(--ink-3);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}

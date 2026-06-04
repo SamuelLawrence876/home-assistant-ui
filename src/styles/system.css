@@ -1,0 +1,219 @@
+/* ============================================================
+   AdGuard / network ring (reuse purifier-ring class semantics)
+   ============================================================ */
+.adg-body {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 22px;
+  align-items: center;
+}
+.adg-info .h {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 24px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.adg-info .h b { color: var(--accent); font-weight: 500; }
+.adg-cap {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+.adg-cap .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.adg-cap .v {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 28px;
+  letter-spacing: -0.02em;
+  margin-top: 2px;
+  font-feature-settings: "tnum";
+  color: var(--ink);
+}
+.adg-cap .v.good { color: var(--good); }
+.domains { display: flex; flex-direction: column; }
+.domain {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.domain:last-child { border-bottom: 0; }
+.domain .ix {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-4);
+}
+.domain .nm {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.domain .right {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--font-mono);
+}
+.domain .bar {
+  width: 80px; height: 4px;
+  border-radius: 2px;
+  background: var(--rule);
+  overflow: hidden;
+}
+.domain .bar > span {
+  display: block; height: 100%;
+  width: var(--w, 30%);
+  background: var(--bad);
+}
+.domain .count {
+  font-size: 13px;
+  color: var(--bad);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  min-width: 28px; text-align: right;
+}
+
+/* ============================================================
+   System (Pi)
+   ============================================================ */
+.pi-rows { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
+.pi-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 70px;
+  align-items: center;
+  gap: 12px;
+}
+.pi-row .k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.pi-row .v {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.pi-row .bar {
+  height: 6px; border-radius: 3px;
+  background: var(--rule);
+  overflow: hidden; position: relative;
+}
+.pi-row .bar > span {
+  display: block; height: 100%;
+  width: var(--p, 10%);
+  background: var(--good);
+  border-radius: 3px;
+  transition: width 1.2s ease;
+}
+.pi-row.warn .bar > span { background: var(--warn); }
+
+/* Health-check list */
+.health {
+  display: flex; flex-direction: column;
+  max-height: 320px; overflow-y: auto;
+}
+.health-row {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.health-row:last-child { border: 0; }
+.health-row .ct {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--warn);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.health-row .nm {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+.health-row .note {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+.health-row .pill {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+}
+
+/* Stats list (chip-cards) */
+.statbox {
+  padding: 16px 18px;
+  display: flex; flex-direction: column;
+  gap: 4px;
+}
+.statbox .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.statbox .v {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 28px;
+  letter-spacing: -0.02em;
+  font-feature-settings: "tnum";
+  line-height: 1;
+  margin: 4px 0 4px;
+  color: var(--ink);
+}
+.statbox .v .u {
+  font-family: var(--font-body);
+  font-style: normal;
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-left: 2px;
+}
+.statbox .cap {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.statbox .progress-mini {
+  height: 4px; border-radius: 2px;
+  background: var(--rule);
+  margin-top: 8px;
+  overflow: hidden;
+}
+.statbox .progress-mini > span {
+  display: block; height: 100%;
+  width: var(--p, 0%);
+  background: var(--c, var(--accent));
+  border-radius: 2px;
+  transition: width 1.2s ease;
+}

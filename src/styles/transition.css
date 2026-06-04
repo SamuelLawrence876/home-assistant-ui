@@ -1,0 +1,17 @@
+/* ============================================================
+   View transition
+   ============================================================ */
+.view {
+  opacity: 1;
+}
+@keyframes fanspin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pixooBar {
+  from { transform: scaleY(0.4); }
+  to   { transform: scaleY(1); }
+}
+@keyframes pixooSpin {
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,58 @@
+/* ============================================================
+   Backup / Shopping summary card
+   ============================================================ */
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-top: 6px;
+}
+.kv .k {
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 9px;
+}
+.kv .v {
+  color: var(--ink);
+  text-align: right;
+}
+
+/* Shopping list */
+.shopping {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 12px;
+  list-style: none;
+  padding: 0;
+}
+.shopping li {
+  font-size: 13px;
+  letter-spacing: -0.005em;
+  list-style: none;
+  padding: 10px 12px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 12px;
+  display: flex; align-items: center; gap: 10px;
+  color: var(--ink);
+  line-height: 1.35;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.shopping li:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+}
+.shopping li::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent, oklch(0.65 0.16 50));
+  flex-shrink: 0;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}

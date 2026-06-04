@@ -1,0 +1,279 @@
+/* ============================================================
+   Specific card visuals — Weather + Sun hero
+   ============================================================ */
+.weather-hero {
+  overflow: hidden;
+  min-height: 280px;
+  background:
+    radial-gradient(80% 100% at 90% -10%,
+      color-mix(in oklch, var(--accent-2), transparent 70%) 0%,
+      transparent 60%),
+    var(--glass-bg);
+}
+.weather-body {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 28px;
+  align-items: stretch;
+}
+.weather-now {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 16px;
+}
+.weather-now .temp { font-size: 132px; }
+.weather-now .cond {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 26px;
+  letter-spacing: -0.01em;
+  color: var(--ink-2);
+  line-height: 1.1;
+}
+.weather-now .cond .small {
+  display: block;
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 6px;
+}
+.weather-attrs {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 14px;
+  margin-top: 4px;
+}
+.weather-attrs .k {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.weather-attrs .v {
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  margin-top: 2px;
+  font-feature-settings: "tnum";
+  color: var(--ink);
+}
+
+/* Sun arc */
+.sun-arc {
+  position: relative;
+  width: 100%;
+  align-self: center;
+  padding: 10px 6px 20px;
+}
+.sun-arc svg { width: 100%; height: auto; display: block; }
+.sun-arc .arc-bg {
+  stroke: var(--rule);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+  fill: none;
+}
+.sun-arc .arc-fg {
+  stroke: var(--accent-2);
+  stroke-width: 2.5;
+  fill: none;
+  stroke-linecap: round;
+}
+.sun-arc .horizon {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.sun-arc .sun-dot {
+  fill: var(--accent-2);
+  filter: drop-shadow(0 0 14px color-mix(in oklch, var(--accent-2), transparent 30%));
+}
+.sun-arc .moon-dot {
+  fill: color-mix(in oklch, #f4f4ee, transparent 0%);
+  filter: drop-shadow(0 0 10px rgba(255,255,255,0.4));
+}
+.sun-arc .label {
+  fill: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.sun-arc .label.now { fill: var(--ink); font-weight: 600; }
+.sun-arc .tick {
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.sun-info {
+  margin-top: 8px;
+  display: flex; justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.sun-info b { color: var(--ink); font-weight: 600; }
+
+/* Forecast strip */
+.forecast {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+.forecast .day {
+  display: flex; flex-direction: column; gap: 6px;
+  text-align: left;
+}
+.forecast .day .d {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.forecast .day .ic {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--accent-2);
+}
+.forecast .day .t {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  font-feature-settings: "tnum";
+  color: var(--ink);
+}
+.forecast .day .lo {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+/* ============================================================
+   Presence card
+   ============================================================ */
+.presence-row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 14px;
+}
+.presence-avatar {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%,
+      color-mix(in oklch, var(--accent-2), transparent 35%),
+      var(--accent) 70%);
+  display: grid; place-items: center;
+  color: white;
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 26px;
+  letter-spacing: -0.02em;
+  box-shadow: 0 0 0 4px var(--glass-stroke-2),
+              0 8px 24px color-mix(in oklch, var(--accent), transparent 65%);
+}
+.presence-info .nm {
+  font-family: var(--font-display);
+  font-style: var(--display-italic);
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.presence-info .where {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 4px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.presence-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.presence-badge.home {
+  background: color-mix(in oklch, var(--good), transparent 82%);
+  color: var(--good);
+}
+.presence-badge.away {
+  background: color-mix(in oklch, var(--ink-3), transparent 82%);
+  color: var(--ink-3);
+}
+
+/* ============================================================
+   Scene buttons
+   ============================================================ */
+.scenes-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 6px;
+}
+.scene {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  cursor: pointer;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+.scene:hover { transform: translateY(-2px); }
+.scene:active { transform: scale(0.98); }
+.scene::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+  z-index: 0;
+}
+.scene.firing::after { transform: scaleX(1); }
+.scene > * { position: relative; z-index: 1; }
+.scene.firing { color: var(--sky-top); }
+.scene.firing .scene-sub { color: color-mix(in oklch, var(--sky-top), transparent 50%); }
+.scene-ic {
+  width: 36px; height: 36px;
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--accent), transparent 80%);
+  color: var(--accent);
+  display: grid; place-items: center;
+  font-size: 16px;
+  font-weight: 500;
+  transition: background 0.3s ease, color 0.3s ease, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.scene:hover .scene-ic { transform: rotate(-8deg) scale(1.08); }
+.scene.morning .scene-ic { background: color-mix(in oklch, var(--accent-2), transparent 78%); color: var(--accent-2); }
+.scene.movie .scene-ic   { background: color-mix(in oklch, var(--bad), transparent 80%); color: var(--bad); }
+.scene.goodnight .scene-ic { background: color-mix(in oklch, var(--ink-2), transparent 85%); color: var(--ink-2); }
+.scene.all_off .scene-ic { background: color-mix(in oklch, var(--ink-3), transparent 85%); color: var(--ink-3); }
+.scene .scene-nm {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.scene .scene-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-top: 2px;
+}

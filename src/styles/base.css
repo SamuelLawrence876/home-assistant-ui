@@ -1,0 +1,114 @@
+/* ============================================================
+   Glasshouse v2 — base styles
+   ============================================================ */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  font-family: var(--font-body, "Geist", system-ui, sans-serif);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "ss01", "cv11";
+  overflow-x: hidden;
+  background: var(--sky-bot, #efe7d8);
+}
+
+/* ============================================================
+   Sky backdrop
+   ============================================================ */
+.sky {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bot) 100%);
+  transition: background 1.5s ease;
+  /* iOS Safari: isolate so the sun-bloom's mix-blend-mode stays inside this
+     layer instead of smearing against scrolling content, and promote to its
+     own GPU layer so the fixed backdrop is composited (not repainted) on scroll. */
+  isolation: isolate;
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+/* Soft sun bloom that slides along the horizon */
+.sky::before {
+  content: "";
+  position: absolute;
+  left: var(--sun-x, 50%);
+  top: var(--sun-y, 22%);
+  width: 720px; height: 720px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    color-mix(in oklch, var(--sun-tint, #ffd28a), transparent 18%) 0%,
+    color-mix(in oklch, var(--sun-tint, #ffd28a), transparent 60%) 22%,
+    transparent 60%);
+  opacity: var(--sun-bloom, 0.85);
+  filter: blur(20px);
+  transition: left 1.5s ease, top 1.5s ease, opacity 1.5s ease;
+  mix-blend-mode: screen;
+}
+/* Stars at night */
+.sky::after {
+  content: "";
+  position: absolute; inset: 0;
+  opacity: var(--stars, 0);
+  background-image:
+    radial-gradient(1px 1px at 12% 18%,  rgba(255,255,255,0.9), transparent 60%),
+    radial-gradient(1px 1px at 28% 9%,   rgba(255,255,255,0.6), transparent 60%),
+    radial-gradient(1.5px 1.5px at 42% 22%, rgba(255,255,255,0.85), transparent 60%),
+    radial-gradient(1px 1px at 57% 12%,  rgba(255,255,255,0.7), transparent 60%),
+    radial-gradient(1px 1px at 70% 26%,  rgba(255,255,255,0.6), transparent 60%),
+    radial-gradient(1.5px 1.5px at 83% 16%, rgba(255,255,255,0.9), transparent 60%),
+    radial-gradient(1px 1px at 92% 8%,   rgba(255,255,255,0.6), transparent 60%),
+    radial-gradient(1px 1px at  6% 32%,  rgba(255,255,255,0.8), transparent 60%),
+    radial-gradient(1px 1px at 35% 38%,  rgba(255,255,255,0.65), transparent 60%),
+    radial-gradient(1px 1px at 64% 35%,  rgba(255,255,255,0.7), transparent 60%);
+  transition: opacity 1.8s ease;
+}
+
+/* ============================================================
+   Mullion grid — architectural overlay (lean-dependent)
+   ============================================================ */
+.mullions {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: var(--mullion-opacity, 1);
+  transition: opacity 0.6s ease;
+  /* iOS Safari: promote the whole hairline grid to its own composited layer.
+     Without this, the fixed 1px lines + box-shadow repaint against the
+     scrolling body and streak ("racing lines") on every scroll. */
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+.mullions .vert {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: var(--mullion);
+  box-shadow: 1px 0 0 var(--mullion-2);
+}
+.mullions .horiz {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: var(--mullion);
+  box-shadow: 0 1px 0 var(--mullion-2);
+}
+
+/* Atrium-style heavy mullions */
+.lean-atrium .mullions .vert {
+  width: 2px;
+  background: linear-gradient(90deg, transparent, var(--mullion) 50%, transparent);
+  box-shadow: 2px 0 0 var(--mullion-2), -2px 0 0 var(--mullion-2);
+}
