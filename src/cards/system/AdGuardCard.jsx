@@ -1,8 +1,7 @@
-import { useState, useEffect } from "react";
 import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
-import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { useOptimisticToggle } from "../../hooks/useOptimistic.js";
 
 /* ----------------------------------------------------------------
    AdGuard — full card (with ring + filtering toggle)
@@ -11,15 +10,11 @@ export function AdGuardCard({ index = 0 }) {
   const { entity: liveRatio, status: adgStatus } = useEntityStatus("sensor.adguard_home_dns_queries_blocked_ratio");
   const liveTotal = useEntity("sensor.adguard_home_dns_queries");
   const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
-  const liveProt = useEntity("switch.adguard_home_protection");
-  const liveFilt = useEntity("switch.adguard_home_filtering");
+  const { on: prot, toggle: toggleProt } = useOptimisticToggle("switch.adguard_home_protection");
+  const { on: filt, toggle: toggleFilt } = useOptimisticToggle("switch.adguard_home_filtering");
   const ratio = Number(liveRatio?.state ?? 0);
   const total = Number(liveTotal?.state ?? 0);
   const blocked = Number(liveBlocked?.state ?? 0);
-  const [prot, setProt] = useState(liveProt?.state === "on");
-  const [filt, setFilt] = useState(liveFilt?.state === "on");
-  useEffect(() => { if (liveProt) setProt(liveProt.state === "on"); }, [liveProt?.state]);
-  useEffect(() => { if (liveFilt) setFilt(liveFilt.state === "on"); }, [liveFilt?.state]);
 
   const C = 2 * Math.PI * 90;
   const offset = C * (1 - ratio / 100);
@@ -30,10 +25,7 @@ export function AdGuardCard({ index = 0 }) {
       eyebrow="Network · AdGuard Home"
       title="Filtering"
       meta={prot ? "Protected" : "Disabled"}
-      headRight={<div className={`toggle ${prot ? "on" : ""}`} onClick={() => {
-        const next = !prot; setProt(next);
-        callService("switch", next ? "turn_on" : "turn_off", { entity_id: "switch.adguard_home_protection" }).catch(() => setProt(prot));
-      }} role="switch" />}
+      headRight={<div className={`toggle ${prot ? "on" : ""}`} onClick={toggleProt} role="switch" />}
     >
       <EntityGuard status={adgStatus} entityId="sensor.adguard_home_dns_queries_blocked_ratio">
       <div className="adg-body">
@@ -77,10 +69,7 @@ export function AdGuardCard({ index = 0 }) {
                 <div
                   className={`toggle ${filt ? "on" : ""}`}
                   style={{ transform: "scale(0.85)" }}
-                  onClick={() => {
-                    const next = !filt; setFilt(next);
-                    callService("switch", next ? "turn_on" : "turn_off", { entity_id: "switch.adguard_home_filtering" }).catch(() => setFilt(filt));
-                  }}
+                  onClick={toggleFilt}
                   role="switch"
                 />
               </div>
@@ -117,17 +106,10 @@ export function AdGuardSimpleCard({ index = 0 }) {
   const { entity: liveTotal, status: adgStatus } = useEntityStatus("sensor.adguard_home_dns_queries");
   const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
   const liveRatio = useEntity("sensor.adguard_home_dns_queries_blocked_ratio");
-  const liveProt = useEntity("switch.adguard_home_protection");
+  const { on: prot, toggle: toggleProt } = useOptimisticToggle("switch.adguard_home_protection");
   const total = Number(liveTotal?.state ?? 0);
   const blocked = Number(liveBlocked?.state ?? 0);
   const ratio = Number(liveRatio?.state ?? 0);
-  const [prot, setProt] = useState(liveProt?.state === "on");
-  useEffect(() => { if (liveProt) setProt(liveProt.state === "on"); }, [liveProt?.state]);
-  function toggleProt() {
-    const next = !prot;
-    setProt(next);
-    callService("switch", next ? "turn_on" : "turn_off", { entity_id: "switch.adguard_home_protection" }).catch(() => setProt(prot));
-  }
 
   return (
     <Card index={index} eyebrow="Network · AdGuard" title="AdGuard" meta={prot ? "Live" : "Off"}>

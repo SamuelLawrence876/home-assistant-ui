@@ -1,59 +1,31 @@
-import { useEntity, useEntityStatus, combineStatuses, useStatistics } from "../../ha/useEntity.js";
+import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
-import { CLIMATE_STAT_IDS } from "../../cards/climate/RoomClimateCard.jsx";
+import { useClimateDerived } from "../../hooks/useClimateDerived.js";
 
 /* ----------------------------------------------------------------
    Room climate strip — horizontal variant for the Overview tab
    (same sensors, single-row composition)
    ----------------------------------------------------------------*/
 export function RoomClimateStrip({ index = 0 }) {
-  const { entity: liveTemp, status: tempStatus } = useEntityStatus("sensor.h5075_4fb6_temperature");
-  const { entity: liveHum, status: humStatus } = useEntityStatus("sensor.h5075_4fb6_humidity");
-  const { entity: liveAirQ, status: airQStatus } = useEntityStatus("sensor.core_300s_series_air_quality");
+  const {
+    status, pending, stale: climateStale, liveTemp,
+    temp, humidity, tempHist, tempMin, tempMax,
+    delta, trendIcon, tempBand, humBand, allGood, verdict, lastUp,
+  } = useClimateDerived();
+  const { entity: liveAirQ } = useEntityStatus("sensor.core_300s_series_air_quality");
   const livePm = useEntity("sensor.core_300s_series_pm2_5");
-  const { data: statsData } = useStatistics(CLIMATE_STAT_IDS, 24);
 
-  const climateStatus = combineStatuses(tempStatus, humStatus);
-  const climateStale = climateStatus === "unavailable";
-  const tempStats = statsData?.["sensor.h5075_4fb6_temperature"];
-  const humStats = statsData?.["sensor.h5075_4fb6_humidity"];
-  const rawTemp = tempStats?.mean || [];
-  const rawHum = humStats?.mean || [];
-  const lastStatTemp = rawTemp.length > 0 ? rawTemp[rawTemp.length - 1] : null;
-  const lastStatHum = rawHum.length > 0 ? rawHum[rawHum.length - 1] : null;
-
-  if (climateStatus === "loading" || climateStatus === "not_found" ||
-      (climateStale && lastStatTemp == null)) {
+  if (pending) {
     return (
       <Card index={index} className="roomclim-strip" eyebrow="Climate" title="Room">
-        <EntityGuard status={climateStatus} entityId="sensor.h5075_4fb6_temperature" />
+        <EntityGuard status={status} entityId="sensor.h5075_4fb6_temperature" />
       </Card>
     );
   }
 
-  const temp = climateStale ? lastStatTemp : Number(liveTemp?.state ?? 0);
-  const humidity = climateStale ? (lastStatHum ?? 0) : Number(liveHum?.state ?? 0);
   const airQ = liveAirQ?.state ?? "—";
   const pm = Number(livePm?.state ?? 0);
-
-  const tempHist = rawTemp.length > 0 ? (climateStale ? [...rawTemp.slice(-24)] : [...rawTemp.slice(-23), temp]) : [temp];
-
-  // Trend over last 3h
-  const prev = tempHist[tempHist.length - 4];
-  const delta = temp - prev;
-  const trend = delta > 0.2 ? "up" : delta < -0.2 ? "down" : "flat";
-  const trendIcon = trend === "up" ? "↗" : trend === "down" ? "↘" : "→";
-
-  const tempBand = temp < 18 ? "cold" : temp < 19 ? "cool" : temp <= 22 ? "comfortable" : temp <= 25 ? "warm" : "hot";
-  const humBand = humidity < 30 ? "dry" : humidity <= 55 ? "ideal" : humidity <= 65 ? "damp" : "humid";
-  const allGood = tempBand === "comfortable" && humBand === "ideal";
-  const verdict = allGood ? "Comfortable" : tempBand !== "comfortable" ? `Room is ${tempBand}` : `Air is ${humBand}`;
-
-  const trueMinArr = tempStats?.min || [];
-  const trueMaxArr = tempStats?.max || [];
-  const tempMin = trueMinArr.length > 0 ? Math.min(...trueMinArr, temp) : Math.min(...tempHist);
-  const tempMax = trueMaxArr.length > 0 ? Math.max(...trueMaxArr, temp) : Math.max(...tempHist);
 
   // Mini humidity ring
   const R = 26;
@@ -73,9 +45,6 @@ export function RoomClimateStrip({ index = 0 }) {
   const nowX = xAt(tempHist.length - 1);
   const nowY = yAt(temp);
 
-  const lastUp = liveTemp?.last_updated
-    ? new Date(liveTemp.last_updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "";
 
   return (
     <Card index={index} className="roomclim-strip"

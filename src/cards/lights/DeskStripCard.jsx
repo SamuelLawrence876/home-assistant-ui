@@ -3,6 +3,7 @@ import { useEntity } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { rgbStr, kelvinToRgb } from "../../cards/lights/colorUtils.js";
+import { PresetSwatches } from "./presets.jsx";
 
 /* ----------------------------------------------------------------
    Desk strip — Govee H6159 (cloud API via rest_command)
@@ -219,27 +220,7 @@ export function DeskStripCard({ index = 0 }) {
       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {GOVEE_PRESETS.map((p) => {
-            const selected = rgb[0] === p.rgb[0] && rgb[1] === p.rgb[1] && rgb[2] === p.rgb[2];
-            return (
-              <button
-                key={p.id}
-                onClick={() => pickColor(p)}
-                title={p.label}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  background: rgbStr(p.rgb),
-                  border: selected ? "2px solid var(--ink)" : "2px solid var(--glass-stroke-2)",
-                  cursor: "pointer",
-                  padding: 0,
-                  boxShadow: selected ? "0 0 0 2px var(--glass-bg-2)" : "0 1px 3px rgba(0,0,0,0.08)",
-                  transition: "transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.2s ease",
-                }}
-              />
-            );
-          })}
+          <PresetSwatches presets={GOVEE_PRESETS} rgb={rgb} onPick={pickColor} />
         </div>
       </div>
     </Card>

@@ -1,26 +1,18 @@
-import { useState, useEffect } from "react";
-import { useEntityStatus } from "../../ha/useEntity.js";
-import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { rgbStr } from "../../cards/lights/colorUtils.js";
+import { useOptimisticToggle } from "../../hooks/useOptimistic.js";
 
 /* ----------------------------------------------------------------
    Quick toggles (Overview)
    ----------------------------------------------------------------*/
 function QuickToggle({ entityId }) {
-  const { entity: e, status } = useEntityStatus(entityId);
+  const { entity: e, status, on, toggle: doToggle } = useOptimisticToggle(entityId, "light");
   const unavailable = status === "unavailable" || status === "not_found";
   const initRgb = e?.attributes?.rgb_color || [255, 198, 130];
-  const [on, setOn] = useState(e?.state === "on");
-  useEffect(() => {
-    if (e) setOn(e.state === "on");
-  }, [e?.state]);
   if (status === "loading") return <div className="entity-loading" style={{ borderRadius: 14, minHeight: 52 }} />;
   function toggle() {
     if (unavailable) return;
-    const next = !on;
-    setOn(next);
-    callService("light", next ? "turn_on" : "turn_off", { entity_id: entityId }).catch(() => setOn(on));
+    doToggle();
   }
   return (
     <button

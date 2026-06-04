@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
+import { useEntity } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { useOptimisticToggle } from "../../hooks/useOptimistic.js";
 
 /* ----------------------------------------------------------------
    Air purifier — Levoit Core 300S
@@ -11,7 +12,8 @@ const SPEED_TO_PCT = { low: 33, medium: 67, high: 100 };
 const PCT_TO_SPEED = (pct) => pct <= 33 ? "low" : pct <= 67 ? "medium" : "high";
 
 export function AirPurifierCard({ index = 0 }) {
-  const { entity: liveFan, status: fanStatus } = useEntityStatus("fan.core_300s_series");
+  const { entity: liveFan, status: fanStatus, on, setOn, toggle: doToggle } =
+    useOptimisticToggle("fan.core_300s_series", "fan");
   const liveQ = useEntity("sensor.core_300s_series_air_quality");
   const livePm = useEntity("sensor.core_300s_series_pm2_5");
   const liveFilt = useEntity("sensor.core_300s_series_filter_lifetime");
@@ -20,19 +22,15 @@ export function AirPurifierCard({ index = 0 }) {
   const pm = Number(livePm?.state ?? 0);
   const filt = Number(liveFilt?.state ?? 0);
   const [mode, setMode] = useState(liveFan?.attributes?.preset_mode ?? "auto");
-  const [on, setOn] = useState(liveFan?.state === "on");
   useEffect(() => {
     if (!liveFan) return;
-    setOn(liveFan.state === "on");
     const attrs = liveFan.attributes;
     if (attrs?.preset_mode) setMode(attrs.preset_mode);
     else if (attrs?.percentage) setMode(PCT_TO_SPEED(attrs.percentage));
   }, [liveFan?.state, liveFan?.attributes?.preset_mode, liveFan?.attributes?.percentage]);
   function toggleFan() {
     if (unavailable) return;
-    const next = !on;
-    setOn(next);
-    callService("fan", next ? "turn_on" : "turn_off", { entity_id: "fan.core_300s_series" }).catch(() => setOn(on));
+    doToggle();
   }
   function pickMode(m) {
     setMode(m);

@@ -36,6 +36,13 @@ for (const [vpName, viewport] of Object.entries(VIEWPORTS)) {
     // clock=12:00 pins the day theme + sun position so shots are deterministic
     await page.goto(`http://localhost:${port}/?tab=${tab}&viewport=${vpName === "phone" ? "phone" : "desktop"}&mode=day&clock=12:00`);
     await page.waitForTimeout(11000); // boot MAX_WAIT 8s + exit anim + settle
+    // Freeze every animation at one timeline point so screenshots are
+    // build-independent (shimmer loops etc. otherwise differ in phase).
+    await page.evaluate(() =>
+      document.getAnimations({ subtree: true }).forEach((a) => {
+        try { a.currentTime = 60000; a.pause(); } catch { /* ignore */ }
+      })
+    );
     await page.screenshot({ path: join(out, `${tab}-${vpName}.png`), fullPage: true });
     await page.close();
     process.stdout.write(`${tab}-${vpName} `);
