@@ -231,3 +231,71 @@ export const LEANS = {
     },
   },
 };
+
+/* ----------------------------------------------------------------
+   Tweaks persistence + theme application (moved from App.jsx in the
+   structure refactor — REFACTOR_PLAN.md phase 3)
+   ----------------------------------------------------------------*/
+const TWEAKS_KEY = "glasshouse-tweaks";
+export const TWEAK_DEFAULTS = { lean: "frosted", mode: "auto", clockOverride: false, clock: 18.5, bootStyle: "assemble" };
+
+export function loadStoredTweaks() {
+  try {
+    const raw = localStorage.getItem(TWEAKS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) || {};
+  } catch {
+    return {};
+  }
+}
+
+export function persistTweaks(t) {
+  try {
+    localStorage.setItem(TWEAKS_KEY, JSON.stringify(t));
+  } catch {}
+}
+
+/* Apply CSS variables for the chosen lean + mode, plus dynamic sky vars. */
+export function applyTheme(lean, mode, sky) {
+  const root = document.documentElement;
+  // Day defaults inherit base font-family + display vars (set on day).
+  const dayBase = LEANS[lean].day;
+  Object.entries(dayBase).forEach(([k, v]) => root.style.setProperty(k, v));
+  if (mode === "night") {
+    Object.entries(LEANS[lean].night).forEach(([k, v]) => root.style.setProperty(k, v));
+  }
+
+  root.style.setProperty("--sky-top", sky.top);
+  root.style.setProperty("--sky-bot", sky.bot);
+
+  const phase = sky.phase;
+  let sunX = 50,
+    sunY = 22,
+    sunBloom = 0.85,
+    stars = 0;
+  if (phase < 0 || phase > 1) {
+    sunX = 50;
+    sunY = -30;
+    sunBloom = 0.0;
+    stars = 0.7;
+  } else {
+    sunX = 8 + phase * 84;
+    sunY = 70 - Math.sin(phase * Math.PI) * 55;
+    sunBloom = 0.55 + Math.sin(phase * Math.PI) * 0.45;
+    stars = 0;
+  }
+  root.style.setProperty("--sun-x", `${sunX}%`);
+  root.style.setProperty("--sun-y", `${sunY}%`);
+  root.style.setProperty("--sun-bloom", `${sunBloom}`);
+  root.style.setProperty("--stars", `${stars}`);
+  const tint = sky.warmth > 0.7 ? "#ffba6b" : sky.warmth > 0.4 ? "#ffd28a" : "#fff0c8";
+  root.style.setProperty("--sun-tint", tint);
+
+  const mullionOpacity = lean === "frosted" ? 0 : lean === "atrium" ? 1 : 0.6;
+  root.style.setProperty("--mullion-opacity", `${mullionOpacity}`);
+
+  document.body.classList.remove("lean-conservatory", "lean-frosted", "lean-atrium");
+  document.body.classList.add(`lean-${lean}`);
+  document.body.classList.toggle("mode-night", mode === "night");
+  document.body.classList.toggle("mode-day", mode !== "night");
+}

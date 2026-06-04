@@ -7,61 +7,30 @@
      ?clock=HH:MM (forces theme.js's clock override)
    Tweaks (lean / mode / clock override) are also editable live via the
    in-app Tweaks drawer (cog button, top right). Settings persist to
-   localStorage. */
+   localStorage.
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { GH_DATA } from "./data.js";
-import { LEANS, skyColors, nowFractionalHour } from "./theme.js";
+   Views are lazy-loaded per tab (Overview eager — it's the landing tab),
+   so each tab's cards ship as their own chunk. */
+
+import { useState, useEffect, useMemo, useRef, lazy, Suspense } from "react";
+import { LEANS, skyColors, TWEAK_DEFAULTS, loadStoredTweaks, persistTweaks, applyTheme } from "./theme.js";
 import { useConnectionStatus, useEntityCounts } from "./ha/useEntity.js";
-import { onSnapshotReady, hasSnapshot } from "./ha/socket.js";
-import { onServiceError } from "./ha/client.js";
+import { readURLParam } from "./lib/url.js";
+import { fmtTime } from "./lib/format.js";
+import { useNow } from "./hooks/useNow.js";
+import { useViewport } from "./hooks/useViewport.js";
+import { useDashReady } from "./hooks/useDashReady.js";
+import { ServiceErrorToast } from "./components/Toast.jsx";
 import BootScreen from "./BootScreen.jsx";
-import {
-  Card,
-  fmtTime,
-  useNow,
-  WeatherSunHero,
-  PresenceCard,
-  ScenesCard,
-  MediaCard,
-  PrinterCard,
-  VacuumCard,
-  AirPurifierCard,
-  HeaterCard,
-  PiCard,
-  BackupCard,
-  EntityHealthCard,
-  SystemActionsCard,
-  StorageCard,
-  InProgressCard,
-  StatBox,
-  RoomClimateCard,
-  RoomClimateStrip,
-  BambuStatBox,
-  LevoitStatBox,
-  VacuumStatBox,
-  AdGuardStatBox,
-  LightCard,
-  DeskStripCard,
-  FanCard,
-  QuickLightsCard,
-  AdGuardSimpleCard,
-  UptimeCard,
-  PixooCard,
-  AddonsCard,
-  NextEventCard,
-  NowPlayingHero,
-  SpotifyConnectCard,
-  SpotifySearchCard,
-  SpotifyPlaylistsCard,
-  SpotifyQueueCard,
-  SpotifyRecentCard,
-  SamBoxCard,
-  PlayStrip,
-  WeeklyCalendarCard,
-  KanbanBoardCard,
-} from "./cards/index.js";
 import { TweaksDrawer } from "./TweaksDrawer.jsx";
+
+import OverviewView from "./views/OverviewView.jsx";
+const LightsView = lazy(() => import("./views/LightsView.jsx"));
+const MediaView = lazy(() => import("./views/MediaView.jsx"));
+const ScheduleView = lazy(() => import("./views/ScheduleView.jsx"));
+const ClimateView = lazy(() => import("./views/ClimateView.jsx"));
+const WorkshopView = lazy(() => import("./views/WorkshopView.jsx"));
+const SystemView = lazy(() => import("./views/SystemView.jsx"));
 
 const TABS = [
   { id: "overview", label: "Overview" },
@@ -72,75 +41,6 @@ const TABS = [
   { id: "workshop", label: "Workshop" },
   { id: "system", label: "System" },
 ];
-
-const TWEAKS_KEY = "glasshouse-tweaks";
-const TWEAK_DEFAULTS = { lean: "frosted", mode: "auto", clockOverride: false, clock: 18.5, bootStyle: "assemble" };
-
-function readURLParam(name, dflt) {
-  const v = new URLSearchParams(window.location.search).get(name);
-  return v || dflt;
-}
-
-function loadStoredTweaks() {
-  try {
-    const raw = localStorage.getItem(TWEAKS_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) || {};
-  } catch {
-    return {};
-  }
-}
-
-function persistTweaks(t) {
-  try {
-    localStorage.setItem(TWEAKS_KEY, JSON.stringify(t));
-  } catch {}
-}
-
-/* Apply CSS variables for the chosen lean + mode, plus dynamic sky vars. */
-function applyTheme(lean, mode, sky) {
-  const root = document.documentElement;
-  // Day defaults inherit base font-family + display vars (set on day).
-  const dayBase = LEANS[lean].day;
-  Object.entries(dayBase).forEach(([k, v]) => root.style.setProperty(k, v));
-  if (mode === "night") {
-    Object.entries(LEANS[lean].night).forEach(([k, v]) => root.style.setProperty(k, v));
-  }
-
-  root.style.setProperty("--sky-top", sky.top);
-  root.style.setProperty("--sky-bot", sky.bot);
-
-  const phase = sky.phase;
-  let sunX = 50,
-    sunY = 22,
-    sunBloom = 0.85,
-    stars = 0;
-  if (phase < 0 || phase > 1) {
-    sunX = 50;
-    sunY = -30;
-    sunBloom = 0.0;
-    stars = 0.7;
-  } else {
-    sunX = 8 + phase * 84;
-    sunY = 70 - Math.sin(phase * Math.PI) * 55;
-    sunBloom = 0.55 + Math.sin(phase * Math.PI) * 0.45;
-    stars = 0;
-  }
-  root.style.setProperty("--sun-x", `${sunX}%`);
-  root.style.setProperty("--sun-y", `${sunY}%`);
-  root.style.setProperty("--sun-bloom", `${sunBloom}`);
-  root.style.setProperty("--stars", `${stars}`);
-  const tint = sky.warmth > 0.7 ? "#ffba6b" : sky.warmth > 0.4 ? "#ffd28a" : "#fff0c8";
-  root.style.setProperty("--sun-tint", tint);
-
-  const mullionOpacity = lean === "frosted" ? 0 : lean === "atrium" ? 1 : 0.6;
-  root.style.setProperty("--mullion-opacity", `${mullionOpacity}`);
-
-  document.body.classList.remove("lean-conservatory", "lean-frosted", "lean-atrium");
-  document.body.classList.add(`lean-${lean}`);
-  document.body.classList.toggle("mode-night", mode === "night");
-  document.body.classList.toggle("mode-day", mode !== "night");
-}
 
 function ConnectionChip() {
   const status = useConnectionStatus();
@@ -199,263 +99,6 @@ function MullionGrid({ lean }) {
       ))}
     </div>
   );
-}
-
-/* ----------------------------------------------------------------
-   Views (tab content)
-   ----------------------------------------------------------------*/
-function OverviewView({ viewport, sky }) {
-  return (
-    <div className="grid">
-      <div className="col-8">
-        <WeatherSunHero index={0} sky={sky} compact={viewport === "phone"} />
-      </div>
-      <div className="col-4" style={{ display: "grid", gap: 14 }}>
-        <PresenceCard index={1} />
-        <MediaCard index={2} />
-        <NextEventCard index={3} />
-      </div>
-
-      <div className="col-12">
-        <RoomClimateStrip index={4} />
-      </div>
-
-      <div className="col-4">
-        <QuickLightsCard index={5} />
-      </div>
-      <div className="col-5">
-        <ScenesCard index={6} />
-      </div>
-      <div className="col-3">
-        <InProgressCard index={7} />
-      </div>
-
-      {/* Play strip at the foot — replaces the four stat pills (SamBox360 design) */}
-      <div className="col-12"><PlayStrip index={8} /></div>
-    </div>
-  );
-}
-
-function LightsView() {
-  return (
-    <div className="grid">
-      <div className="col-6"><LightCard index={0} entityId="light.living_room" /></div>
-      <div className="col-6"><LightCard index={1} entityId="light.smartbulb_5c_h" /></div>
-      <div className="col-6"><DeskStripCard index={2} /></div>
-      <div className="col-6"><LightCard index={3} entityId="light.bathroom" /></div>
-      {/* <div className="col-6"><PixooCard index={3} /></div> */}
-
-      <div className="col-12">
-        <Card index={4} eyebrow="Future · 4 flood lights" title="Flood lights · coming soon" meta="placeholder">
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-            {["light.flood_1", "light.flood_2", "light.flood_3", "light.flood_4"].map((id) => {
-              const l = GH_DATA.lights[id];
-              return (
-                <div
-                  key={id}
-                  style={{
-                    padding: 14,
-                    borderRadius: 14,
-                    background: "color-mix(in oklch, var(--glass-bg-2), transparent 40%)",
-                    border: "1px dashed var(--rule)",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 9,
-                      letterSpacing: "0.1em",
-                      textTransform: "uppercase",
-                      color: "var(--ink-4)",
-                    }}
-                  >
-                    {id}
-                  </div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: "var(--ink-2)" }}>{l.attributes.friendly_name}</div>
-                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--ink-3)", marginTop: 2 }}>
-                    not yet added
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function MediaView() {
-  return (
-    <div className="grid" style={{ alignItems: "start" }}>
-      <div className="col-8"><NowPlayingHero index={0} /></div>
-      <div className="col-4"><SamBoxCard index={1} /></div>
-      <div className="col-4"><SpotifyConnectCard index={1} /></div>
-      <div className="col-4"><SpotifySearchCard index={2} /></div>
-      <div className="col-4"><SpotifyPlaylistsCard index={3} /></div>
-      <div className="col-4"><SpotifyQueueCard index={4} /></div>
-    </div>
-  );
-}
-
-function ScheduleView() {
-  return (
-    <div className="grid">
-      <div className="col-12"><WeeklyCalendarCard index={0} /></div>
-      <div className="col-12"><KanbanBoardCard index={1} /></div>
-    </div>
-  );
-}
-
-function ClimateView({ sky }) {
-  return (
-    <div className="grid">
-      <div className="col-12"><RoomClimateCard index={0} /></div>
-      <div className="col-7"><AirPurifierCard index={1} /></div>
-      <div className="col-5"><HeaterCard index={2} /></div>
-      <div className="col-12"><FanCard index={3} /></div>
-      <div className="col-12"><WeatherSunHero index={4} sky={sky} /></div>
-    </div>
-  );
-}
-
-function WorkshopView() {
-  return (
-    <div className="grid">
-      <div className="col-6"><PrinterCard index={0} /></div>
-      <div className="col-6"><VacuumCard index={1} /></div>
-    </div>
-  );
-}
-
-function SystemView() {
-  return (
-    <div className="grid">
-      <div className="col-6"><PiCard index={0} /></div>
-      <div className="col-6"><UptimeCard index={1} /></div>
-
-      <div className="col-6"><AddonsCard index={2} /></div>
-      <div className="col-6"><AdGuardSimpleCard index={3} /></div>
-
-      <div className="col-6"><BackupCard index={4} /></div>
-      <div className="col-6"><StorageCard index={5} /></div>
-
-      <div className="col-8"><EntityHealthCard index={6} /></div>
-      <div className="col-4"><SystemActionsCard index={7} /></div>
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------------
-   Service error toast
-   ----------------------------------------------------------------*/
-let toastIdCounter = 0;
-const TOAST_DURATION = 6000;
-
-function ToastItem({ toast, onDismiss }) {
-  const [exiting, setExiting] = useState(false);
-  const dismiss = useCallback(() => {
-    setExiting(true);
-    setTimeout(() => onDismiss(toast.id), 420);
-  }, [toast.id, onDismiss]);
-  useEffect(() => {
-    const timer = setTimeout(dismiss, TOAST_DURATION);
-    return () => clearTimeout(timer);
-  }, [dismiss]);
-
-  return (
-    <div className={`toast-item ${exiting ? "toast-exit" : ""}`}>
-      <div className="toast-glow" />
-      <div className="toast-edge" />
-      <div className="toast-icon-col">
-        <div className="toast-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-        </div>
-      </div>
-      <div className="toast-body">
-        <div className="toast-label">{toast.label}</div>
-        <div className="toast-detail">{toast.detail}</div>
-      </div>
-      <button className="toast-close" onClick={dismiss} aria-label="Dismiss">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-          <line x1="4" y1="4" x2="12" y2="12" />
-          <line x1="12" y1="4" x2="4" y2="12" />
-        </svg>
-      </button>
-      <div className="toast-timer">
-        <div className="toast-timer-bar" style={{ animationDuration: `${TOAST_DURATION}ms` }} />
-      </div>
-    </div>
-  );
-}
-
-function ServiceErrorToast() {
-  const [toasts, setToasts] = useState([]);
-  const dismiss = useCallback((id) => {
-    setToasts((t) => t.filter((x) => x.id !== id));
-  }, []);
-  useEffect(() => {
-    return onServiceError(({ domain, service, data, error }) => {
-      const entityId = data?.entity_id || "";
-      const errMsg = error?.message || String(error);
-      const shortErr = errMsg.length > 120 ? errMsg.slice(0, 120) + "…" : errMsg;
-      const label = entityId
-        ? `${domain}.${service} on ${entityId}`
-        : `${domain}.${service}`;
-      const id = ++toastIdCounter;
-      setToasts((t) => [...t.slice(-4), { id, label, detail: shortErr }]);
-    });
-  }, []);
-  if (toasts.length === 0) return null;
-  return (
-    <div className="toast-stack">
-      {toasts.map((t) => (
-        <ToastItem key={t.id} toast={t} onDismiss={dismiss} />
-      ))}
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------------
-   App
-   ----------------------------------------------------------------*/
-function useViewport() {
-  const urlPin = useMemo(() => {
-    const p = readURLParam("viewport", null);
-    return p === "phone" || p === "desktop" ? p : null;
-  }, []);
-  const [v, setV] = useState(() => {
-    if (urlPin) return urlPin;
-    if (typeof window === "undefined") return "desktop";
-    return window.matchMedia("(max-width: 768px)").matches ? "phone" : "desktop";
-  });
-  useEffect(() => {
-    if (urlPin) return;
-    const mql = window.matchMedia("(max-width: 768px)");
-    const onChange = (e) => setV(e.matches ? "phone" : "desktop");
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, [urlPin]);
-  return v;
-}
-
-/* Dashboard is "ready" once the WS is connected AND the first entity
-   snapshot has landed — at which point the boot animation can hand off. */
-function useDashReady() {
-  const status = useConnectionStatus();
-  const [snap, setSnap] = useState(() => hasSnapshot());
-  useEffect(() => {
-    if (snap) return;
-    return onSnapshotReady(() => setSnap(true));
-  }, [snap]);
-  return status === "ready" && snap;
 }
 
 export default function App() {
@@ -586,13 +229,15 @@ export default function App() {
         </header>
 
         <main className="view" key={tab}>
-          {tab === "overview" && <OverviewView viewport={viewport} sky={sky} />}
-          {tab === "lights" && <LightsView />}
-          {tab === "media" && <MediaView />}
-          {tab === "schedule" && <ScheduleView />}
-          {tab === "climate" && <ClimateView sky={sky} />}
-          {tab === "workshop" && <WorkshopView />}
-          {tab === "system" && <SystemView />}
+          <Suspense fallback={null}>
+            {tab === "overview" && <OverviewView viewport={viewport} sky={sky} />}
+            {tab === "lights" && <LightsView />}
+            {tab === "media" && <MediaView />}
+            {tab === "schedule" && <ScheduleView />}
+            {tab === "climate" && <ClimateView sky={sky} />}
+            {tab === "workshop" && <WorkshopView />}
+            {tab === "system" && <SystemView />}
+          </Suspense>
         </main>
 
         <nav className="bottom-nav">
