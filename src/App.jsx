@@ -15,7 +15,9 @@
 import { useState, useEffect, useMemo, useRef, lazy, Suspense } from "react";
 import { skyColors, TWEAK_DEFAULTS, loadStoredTweaks, persistTweaks, applyTheme } from "./theme.js";
 import { useConnectionStatus, useEntityCounts } from "./ha/useEntity.js";
+import { useCurrentUser } from "./ha/useCurrentUser.js";
 import { readURLParam } from "./lib/url.js";
+import { deriveRole, canSeeTab } from "./lib/roles.js";
 import { fmtTime } from "./lib/format.js";
 import { useNow } from "./hooks/useNow.js";
 import { useViewport } from "./hooks/useViewport.js";
@@ -107,6 +109,12 @@ export default function App() {
   const dashReady = useDashReady();
   const [booting, setBooting] = useState(true);
 
+  // RBAC (display layer — HA groups are the enforcement layer, see lib/roles.js)
+  const connectionStatus = useConnectionStatus();
+  const currentUser = useCurrentUser();
+  const role = deriveRole(currentUser, connectionStatus === "ready");
+  const visibleTabs = useMemo(() => TABS.filter((t) => canSeeTab(role, t.id)), [role]);
+
   const initial = useMemo(() => {
     const url = {
       lean: readURLParam("lean", null),
@@ -130,6 +138,12 @@ export default function App() {
   const [clock, setClock] = useState(initial.clock);
   const [bootStyle, setBootStyle] = useState(initial.bootStyle);
   const [tab, setTab] = useState(initial.tab);
+
+  // If the current tab isn't allowed for this role (deep link, or role
+  // resolved after connect), snap to the first tab the role can see.
+  useEffect(() => {
+    if (!canSeeTab(role, tab)) setTab(visibleTabs[0].id);
+  }, [role, tab, visibleTabs]);
 
   // Clean ?tab= from URL after reading it so refreshes default to overview
   useEffect(() => {
@@ -169,7 +183,7 @@ export default function App() {
       ind.style.left = `${active.offsetLeft}px`;
       ind.style.width = `${active.offsetWidth}px`;
     }
-  }, [tab, viewport]);
+  }, [tab, viewport, visibleTabs]);
 
   const greeting = sky.isDay
     ? now < 12
@@ -211,7 +225,7 @@ export default function App() {
           {viewport !== "phone" && (
             <nav className="tabs" ref={tabsRef}>
               <span className="indicator" />
-              {TABS.map((t) => (
+              {visibleTabs.map((t) => (
                 <button key={t.id} className={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)}>
                   {t.label}
                 </button>
@@ -230,18 +244,22 @@ export default function App() {
 
         <main className="view" key={tab}>
           <Suspense fallback={null}>
-            {tab === "overview" && <OverviewView viewport={viewport} sky={sky} />}
-            {tab === "lights" && <LightsView />}
-            {tab === "media" && <MediaView />}
-            {tab === "schedule" && <ScheduleView />}
-            {tab === "climate" && <ClimateView sky={sky} />}
-            {tab === "workshop" && <WorkshopView />}
-            {tab === "system" && <SystemView />}
+            {canSeeTab(role, tab) && (
+              <>
+                {tab === "overview" && <OverviewView viewport={viewport} sky={sky} />}
+                {tab === "lights" && <LightsView />}
+                {tab === "media" && <MediaView />}
+                {tab === "schedule" && <ScheduleView />}
+                {tab === "climate" && <ClimateView sky={sky} />}
+                {tab === "workshop" && <WorkshopView />}
+                {tab === "system" && <SystemView />}
+              </>
+            )}
           </Suspense>
         </main>
 
         <nav className="bottom-nav">
-          {TABS.map((t) => (
+          {visibleTabs.map((t) => (
             <button key={t.id} className={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)}>
               <span className="ic">
                 {
