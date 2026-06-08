@@ -1,0 +1,281 @@
+/* ============================================================
+   Diffuser — Meross MOD150 ultrasonic diffuser.
+   Climate-tab hero card ("Atmosphere" / variant A) + the Overview
+   quick-control strip (DiffuserMini). Class prefix: .diff- / .dmini-
+   ============================================================ */
+
+/* Shared bits ------------------------------------------------ */
+.diff-swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.diff-swatch {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-stroke);
+  cursor: pointer; padding: 0; position: relative;
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: inset 0 1px 2px rgba(255,255,255,0.35), 0 2px 6px rgba(0,0,0,0.08);
+}
+.diff-swatch:hover { transform: scale(1.12); }
+.diff-swatch.on {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 2px var(--glass-bg), 0 0 0 4px var(--c, var(--accent));
+}
+
+/* Brightness slider */
+.diff-bright { display: flex; align-items: center; gap: 12px; }
+.diff-range {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; height: 8px; border-radius: 999px;
+  background: linear-gradient(90deg,
+      color-mix(in oklch, var(--led, var(--accent)), transparent 70%) 0%,
+      var(--led, var(--accent)) var(--bp, 60%),
+      var(--rule) var(--bp, 60%),
+      var(--rule) 100%);
+  outline: none; cursor: pointer;
+}
+.diff-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--glass-bg-2); border: 2px solid var(--led, var(--accent));
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18); cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.diff-range::-webkit-slider-thumb:hover { transform: scale(1.14); }
+.diff-range::-moz-range-thumb {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--glass-bg-2); border: 2px solid var(--led, var(--accent));
+  box-shadow: 0 2px 8px rgba(0,0,0,0.18); cursor: pointer;
+}
+.diff-bright .val {
+  font-family: var(--font-mono); font-size: 12px; color: var(--ink-2);
+  min-width: 38px; text-align: right;
+}
+
+/* Mist mode segment */
+.diff-seg {
+  display: inline-flex; flex-wrap: wrap;
+  background: color-mix(in oklch, var(--glass-bg-2), transparent 30%);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 999px; padding: 3px; gap: 2px;
+}
+.diff-seg button {
+  background: transparent; border: 0;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em;
+  padding: 6px 13px; border-radius: 999px;
+  color: var(--ink-3); cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+  text-transform: capitalize; white-space: nowrap;
+}
+.diff-seg button:hover { color: var(--ink); }
+.diff-seg button.on { background: var(--ink); color: var(--sky-top, #fff); }
+
+/* Stat chips */
+.diff-stats { display: flex; gap: 10px; flex-wrap: wrap; }
+.diff-stat {
+  flex: 1; min-width: 0;
+  background: color-mix(in oklch, var(--glass-bg-2), transparent 35%);
+  border: 1px solid var(--glass-stroke);
+  border-radius: 14px; padding: 11px 13px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.diff-stat .k {
+  font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);
+}
+.diff-stat .v {
+  font-family: var(--font-display); font-weight: var(--display-weight, 400);
+  font-size: 22px; letter-spacing: -0.01em; color: var(--ink); line-height: 1;
+}
+.diff-stat .v i { font-style: normal; font-size: 12px; color: var(--ink-3); margin-left: 2px; }
+
+/* ============================================================
+   Climate hero — "Atmosphere" (mist stage + controls)
+   ============================================================ */
+.diff-a-body {
+  display: grid; grid-template-columns: minmax(150px, 200px) minmax(0, 1fr); gap: 20px;
+  align-items: stretch;
+}
+.diff-stage {
+  position: relative; border-radius: 20px; overflow: hidden;
+  border: 1px solid var(--glass-stroke);
+  background:
+    radial-gradient(120% 90% at 50% 110%,
+      color-mix(in oklch, var(--led, var(--accent)), transparent 55%) 0%,
+      color-mix(in oklch, var(--led, var(--accent)), transparent 82%) 30%,
+      transparent 62%),
+    color-mix(in oklch, var(--glass-bg-2), transparent 20%);
+  display: flex; align-items: flex-end; justify-content: center;
+  min-height: 240px;
+}
+.diff-stage-state {
+  position: absolute; top: 12px; left: 12px;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+  padding: 5px 9px; border-radius: 999px;
+  background: var(--glass-bg); border: 1px solid var(--glass-stroke);
+  color: var(--ink-2); backdrop-filter: blur(6px);
+}
+.diff-stage-state .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--led, var(--accent)); box-shadow: 0 0 8px var(--led, var(--accent));
+}
+.diff-stage-state.off .dot { background: var(--ink-4); box-shadow: none; }
+
+/* Mist particles */
+.diff-mist { position: absolute; inset: 0; pointer-events: none; }
+.diff-mist span {
+  position: absolute; bottom: 64px; left: 50%;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%,
+    color-mix(in oklch, var(--led, white), white 55%), transparent 70%);
+  opacity: 0;
+  animation: diff-rise var(--dur, 4s) ease-in infinite;
+  animation-delay: var(--dl, 0s);
+}
+@keyframes diff-rise {
+  0%   { transform: translate(-50%, 0) scale(0.5); opacity: 0; }
+  16%  { opacity: 0.85; }
+  100% { transform: translate(calc(-50% + var(--dx, 0px)), -150px) scale(2.5); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .diff-mist span { animation: none; opacity: 0.35; transform: translate(-50%, -60px) scale(1.6); }
+}
+
+/* The device base */
+.diff-device {
+  position: relative; z-index: 2;
+  width: 118px; height: 70px; margin-bottom: 18px;
+  border-radius: 14px 14px 22px 22px / 10px 10px 30px 30px;
+  background: linear-gradient(180deg,
+      color-mix(in oklch, var(--ink), transparent 78%),
+      color-mix(in oklch, var(--ink), transparent 58%));
+  border: 1px solid var(--glass-stroke-2);
+  box-shadow: inset 0 2px 6px rgba(255,255,255,0.25), 0 8px 20px rgba(0,0,0,0.16);
+}
+.diff-device::before {
+  content: ""; position: absolute; top: 7px; left: 50%; transform: translateX(-50%);
+  width: 46px; height: 10px; border-radius: 999px;
+  background: var(--led, var(--accent));
+  box-shadow: 0 0 16px 2px var(--led, var(--accent)); opacity: 0.9;
+}
+.diff-device::after {
+  content: ""; position: absolute; bottom: -10px; left: 50%; transform: translateX(-50%);
+  width: 150px; height: 26px; border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in oklch, var(--led), transparent 50%), transparent 70%);
+  filter: blur(3px);
+}
+.diff-a-controls { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.diff-a-controls .lede { font-size: 14px; line-height: 1.5; color: var(--ink-2); }
+.diff-a-controls .lede b { color: var(--ink); font-weight: 600; }
+.diff-field { display: flex; flex-direction: column; gap: 7px; }
+.diff-field > .flabel {
+  font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.diff-led-state { display: inline-flex; align-items: center; gap: 9px; }
+.diff-led-state .w {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.diff-led-state .w.lit { color: var(--good); }
+.diff-led-controls { display: flex; flex-direction: column; gap: 12px; transition: filter 0.25s ease; }
+
+/* ============================================================
+   Overview quick-control strip — DiffuserMini
+   ============================================================ */
+.gs-status {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--gs-color, var(--ink-3));
+  padding: 6px 11px; border-radius: 999px;
+  background: color-mix(in oklch, var(--gs-color, var(--ink-3)), transparent 88%);
+  border: 1px solid color-mix(in oklch, var(--gs-color, var(--ink-3)), transparent 68%);
+}
+.gs-status .d {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--gs-color, var(--ink-3)); flex-shrink: 0;
+}
+
+.dmini-body { display: flex; flex-direction: column; gap: 16px; justify-content: center; }
+.dmini-id { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.dmini-orb {
+  width: 44px; height: 44px; border-radius: 14px; flex-shrink: 0;
+  background: radial-gradient(circle at 50% 35%,
+      var(--led, var(--accent)),
+      color-mix(in oklch, var(--led, var(--accent)), var(--ink) 35%) 90%);
+  box-shadow: 0 0 16px color-mix(in oklch, var(--led, var(--accent)), transparent 55%),
+              inset 0 2px 6px rgba(255,255,255,0.4);
+  position: relative;
+}
+.dmini-orb::after {
+  content: ""; position: absolute; top: 9px; left: 50%; transform: translateX(-50%);
+  width: 18px; height: 4px; border-radius: 999px; background: rgba(255,255,255,0.72);
+}
+.dmini-orb.off {
+  background: color-mix(in oklch, var(--glass-bg-2), var(--ink) 8%);
+  box-shadow: inset 0 2px 6px rgba(255,255,255,0.2);
+}
+.dmini-id .nm {
+  font-family: var(--font-display); font-weight: var(--display-weight, 400);
+  font-size: 21px; letter-spacing: -0.01em; color: var(--ink); line-height: 1.1;
+}
+.dmini-id .sub {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+  color: var(--ink-3); margin-top: 4px; text-transform: capitalize;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dmini-led { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.dmini-led .w {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--ink-3); transition: color 0.2s;
+}
+.dmini-led .w.lit { color: var(--led, var(--accent)); }
+.dmini-mist .diff-seg { width: 100%; display: flex; }
+.dmini-mist .diff-seg button { flex: 1; text-align: center; }
+.dmini-ledrow {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 14px; border-top: 1px solid var(--rule);
+}
+.dmini-ledrow > .k {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+body.viewport-phone .dmini-led .w { display: none; }
+
+/* ============================================================
+   Phone / narrow — stack the climate hero body
+   ============================================================ */
+body.viewport-phone .diff-a-body { grid-template-columns: 1fr !important; gap: 16px !important; }
+body.viewport-phone .diff-stage { min-height: 180px; }
+
+/* ============================================================
+   Equal-height — let the diffuser's rows share a height with
+   their neighbours (desktop only). Scoped via :has() so other
+   dashboard rows are untouched.
+   ============================================================ */
+body.viewport-desktop .grid > .col-7:has(.diff-a-body),
+body.viewport-desktop .grid > .col-7:has(> .playstrip-card),
+body.viewport-desktop .grid > .col-5:has(> .diffuser-mini-card),
+body.viewport-desktop .grid > .col-5:has(.heater-body) {
+  display: flex; flex-direction: column; min-width: 0;
+}
+body.viewport-desktop .grid > .col-7:has(.diff-a-body) > .card,
+body.viewport-desktop .grid > .col-7:has(> .playstrip-card) > .card,
+body.viewport-desktop .grid > .col-5:has(> .diffuser-mini-card) > .card,
+body.viewport-desktop .grid > .col-5:has(.heater-body) > .card {
+  flex: 1 1 auto;
+}
+
+/* Fill the stretched cards with their bodies */
+body.viewport-desktop .card:has(> .diff-a-body) { display: flex; flex-direction: column; }
+body.viewport-desktop .card:has(> .diff-a-body) .diff-a-body { flex: 1 1 auto; }
+body.viewport-desktop .diffuser-mini-card:has(> .dmini-body) { display: flex; flex-direction: column; }
+body.viewport-desktop .diffuser-mini-card .dmini-body { flex: 1 1 auto; }
+body.viewport-desktop .card:has(> .heater-body) { display: flex; flex-direction: column; }
+body.viewport-desktop .card:has(> .heater-body) .heater-body { flex: 1 1 auto; }
+
+/* Overview Play strip reflowed for the narrower col-7 slot:
+   centre the console control vertically so it shares the diffuser's height. */
+body.viewport-desktop .playstrip-card { display: flex; flex-direction: column; }
+body.viewport-desktop .playstrip-card .sambox { flex: 1 1 auto; justify-content: center; }

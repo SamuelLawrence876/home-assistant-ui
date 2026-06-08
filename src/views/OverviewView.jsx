@@ -7,6 +7,7 @@ import { NextEventCard } from "../cards/overview/NextEventCard.jsx";
 import { RoomClimateStrip } from "../cards/overview/RoomClimateStrip.jsx";
 import { ScenesCard } from "../cards/overview/ScenesCard.jsx";
 import { PlayStrip } from "../cards/overview/PlayStrip.jsx";
+import { DiffuserMini } from "../cards/overview/DiffuserMini.jsx";
 import { MediaCard } from "../cards/media/MediaCard.jsx";
 import { QuickLightsCard } from "../cards/lights/QuickLightsCard.jsx";
 import { InProgressCard } from "../cards/system/InProgressCard.jsx";
@@ -37,8 +38,9 @@ export default function OverviewView({ viewport, sky }) {
         <InProgressCard index={7} />
       </div>
 
-      {/* Play strip at the foot — replaces the four stat pills (SamBox360 design) */}
-      <div className="col-12"><PlayStrip index={8} /></div>
+      {/* Foot row — SamBox360 Play strip (col-7) beside the bedroom diffuser quick-control (col-5) */}
+      <div className="col-7"><PlayStrip index={8} /></div>
+      <div className="col-5"><DiffuserMini index={9} /></div>
     </div>
   );
 }

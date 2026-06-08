@@ -321,6 +321,33 @@ export const GH_DATA = {
       { name: "Smart bulb + Pixoo placeholder", count: 5, note: "Orphan + first-load notify entities" },
     ],
   },
+  // Bedroom diffuser — Meross MOD150 ultrasonic diffuser + LED.
+  // Mock fallback; live entities are humidifier.bedroom_diffuser +
+  // light.bedroom_diffuser when the device comes online.
+  diffuser: {
+    "humidifier.bedroom_diffuser": {
+      state: "on",
+      attributes: {
+        friendly_name: "Bedroom diffuser",
+        device: "Meross MOD150",
+        mode: "continuous",
+        available_modes: ["off", "intermittent", "continuous"],
+      },
+    },
+    "light.bedroom_diffuser": {
+      state: "on",
+      attributes: {
+        friendly_name: "Diffuser light",
+        brightness: 165, // 0–255
+        rgb_color: [96, 170, 255],
+        effect: "cycle", // fixed | cycle
+        effect_list: ["fixed", "cycle"],
+      },
+    },
+    water_pct: 64, // estimated reservoir
+    runtime_left: "5h 20m", // at continuous, from a 300 ml fill
+    ml_capacity: 300,
+  },
   // SamBox360 — game console on a smart plug. Power-only control.
   gaming: {
     name: "SamBox360",
