@@ -280,3 +280,21 @@
   color: var(--ink-3);
   margin-top: 2px;
 }
+/* Toggle tiles: lit while a script is running / a paired scene is active. */
+.scene.active {
+  background: color-mix(in oklch, var(--good), transparent 86%);
+  border-color: color-mix(in oklch, var(--good), transparent 55%);
+}
+.scene.active .scene-sub { color: color-mix(in oklch, var(--good), var(--ink-3) 35%); }
+.scene-dot {
+  position: absolute;
+  top: 10px; right: 12px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ink-4);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+.scene-dot.on {
+  background: var(--good);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--good), transparent 80%);
+}
