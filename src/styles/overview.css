@@ -264,6 +264,9 @@
 .scene.movie .scene-ic   { background: color-mix(in oklch, var(--bad), transparent 80%); color: var(--bad); }
 .scene.goodnight .scene-ic { background: color-mix(in oklch, var(--ink-2), transparent 85%); color: var(--ink-2); }
 .scene.all_off .scene-ic { background: color-mix(in oklch, var(--ink-3), transparent 85%); color: var(--ink-3); }
+.scene.good_morning .scene-ic { background: color-mix(in oklch, var(--accent-2), transparent 78%); color: var(--accent-2); }
+.scene.leaving .scene-ic { background: color-mix(in oklch, var(--accent), transparent 80%); color: var(--accent); }
+.scene.work_done .scene-ic { background: color-mix(in oklch, var(--good), transparent 80%); color: var(--good); }
 .scene .scene-nm {
   font-size: 14px;
   font-weight: 600;
