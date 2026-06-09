@@ -1,5 +1,25 @@
-/* Diffuser LED palette + colour helpers — shared by the Climate DiffuserCard
-   and the Overview DiffuserMini. Pure, no JSX, no entity access. */
+/* Diffuser entity map + LED palette + colour helpers — shared by the Climate
+   DiffuserCard and the Overview DiffuserMini. Pure, no JSX, no entity access.
+
+   Real device: Meross "Smart Essential Oil Diffuser" via meross_lan. Mist is a
+   `select` (off/eco/on), not a humidifier domain entity; the LED is an rgb
+   light; humidity + temperature come from the device's own sensors. There is
+   no water-level sensor on this model. */
+
+export const DIFFUSER = {
+  spray: "select.smart_humidifier_2403124281557464110148e1e9eff28f_spray",
+  light: "light.smart_humidifier_2403124281557464110148e1e9eff28f",
+  humidity: "sensor.smart_essential_oil_diffuser_humidity",
+  temperature: "sensor.smart_essential_oil_diffuser_temperature",
+};
+
+/* Meross spray modes, in segment order. off → standby, eco → intermittent
+   pulses, on → continuous. */
+export const SPRAY_OPTIONS = ["off", "eco", "on"];
+
+/* Fallback LED colour when the light is in an effect mode (rgb_color is null). */
+export const DEFAULT_RGB = [96, 170, 255];
+
 
 export const DIFFUSER_COLORS = [
   { name: "Warm white", rgb: [255, 214, 170] },

@@ -3,29 +3,28 @@ import { useEntity } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { GH_DATA } from "../../data.js";
-import { rgbCss, nearestColorName } from "../../lib/diffuser.js";
+import { DIFFUSER, SPRAY_OPTIONS, DEFAULT_RGB, rgbCss, nearestColorName } from "../../lib/diffuser.js";
 
-const HUMIDIFIER = "humidifier.bedroom_diffuser";
-const LED = "light.bedroom_diffuser";
-const MIST_MODES = ["off", "intermittent", "continuous"];
+const fb = GH_DATA.diffuser;
 
 /* ----------------------------------------------------------------
    Overview quick-control strip — glanceable mist + LED. Compact
    sibling of the SamBox360 "Play" tile; pairs with it in the
    bottom row (col-5 next to the col-7 Play strip).
+   Meross Smart Essential Oil Diffuser (meross_lan): mist is a
+   select (off/eco/on), LED is an rgb light.
    ----------------------------------------------------------------*/
 export function DiffuserMini({ index = 0 }) {
-  const fallback = GH_DATA.diffuser;
-  const liveHum = useEntity(HUMIDIFIER);
-  const liveLed = useEntity(LED);
-  const h = liveHum || fallback[HUMIDIFIER];
-  const l = liveLed || fallback[LED];
+  const liveSpray = useEntity(DIFFUSER.spray);
+  const liveLed = useEntity(DIFFUSER.light);
+  const spray = liveSpray || fb[DIFFUSER.spray];
+  const l = liveLed || fb[DIFFUSER.light];
 
-  const [mode, setMode] = useState(h.attributes.mode);
-  const [rgb, setRgb] = useState(l.attributes.rgb_color);
+  const [mode, setMode] = useState(spray.state);
+  const [rgb, setRgb] = useState(l.attributes.rgb_color || DEFAULT_RGB);
   const [lightOn, setLightOn] = useState(l.state === "on");
 
-  useEffect(() => { if (liveHum) setMode(liveHum.attributes.mode); }, [liveHum?.attributes.mode]);
+  useEffect(() => { if (liveSpray) setMode(liveSpray.state); }, [liveSpray?.state]);
   useEffect(() => { if (liveLed) setLightOn(liveLed.state === "on"); }, [liveLed?.state]);
   useEffect(() => { if (liveLed?.attributes.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes.rgb_color?.join()]);
 
@@ -36,18 +35,12 @@ export function DiffuserMini({ index = 0 }) {
   function changeMode(m) {
     const prev = mode;
     setMode(m);
-    if (m === "off") {
-      callService("humidifier", "turn_off", { entity_id: HUMIDIFIER }).catch(() => setMode(prev));
-    } else {
-      callService("humidifier", "turn_on", { entity_id: HUMIDIFIER })
-        .then(() => callService("humidifier", "set_mode", { entity_id: HUMIDIFIER, mode: m }))
-        .catch(() => setMode(prev));
-    }
+    callService("select", "select_option", { entity_id: DIFFUSER.spray, option: m }).catch(() => setMode(prev));
   }
   function toggleLight() {
     const next = !lightOn;
     setLightOn(next);
-    callService("light", next ? "turn_on" : "turn_off", { entity_id: LED }).catch(() => setLightOn(!next));
+    callService("light", next ? "turn_on" : "turn_off", { entity_id: DIFFUSER.light }).catch(() => setLightOn(!next));
   }
 
   return (
@@ -67,16 +60,16 @@ export function DiffuserMini({ index = 0 }) {
         <div className="dmini-id">
           <div className={`dmini-orb ${lightOn ? "" : "off"}`} />
           <div style={{ minWidth: 0 }}>
-            <div className="nm">Bedroom diffuser</div>
+            <div className="nm">Oil diffuser</div>
             <div className="sub">
-              {misting ? `Misting · ${mode}` : "Standby"}{lightOn ? ` · ${nearestColorName(rgb).toLowerCase()}` : " · LED off"}
+              {misting ? `Spraying · ${mode}` : "Standby"}{lightOn ? ` · ${nearestColorName(rgb).toLowerCase()}` : " · LED off"}
             </div>
           </div>
         </div>
 
         <div className="dmini-mist">
           <div className="diff-seg">
-            {MIST_MODES.map((m) => (
+            {SPRAY_OPTIONS.map((m) => (
               <button key={m} className={mode === m ? "on" : ""} onClick={() => changeMode(m)}>{m}</button>
             ))}
           </div>

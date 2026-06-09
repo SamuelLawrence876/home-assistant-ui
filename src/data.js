@@ -321,32 +321,36 @@ export const GH_DATA = {
       { name: "Smart bulb + Pixoo placeholder", count: 5, note: "Orphan + first-load notify entities" },
     ],
   },
-  // Bedroom diffuser — Meross MOD150 ultrasonic diffuser + LED.
-  // Mock fallback; live entities are humidifier.bedroom_diffuser +
-  // light.bedroom_diffuser when the device comes online.
+  // Meross "Smart Essential Oil Diffuser" (meross_lan). Mock fallback keyed by
+  // the real entity ids — used only until the live WS state arrives. Mist is a
+  // select (off/eco/on); the LED is an rgb light; humidity + temperature come
+  // from the device's own sensors. No water-level sensor on this model.
   diffuser: {
-    "humidifier.bedroom_diffuser": {
-      state: "on",
+    "select.smart_humidifier_2403124281557464110148e1e9eff28f_spray": {
+      state: "eco",
       attributes: {
-        friendly_name: "Bedroom diffuser",
-        device: "Meross MOD150",
-        mode: "continuous",
-        available_modes: ["off", "intermittent", "continuous"],
+        friendly_name: "Smart Essential Oil Diffuser Spray",
+        options: ["off", "eco", "on"],
       },
     },
-    "light.bedroom_diffuser": {
+    "light.smart_humidifier_2403124281557464110148e1e9eff28f": {
       state: "on",
       attributes: {
-        friendly_name: "Diffuser light",
+        friendly_name: "Smart Essential Oil Diffuser",
         brightness: 165, // 0–255
         rgb_color: [96, 170, 255],
-        effect: "cycle", // fixed | cycle
-        effect_list: ["fixed", "cycle"],
+        supported_color_modes: ["rgb"],
+        effect_list: ["Rainbow", "Color", "Temperature"],
       },
     },
-    water_pct: 64, // estimated reservoir
-    runtime_left: "5h 20m", // at continuous, from a 300 ml fill
-    ml_capacity: 300,
+    "sensor.smart_essential_oil_diffuser_humidity": {
+      state: "77",
+      attributes: { unit_of_measurement: "%", friendly_name: "Smart Essential Oil Diffuser Humidity" },
+    },
+    "sensor.smart_essential_oil_diffuser_temperature": {
+      state: "27.7",
+      attributes: { unit_of_measurement: "°C", friendly_name: "Smart Essential Oil Diffuser Temperature" },
+    },
   },
   // SamBox360 — game console on a smart plug. Power-only control.
   gaming: {

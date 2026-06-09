@@ -3,14 +3,13 @@ import { useEntity } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { GH_DATA } from "../../data.js";
-import { DIFFUSER_COLORS, rgbCss, nearestColorName } from "../../lib/diffuser.js";
+import { DIFFUSER, SPRAY_OPTIONS, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName } from "../../lib/diffuser.js";
 
-const HUMIDIFIER = "humidifier.bedroom_diffuser";
-const LED = "light.bedroom_diffuser";
-const MIST_MODES = ["off", "intermittent", "continuous"];
+const fb = GH_DATA.diffuser;
+const numOr = (v, d) => (v != null && v !== "unavailable" && v !== "unknown" && !Number.isNaN(+v) ? +v : d);
 
-/* Mist particles rising off the device head — static deterministic set so
-   the verify harness can freeze the animation. */
+/* Mist particles rising off the device head — static deterministic set so the
+   verify harness can freeze the animation. */
 const MIST_DOTS = [
   { dl: "0s",   dx: "-14px", dur: "4.4s" },
   { dl: "0.7s", dx: "10px",  dur: "5.0s" },
@@ -40,61 +39,61 @@ function Swatches({ rgb, onPick }) {
 }
 
 /* ----------------------------------------------------------------
-   Diffuser — Meross MOD150. Mist mode + LED night-light.
-   Climate-tab "Atmosphere" hero layout. Live where the device is
-   online; falls back to GH_DATA.diffuser otherwise.
+   Diffuser — Meross Smart Essential Oil Diffuser (meross_lan).
+   Mist spray (select: off/eco/on) + rgb LED night-light, plus the
+   device's own humidity + temperature readings. Climate-tab
+   "Atmosphere" hero. Falls back to GH_DATA.diffuser pre-WS.
    ----------------------------------------------------------------*/
 export function DiffuserCard({ index = 0 }) {
-  const fallback = GH_DATA.diffuser;
-  const liveHum = useEntity(HUMIDIFIER);
-  const liveLed = useEntity(LED);
-  const h = liveHum || fallback[HUMIDIFIER];
-  const l = liveLed || fallback[LED];
+  const liveSpray = useEntity(DIFFUSER.spray);
+  const liveLed = useEntity(DIFFUSER.light);
+  const liveHum = useEntity(DIFFUSER.humidity);
+  const liveTemp = useEntity(DIFFUSER.temperature);
 
-  const [mode, setMode] = useState(h.attributes.mode);
-  const [bright, setBright] = useState(Math.round(l.attributes.brightness / 2.55));
-  const [rgb, setRgb] = useState(l.attributes.rgb_color);
+  const spray = liveSpray || fb[DIFFUSER.spray];
+  const l = liveLed || fb[DIFFUSER.light];
+  const hum = liveHum || fb[DIFFUSER.humidity];
+  const temp = liveTemp || fb[DIFFUSER.temperature];
+
+  const [mode, setMode] = useState(spray.state);
+  const [bright, setBright] = useState(Math.round(numOr(l.attributes.brightness, 165) / 2.55));
+  const [rgb, setRgb] = useState(l.attributes.rgb_color || DEFAULT_RGB);
   const [lightOn, setLightOn] = useState(l.state === "on");
 
-  useEffect(() => { if (liveHum) setMode(liveHum.attributes.mode); }, [liveHum?.attributes.mode]);
+  useEffect(() => { if (liveSpray) setMode(liveSpray.state); }, [liveSpray?.state]);
   useEffect(() => { if (liveLed) setLightOn(liveLed.state === "on"); }, [liveLed?.state]);
   useEffect(() => { if (liveLed?.attributes.brightness != null) setBright(Math.round(liveLed.attributes.brightness / 2.55)); }, [liveLed?.attributes.brightness]);
   useEffect(() => { if (liveLed?.attributes.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes.rgb_color?.join()]);
 
   const misting = mode !== "off";
   const led = lightOn ? rgbCss(rgb) : "var(--ink-4)";
-  const lowWater = fallback.water_pct < 20;
+  const humidity = numOr(hum?.state, null);
+  const temperature = numOr(temp?.state, null);
 
   function changeMode(m) {
     const prev = mode;
     setMode(m);
-    if (m === "off") {
-      callService("humidifier", "turn_off", { entity_id: HUMIDIFIER }).catch(() => setMode(prev));
-    } else {
-      callService("humidifier", "turn_on", { entity_id: HUMIDIFIER })
-        .then(() => callService("humidifier", "set_mode", { entity_id: HUMIDIFIER, mode: m }))
-        .catch(() => setMode(prev));
-    }
+    callService("select", "select_option", { entity_id: DIFFUSER.spray, option: m }).catch(() => setMode(prev));
   }
   function toggleLight() {
     const next = !lightOn;
     setLightOn(next);
-    callService("light", next ? "turn_on" : "turn_off", { entity_id: LED }).catch(() => setLightOn(!next));
+    callService("light", next ? "turn_on" : "turn_off", { entity_id: DIFFUSER.light }).catch(() => setLightOn(!next));
   }
   function commitBright(v) {
     setBright(v);
-    callService("light", "turn_on", { entity_id: LED, brightness_pct: v }).catch(() => {});
+    callService("light", "turn_on", { entity_id: DIFFUSER.light, brightness_pct: v }).catch(() => {});
   }
   function pickColor(c) {
     setRgb(c);
-    callService("light", "turn_on", { entity_id: LED, rgb_color: c }).catch(() => {});
+    callService("light", "turn_on", { entity_id: DIFFUSER.light, rgb_color: c }).catch(() => {});
   }
 
   return (
     <Card
       index={index}
-      eyebrow="Diffuser · Meross MOD150"
-      title="Bedroom diffuser"
+      eyebrow="Diffuser · Meross"
+      title="Essential oil diffuser"
       meta={misting ? `Misting · ${mode}` : "Standby"}
       style={{ "--led": led }}
     >
@@ -119,14 +118,14 @@ export function DiffuserCard({ index = 0 }) {
         <div className="diff-a-controls">
           <div className="lede">
             {misting
-              ? <>Diffusing on <b>{mode}</b>. {lightOn ? <>LED set to <b>{nearestColorName(rgb).toLowerCase()}</b>.</> : <>LED is <b>off</b>.</>}</>
+              ? <>Spraying on <b>{mode}</b>. {lightOn ? <>LED set to <b>{nearestColorName(rgb).toLowerCase()}</b>.</> : <>LED is <b>off</b>.</>}</>
               : <>Mist is off. {lightOn ? <>The LED stays <b>{nearestColorName(rgb).toLowerCase()}</b> as a night light.</> : <>LED is <b>off</b>.</>}</>}
           </div>
 
           <div className="diff-field">
             <span className="flabel">Mist</span>
             <div className="diff-seg">
-              {MIST_MODES.map((m) => (
+              {SPRAY_OPTIONS.map((m) => (
                 <button key={m} className={mode === m ? "on" : ""} onClick={() => changeMode(m)}>{m}</button>
               ))}
             </div>
@@ -158,12 +157,12 @@ export function DiffuserCard({ index = 0 }) {
 
           <div className="diff-stats">
             <div className="diff-stat">
-              <span className="k">Tank · est.</span>
-              <span className="v" style={{ color: lowWater ? "var(--warn)" : "var(--ink)" }}>{fallback.water_pct}<i>%</i></span>
+              <span className="k">Humidity</span>
+              <span className="v">{humidity != null ? Math.round(humidity) : "—"}<i>%</i></span>
             </div>
             <div className="diff-stat">
-              <span className="k">Runtime left</span>
-              <span className="v">{fallback.runtime_left}</span>
+              <span className="k">Temperature</span>
+              <span className="v">{temperature != null ? temperature.toFixed(1) : "—"}<i>°C</i></span>
             </div>
           </div>
         </div>
