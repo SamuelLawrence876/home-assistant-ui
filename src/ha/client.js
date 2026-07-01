@@ -56,7 +56,13 @@ export const callService = async (domain, service, data = {}, target = undefined
 /* HA proxies images (for entities of type `image`). Use this for the Bambu cover. */
 export const imageUrl = (entityId, ts) => {
   const { url, token } = getHAConfig();
-  return `${url}/api/image_proxy/${entityId}${ts ? `?t=${encodeURIComponent(ts)}` : ""}&token=${encodeURIComponent(token)}`;
+  // Build the query string properly: when `ts` is absent the token must still
+  // start the query with `?` (the old `&token=` with no `?` produced a malformed
+  // URL that HA rejected with 401/403).
+  const q = ts
+    ? `?t=${encodeURIComponent(ts)}&token=${encodeURIComponent(token)}`
+    : `?token=${encodeURIComponent(token)}`;
+  return `${url}/api/image_proxy/${entityId}${q}`;
 };
 
 /* Get forecasts via the modern service (HA changed this in 2024 — legacy `forecast` attribute is gone). */
