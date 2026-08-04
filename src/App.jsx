@@ -327,16 +327,32 @@ export default function App() {
     persistTweaks({ lean, mode: modePref, clockOverride, clock, bootStyle });
   }, [lean, modePref, clockOverride, clock, bootStyle]);
 
-  // Tab indicator position
+  /* Tab indicator position. The `document.fonts.ready` pass is the
+     load-bearing one: the fonts come from Google Fonts with `display=swap`, so
+     first paint uses a fallback face. This effect ran on mount against those
+     fallback metrics and nothing re-ran it, so the pill kept a width measured
+     for text no longer on screen until you changed tabs. It surfaced as a
+     flaky pixel gate — winning the race varied between two runs of identical
+     code (0.056%, just over the 0.05% budget) — but the flake was the symptom
+     and a mis-sized pill on first paint was the bug. */
   useEffect(() => {
-    const el = tabsRef.current;
-    if (!el) return;
-    const active = el.querySelector("button.on");
-    const ind = el.querySelector(".indicator");
-    if (active && ind) {
-      ind.style.left = `${active.offsetLeft}px`;
-      ind.style.width = `${active.offsetWidth}px`;
-    }
+    /* Needs no cleanup: it re-reads the live DOM on every call, so a late
+       resolution no-ops after unmount (the ref is null) and still lands on the
+       right button if the deps moved first. `?.` because jsdom has no
+       document.fonts; `.catch` because a face that fails to load must not
+       leave an unhandled rejection — the mount-time pass above still stands. */
+    const place = () => {
+      const el = tabsRef.current;
+      if (!el) return;
+      const active = el.querySelector("button.on");
+      const ind = el.querySelector(".indicator");
+      if (active && ind) {
+        ind.style.left = `${active.offsetLeft}px`;
+        ind.style.width = `${active.offsetWidth}px`;
+      }
+    };
+    place();
+    document.fonts?.ready.then(place).catch(() => {});
   }, [tab, viewport, visibleTabs]);
 
   const greeting = sky.isDay
