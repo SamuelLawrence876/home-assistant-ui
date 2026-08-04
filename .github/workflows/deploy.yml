@@ -14,14 +14,15 @@ name: Deploy
 # bucket, this workflow would keep uploading to the old one and succeed, and the
 # site would silently stop updating. Reading them from the stack removes that.
 #
-# Gates, all before the first AWS call:
+# Gates, all before the first AWS call, and all four block:
 #   lint -> test -> console errors -> screenshot diff -> build -> upload.
-# lint, test and the console check block. The screenshot diff DOES NOT BLOCK YET:
-# the committed baseline was shot on win32 and this runner is linux, so
-# pixel-diff.mjs refuses to compare and exits 0. Arm it by committing a baseline
-# shot here — `gh workflow run ci.yml -f bless=true`, download the artifact,
-# commit visual-baseline/. Until then a green screenshot step means "did not
-# run", not "nothing moved". See the step comment or scripts/README.md.
+# The screenshot diff only compares when the committed baseline was shot on the
+# same platform as this runner — pixel-diff.mjs checks visual-baseline/meta.json
+# and prints NOT BLESSED rather than failing a deploy for a font difference no
+# code change can fix. That is why the baseline is shot HERE and committed from
+# the artifact: `gh workflow run ci.yml -f bless=true`, download, commit. A
+# baseline re-blessed on a dev machine will silently disarm this step, which is
+# what the grep below is watching for. See scripts/README.md.
 #
 # Required repo configuration:
 #   Secrets:

@@ -151,20 +151,19 @@ node scripts/visual-check.mjs --bless    # then look at the PNGs and commit visu
 Screenshots are only comparable when the same renderer took both, so a baseline is stamped with the
 platform that shot it and `pixel-diff.mjs` refuses to compare across platforms.
 
-> **Gate 4 is not armed yet.** The committed baseline in `visual-baseline/meta.json` says
-> `"platform": "win32"` and CI runs on `ubuntu-latest`, so the diff prints `NOT BLESSED` and exits
-> **0** on every CI and deploy run. It does not currently block anything. To arm it, shoot a
-> baseline on a runner and commit that:
->
-> ```bash
-> gh workflow run ci.yml -f bless=true
-> gh run download <run-id> -n visual-baseline -D visual-baseline
-> git add visual-baseline && git commit -m "chore: bless visual baseline on linux"
-> ```
->
-> From that commit on it blocks, with no flag to flip. Until then, treat a green gate 4 as
-> "didn't run", not "no change". [`scripts/README.md`](scripts/README.md) explains why CI
-> deliberately doesn't commit a new baseline by itself.
+That is why the committed baseline is shot on a **runner** rather than on a developer's machine —
+it has to come from the same platform that will compare against it:
+
+```bash
+gh workflow run ci.yml -f bless=true
+gh run download <run-id> -n visual-baseline -D visual-baseline
+git add visual-baseline && git commit -m "chore: bless visual baseline on linux"
+```
+
+A local `--bless` updates the baseline for *your* machine, which CI will then decline to compare
+against — so use it to look at diffs, and the command above to actually move the gate.
+[`scripts/README.md`](scripts/README.md) explains why CI deliberately doesn't commit a new
+baseline by itself.
 
 ---
 
@@ -172,8 +171,7 @@ platform that shot it and `pixel-diff.mjs` refuses to compare across platforms.
 
 Push to `main`. GitHub Actions runs lint → test → console gate → screenshot gate → build, then
 assumes an AWS role via OIDC (no static keys), syncs `dist/` to S3 and invalidates CloudFront. All
-of them run before the first AWS call. Gates 1–3 block; gate 4 blocks **once a Linux baseline is
-committed** — see the note above.
+of them run before the first AWS call, and **all four block**.
 
 The bucket and distribution ids are **not** stored in this repo. They're read out of the
 CloudFormation stack at deploy time, because a copied-out id survives the resource being replaced:
