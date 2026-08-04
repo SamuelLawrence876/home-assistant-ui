@@ -116,7 +116,10 @@ export function VacuumCard({ index = 0 }) {
   const currentMopIntensity = liveMopIntensity?.state;
   const mopModeOptions = liveMopMode?.attributes?.options || [];
   const currentMopMode = liveMopMode?.state;
-  const currentRoom = liveRoom?.state;
+  // Subscribed and read, but nothing renders it yet. Underscored so the linter's
+  // allowance covers it rather than warning on every run; drop both this and the
+  // liveRoom subscription above if the room readout isn't wanted.
+  const _currentRoom = liveRoom?.state;
   const cleanArea = numOr(liveArea?.state, null);
   const cleanTime = numOr(liveTime?.state, null);
   const cleanProgress = numOr(liveProgress?.state, null);

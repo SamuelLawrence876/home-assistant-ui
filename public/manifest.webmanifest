@@ -1,12 +1,16 @@
 {
+  "id": "/",
   "name": "Glasshouse — Home Assistant",
   "short_name": "Glasshouse",
-  "description": "Personal Home Assistant dashboard.",
+  "description": "Glasshouse: a live dashboard for Samuel's Home Assistant — lights, climate, media, the 3D printer and the house schedule, on one screen.",
+  "lang": "en-GB",
+  "dir": "ltr",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#0a0d12",
-  "theme_color": "#0a0d12",
   "orientation": "any",
+  "theme_color": "#0a0d12",
+  "background_color": "#0a0d12",
   "icons": [
     {
       "src": "/icon.svg",

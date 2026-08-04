@@ -8,6 +8,17 @@ import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 
 /* ----------------------------------------------------------------
    Fan
+
+   DELIBERATELY MOCK — do not "fix" this. `fan.ceiling` has no Home Assistant
+   entity, so `live` is permanently null and every value below comes from
+   GH_DATA. That is a known, accepted state, not an oversight.
+
+   Decided 2026-08-04: the physical fan exists but is not plugged in, and is
+   being put away at the end of summer. Wiring this to a real entity is not
+   planned. If it is ever plugged back in, point `useEntityStatus` at the real
+   entity id and delete the GH_DATA fallback — the rest of the card is fine.
+
+   Tracked as item [6] in ROADMAP.md ("Explicitly not doing").
    ----------------------------------------------------------------*/
 export function FanCard({ index = 0 }) {
   const { entity: live, status: fanStatus } = useEntityStatus("fan.ceiling");

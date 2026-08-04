@@ -1,0 +1,27 @@
+{
+  "platform": "win32",
+  "arch": "x64",
+  "playwright": "1.60.0",
+  "chromium": "148.0.7778.96",
+  "shotAt": "2026-08-04T19:32:25.523Z",
+  "waitMs": 11000,
+  "tabs": [
+    "overview",
+    "lights",
+    "media",
+    "schedule",
+    "climate",
+    "workshop",
+    "system"
+  ],
+  "viewports": {
+    "desktop": {
+      "width": 1440,
+      "height": 1000
+    },
+    "phone": {
+      "width": 390,
+      "height": 844
+    }
+  }
+}

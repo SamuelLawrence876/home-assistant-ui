@@ -122,7 +122,12 @@ export function TweaksDrawer({
         </svg>
       </button>
 
-      {open && <div className="tweaks-scrim" onClick={() => setOpen(false)} />}
+      {/* Click-outside-to-close, and nothing else. aria-hidden because the
+          keyboard equivalents already exist and are announced: Escape, and
+          the "Close settings" button at the top of the panel. Exposing a
+          bare backdrop to a screen reader just adds an unnamed element in
+          front of the dialog. */}
+      {open && <div className="tweaks-scrim" aria-hidden="true" onClick={() => setOpen(false)} />}
 
       {/* `inert` is what actually takes the closed panel out of the tab order
           and out of the accessibility tree. The closed state is only visual
@@ -179,12 +184,19 @@ export function TweaksDrawer({
           </div>
         </div>
 
-        <div className="tweaks-section">
+        {/* Each of these three sections is a pick-one group whose current
+            pick was signalled by the "on" class and nothing else — visible
+            to anyone who could see the highlight, invisible to everyone
+            else. role="group" + aria-pressed is the shape the rest of the
+            codebase already uses for this (AirPurifierCard, FanCard). */}
+        <div className="tweaks-section" role="group" aria-label="Lean">
           <div className="lbl">Lean</div>
           {LEAN_OPTIONS.map((opt) => (
             <button
               key={opt.value}
+              type="button"
               className={`tweaks-row ${lean === opt.value ? "on" : ""}`}
+              aria-pressed={lean === opt.value}
               onClick={() => onLeanChange(opt.value)}
             >
               <span className="rad" />
@@ -198,11 +210,13 @@ export function TweaksDrawer({
 
         <div className="tweaks-section">
           <div className="lbl">Mode</div>
-          <div className="tweaks-segments">
+          <div className="tweaks-segments" role="group" aria-label="Mode">
             {MODE_OPTIONS.map((m) => (
               <button
                 key={m}
+                type="button"
                 className={`seg ${modePref === m ? "on" : ""}`}
+                aria-pressed={modePref === m}
                 onClick={() => onModeChange(m)}
               >
                 {m}
@@ -253,12 +267,14 @@ export function TweaksDrawer({
         </div>
 
         {onBootStyleChange && (
-          <div className="tweaks-section">
+          <div className="tweaks-section" role="group" aria-label="Welcome animation">
             <div className="lbl">Welcome animation</div>
             {BOOT_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
+                type="button"
                 className={`tweaks-row ${bootStyle === opt.value ? "on" : ""}`}
+                aria-pressed={bootStyle === opt.value}
                 onClick={() => onBootStyleChange(opt.value)}
               >
                 <span className="rad" />

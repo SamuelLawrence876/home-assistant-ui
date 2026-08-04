@@ -1,5 +1,24 @@
 name: CI
 
+# Runs on branches and PRs. Same gates as deploy.yml, in the same order, so a
+# green CI means the deploy will get that far too.
+#
+#   lint  -> test -> build   (cheap, seconds)
+#   console gate -> screenshot gate   (browser, minutes)
+#
+# Re-bless the screenshot baseline
+# -------------------------------
+# Locally, one line:
+#     node scripts/visual-check.mjs --bless      # then commit visual-baseline/
+#
+# For the Linux images this workflow compares against (a baseline shot on
+# Windows or macOS will not match a CI runner — different fonts):
+#     gh workflow run ci.yml -f bless=true
+#     gh run download <run-id> -n visual-baseline -D visual-baseline
+#     git add visual-baseline && git commit -m "chore: re-bless visual baseline"
+#
+# Full explanation in scripts/README.md.
+
 on:
   push:
     branches-ignore:
@@ -7,11 +26,26 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      bless:
+        description: "Re-shoot the visual baseline on this runner and upload it as an artifact"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  ci:
-    name: Lint + build
+  checks:
+    name: Lint + test + build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.bless }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,5 +63,84 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # vitest run — non-watch, exits when done. Covers date maths, the
+      # optimistic on/off logic, the role rules and the calendar range.
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
+
+  visual:
+    name: Console + screenshot gates
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.bless }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Builds its own bundle with VITE_HA_URL="" (mock state, so nothing the
+      # house is doing can move the pixels), loads all 7 tabs and fails on any
+      # console error, then shoots 7 tabs x 2 viewports and diffs them against
+      # visual-baseline/. See the header of this file to re-bless.
+      - name: Console + screenshot gates
+        run: |
+          set -o pipefail
+          node scripts/visual-check.mjs 2>&1 | tee visual.log
+          if grep -q "NOT BLESSED" visual.log; then
+            echo "::warning::Screenshot gate did not run — no baseline for this runner. See scripts/README.md."
+          fi
+
+      # Without the images, a red pixel gate is un-debuggable.
+      - name: Upload screenshots + diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-candidate
+          path: dist-visual-shots
+          # The console gate runs first, so a failure there means no shots exist.
+          if-no-files-found: ignore
+          retention-days: 7
+
+  bless:
+    name: Re-bless visual baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.bless }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Shoot a fresh baseline
+        run: node scripts/visual-check.mjs --bless
+
+      # Deliberately NOT committed by CI. New baselines are what every later
+      # run is judged against — a human looks at them first.
+      - name: Upload baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baseline
+          path: visual-baseline
+          retention-days: 14

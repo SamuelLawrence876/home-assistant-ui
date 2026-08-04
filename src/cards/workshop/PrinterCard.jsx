@@ -139,7 +139,10 @@ export function PrinterCard({ index = 0 }) {
   const online = liveOnline?.state === "on";
   const cameraOn = liveCamera?.state === "on";
   const printWeight = liveWeight?.state;
-  const printLength = liveLength?.state;
+  // Subscribed and read, but nothing renders it yet. Underscored so the linter's
+  // allowance covers it rather than warning on every run; drop both this and the
+  // liveLength subscription above if the filament-length readout isn't wanted.
+  const _printLength = liveLength?.state;
   const printing = printStatus === "running" || (remaining > 0 && stage !== "idle");
   const amsTrayNames = [liveTray1, liveTray2, liveTray3, liveTray4].map(
     (t) => has(t?.state) && t.state !== "Empty" ? t.state : null

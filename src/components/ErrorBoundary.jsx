@@ -19,10 +19,12 @@
    Overview with no explanation.
 
    Entity-agnostic by rule (components/ must not import ha/ or data.js).
+   lib/errorLog.js is a pure helper and takes plain strings, so it is fair game.
    ----------------------------------------------------------------*/
 
 import { Component } from "react";
 import { Card } from "./Card.jsx";
+import { logError } from "../lib/errorLog.js";
 
 const RELOAD_FLAG = "gh-chunk-reload";
 const RELOAD_TAB_KEY = "gh-chunk-reload-tab";
@@ -64,6 +66,16 @@ export class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     console.error("[glasshouse] view crashed", error, info?.componentStack);
+    /* Recorded before the chunk-reload branch below, because that branch
+       reloads the page — and a crash that heals itself invisibly is exactly
+       the kind you never find out about otherwise. localStorage is written
+       synchronously, so the entry survives the reload. */
+    logError({
+      source: this.props.tab ? `render · ${this.props.tab}` : "render",
+      message: String(error?.message || error) || "A view failed to render",
+      detail: error?.name && error.name !== "Error" ? error.name : null,
+      stack: [error?.stack, info?.componentStack].filter(Boolean).join("\n\ncomponent stack:\n"),
+    });
     if (!isChunkLoadError(error)) return;
     try {
       // Already tried in the last minute — show the card instead of looping.

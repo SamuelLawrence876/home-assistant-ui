@@ -16,7 +16,12 @@ export function Card({ index = 0, className = "", children, eyebrow, title, meta
         >
           <div style={{ minWidth: 0 }}>
             {eyebrow && <div className="eyebrow">{eyebrow}</div>}
-            {title && <div className="title">{title}</div>}
+            {/* A real heading, so a screen reader can jump card to card
+                instead of walking the whole tab. h2 because App.jsx's
+                wordmark is the page's h1. The tag's own margin and weight
+                are cancelled in a11y.css — this renders identically to the
+                <div> it replaced. */}
+            {title && <h2 className="title">{title}</h2>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {badge && <span className="card-badge">{badge}</span>}

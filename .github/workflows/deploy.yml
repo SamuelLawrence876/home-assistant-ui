@@ -14,6 +14,15 @@ name: Deploy
 # bucket, this workflow would keep uploading to the old one and succeed, and the
 # site would silently stop updating. Reading them from the stack removes that.
 #
+# Gates, all before the first AWS call:
+#   lint -> test -> console errors -> screenshot diff -> build -> upload.
+# lint, test and the console check block. The screenshot diff DOES NOT BLOCK YET:
+# the committed baseline was shot on win32 and this runner is linux, so
+# pixel-diff.mjs refuses to compare and exits 0. Arm it by committing a baseline
+# shot here — `gh workflow run ci.yml -f bless=true`, download the artifact,
+# commit visual-baseline/. Until then a green screenshot step means "did not
+# run", not "nothing moved". See the step comment or scripts/README.md.
+#
 # Required repo configuration:
 #   Secrets:
 #     AWS_DEPLOY_ROLE_ARN     — ARN of the IAM role to assume
@@ -45,6 +54,7 @@ jobs:
     name: Deploy — production
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -57,11 +67,52 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Same gate as ci.yml: esbuild won't catch an undefined identifier, and a
-      # lazy-loaded view only fails when its tab is opened — i.e. in production.
+      # Same gates as ci.yml, in the same order: cheap ones first, and every
+      # one of them blocks the S3 sync below. Pushing straight to main is the
+      # normal flow here, so these have to run on the deploy — relying on the
+      # PR run would mean most deploys are ungated.
+      #
+      # esbuild won't catch an undefined identifier, and a lazy-loaded view
+      # only fails when its tab is opened — i.e. in production.
       - name: Lint
         run: npm run lint
 
+      - name: Test
+        run: npm test
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Mock-mode build (VITE_HA_URL="") loaded in a real browser: fails on any
+      # console error, then screenshots 7 tabs x 2 viewports and diffs them
+      # against visual-baseline/.
+      #
+      # Re-bless the baseline when a change is meant to move pixels:
+      #     node scripts/visual-check.mjs --bless     # then commit visual-baseline/
+      # For the Linux images this job compares against:
+      #     gh workflow run ci.yml -f bless=true
+      #     gh run download <run-id> -n visual-baseline -D visual-baseline
+      # Full explanation in scripts/README.md.
+      - name: Console + screenshot gates
+        run: |
+          set -o pipefail
+          node scripts/visual-check.mjs 2>&1 | tee visual.log
+          if grep -q "NOT BLESSED" visual.log; then
+            echo "::warning::Screenshot gate did not run — no baseline for this runner. See scripts/README.md."
+          fi
+
+      - name: Upload screenshots + diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-candidate
+          path: dist-visual-shots
+          # The console gate runs first, so a failure there means no shots exist.
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # The real bundle, pointed at Home Assistant. Built after the gates so a
+      # failing gate never produces something that could be uploaded.
       - name: Build
         env:
           VITE_HA_URL: ${{ vars.VITE_HA_URL }}
