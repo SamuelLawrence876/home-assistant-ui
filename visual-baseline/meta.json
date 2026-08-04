@@ -1,9 +1,9 @@
 {
-  "platform": "win32",
+  "platform": "linux",
   "arch": "x64",
-  "playwright": "1.60.0",
-  "chromium": "148.0.7778.96",
-  "shotAt": "2026-08-04T19:32:25.523Z",
+  "playwright": "1.62.1",
+  "chromium": "151.0.7922.34",
+  "shotAt": "2026-08-04T20:25:03.557Z",
   "waitMs": 11000,
   "tabs": [
     "overview",
