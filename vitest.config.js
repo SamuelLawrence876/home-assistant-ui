@@ -16,9 +16,23 @@
    two deprecation warnings on every run. A run that always prints warnings is
    a run people stop reading (LESSONS.md, "two things that were never
    running"). Dropping it also halves the suite's wall time. */
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+const here = fileURLToPath(new URL(".", import.meta.url));
+
 export default defineConfig({
+  resolve: {
+    alias: [
+      // `virtual:pwa-register/react` only exists once vite-plugin-pwa has run,
+      // and this config deliberately loads no plugins. Without the alias any
+      // test that reaches UpdatePrompt dies in import analysis, before mocks.
+      {
+        find: "virtual:pwa-register/react",
+        replacement: `${here}tests/stubs/pwaRegister.js`,
+      },
+    ],
+  },
   test: {
     environment: "jsdom",
     globals: true,

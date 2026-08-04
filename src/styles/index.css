@@ -18,6 +18,9 @@
 @import "./schedule.css";
 @import "./tweaks.css";
 @import "./toast.css";
+/* Right after toast.css: it nudges .toast-stack out of the way when both are
+   on screen. All its own selectors are new, so it ties with nothing. */
+@import "./update-prompt.css";
 @import "./system-cards.css";
 @import "./sambox.css";
 @import "./diffuser.css";

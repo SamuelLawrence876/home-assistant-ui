@@ -1,0 +1,146 @@
+/* ============================================================
+   "Update ready" bar — frosted glass, calm sibling of the toast
+   ============================================================
+   Deliberately not red and not urgent: nothing is wrong, a newer
+   build just exists. It sits until it is acted on — no auto
+   dismiss timer, unlike .toast-item — because a wall dashboard is
+   glanced at, and a notice that times out is a notice nobody sees. */
+.update-prompt-slot {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9998; /* under .toast-stack (9999): a service error outranks news */
+  width: calc(100vw - 32px);
+  max-width: 520px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.update-prompt {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 12px 18px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(18, 26, 38, 0.88) 0%, rgba(14, 20, 30, 0.9) 100%);
+  backdrop-filter: blur(28px) saturate(1.6);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  border: 1px solid rgba(150, 190, 255, 0.16);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 12px 40px -10px rgba(40, 90, 180, 0.28),
+    0 4px 16px rgba(0, 0, 0, 0.34);
+  animation: update-prompt-enter 0.55s cubic-bezier(0.16, 1.3, 0.3, 1) both;
+}
+
+.update-prompt-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: #6ea8ff;
+  box-shadow: 0 0 10px rgba(110, 168, 255, 0.8);
+  animation: update-prompt-pulse 2.4s ease-in-out infinite;
+}
+
+.update-prompt-label {
+  font-size: 13.5px;
+  letter-spacing: 0.01em;
+  color: rgba(233, 240, 252, 0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-prompt-btn {
+  flex: none;
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(150, 190, 255, 0.28);
+  background: rgba(110, 168, 255, 0.16);
+  color: #cfe1ff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+.update-prompt-btn:hover {
+  background: rgba(110, 168, 255, 0.26);
+  border-color: rgba(150, 190, 255, 0.44);
+}
+
+.update-prompt-x {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(200, 214, 236, 0.55);
+  cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.update-prompt-x:hover {
+  color: rgba(233, 240, 252, 0.95);
+  background: rgba(255, 255, 255, 0.07);
+}
+.update-prompt-x svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Both bars live at bottom-centre. When this one is up the error toasts move
+   above it rather than through it. Higher specificity than .toast-stack's own
+   `bottom`, so it wins regardless of where this file sits in the manifest. */
+body.has-update-prompt .toast-stack {
+  bottom: 92px;
+}
+
+@media (max-width: 560px) {
+  .update-prompt {
+    width: 100%;
+    padding-left: 14px;
+  }
+  .update-prompt-label {
+    font-size: 12.5px;
+    white-space: normal;
+  }
+}
+
+@keyframes update-prompt-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes update-prompt-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* The harness freezes animations; honour the OS setting too. */
+@media (prefers-reduced-motion: reduce) {
+  .update-prompt {
+    animation: none;
+  }
+  .update-prompt-dot {
+    animation: none;
+  }
+}
