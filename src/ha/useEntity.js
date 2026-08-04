@@ -35,12 +35,17 @@ export function useEntities(entityIds) {
   const [snapshot, setSnapshot] = useState(() =>
     Object.fromEntries(entityIds.map((id) => [id, getEntity(id)])),
   );
+  // Callers almost always pass a fresh array literal, so `entityIds` is a new
+  // object on every render and can't be a dependency — resubscribing 290
+  // entities per render is exactly the storm LESSONS.md pattern 1 describes.
+  // The joined string is the real identity, so the effect reads its ids back
+  // out of it and depends on nothing else. Entity ids can't contain a comma.
   useEffect(() => {
-    const unsubs = entityIds.map((id) =>
+    const ids = key ? key.split(",") : [];
+    const unsubs = ids.map((id) =>
       subscribe(id, (s) => setSnapshot((prev) => ({ ...prev, [id]: s }))),
     );
     return () => unsubs.forEach((u) => u());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return snapshot;
 }
@@ -49,9 +54,11 @@ export function useEntitiesByDomain(domain) {
   const prefix = `${domain}.`;
   const [tick, setTick] = useState(0);
   useEffect(() => onStatesChanged(() => setTick((t) => t + 1)), []);
+  // `tick` is an invalidation token, not an input: getAllStates() reads a
+  // module-level Map that React can't see change, so the counter is the only
+  // thing that tells this memo the answer may have moved.
   return useMemo(() => {
     return getAllStates().filter((s) => s.entity_id.startsWith(prefix));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefix, tick]);
 }
 
@@ -67,6 +74,8 @@ export function useEntityCounts() {
   // after the WS delivers the initial 290-entity snapshot.
   const [tick, setTick] = useState(0);
   useEffect(() => onStatesChanged(() => setTick((t) => t + 1)), []);
+  // As above: `status` and `tick` are invalidation tokens for a Map React
+  // cannot observe, not values the count is computed from.
   return useMemo(() => {
     const all = getAllStates();
     let available = 0;
@@ -76,7 +85,6 @@ export function useEntityCounts() {
       else available++;
     }
     return { available, unavailable, total: all.length };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, tick]);
 }
 
@@ -122,7 +130,12 @@ export function useStatistics(statisticIds, hours = 24) {
   const [loading, setLoading] = useState(true);
   const lastKey = useRef("");
 
+  // Same identity trick as useEntities: `statisticIds` is a fresh array on
+  // every render, so the ids are recovered from the joined key instead. That
+  // keeps `fetch` stable, which keeps the 10-minute interval below from being
+  // torn down and rebuilt on every render.
   const fetch = useCallback(async () => {
+    const ids = key ? key.split(",") : [];
     const startTime = new Date(Date.now() - hours * 3600_000).toISOString();
     try {
       // Inside the try: waitForConnection() now rejects on timeout, and this
@@ -132,12 +145,12 @@ export function useStatistics(statisticIds, hours = 24) {
       const result = await sendWsMessage({
         type: "recorder/statistics_during_period",
         start_time: startTime,
-        statistic_ids: statisticIds,
+        statistic_ids: ids,
         period: "hour",
         types: ["mean", "min", "max"],
       });
       const parsed = {};
-      for (const id of statisticIds) {
+      for (const id of ids) {
         const points = result[id] || [];
         parsed[id] = {
           mean: points.map((p) => p.mean ?? null).filter((v) => v !== null),

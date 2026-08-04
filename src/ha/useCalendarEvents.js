@@ -176,12 +176,16 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
     } finally {
       if (id === reqIdRef.current) setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `runKey` is the joined entity-ids + range string, not the ids array. The
+    // caller builds a fresh array literal every render, so depending on the
+    // array itself would refetch on every render — the request-storm bug.
+    // The ids are recovered from the key inside the body.
   }, [runKey, fail]);
 
   useEffect(() => {
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `run` is intentionally omitted: it is recreated whenever `fail` changes,
+    // and re-running the fetch on that is exactly the loop this key guards.
   }, [runKey]);
 
   /* Wrapped rather than handed out raw: callers pass it straight to onClick /

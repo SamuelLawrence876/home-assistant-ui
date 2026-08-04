@@ -177,11 +177,13 @@ export function PixooCard({ index = 0 }) {
 
       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Channel</div>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }} role="group" aria-label="Pixoo 64 channel">
           {channels.map((c) => (
             <button
               key={c}
+              type="button"
               className={`preset ${channel === c ? "on" : ""}`}
+              aria-pressed={channel === c}
               disabled={!on}
               onClick={() => setChannel(c)}
               style={{ opacity: !on ? 0.5 : 1 }}

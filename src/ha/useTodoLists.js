@@ -74,9 +74,13 @@ export function useTodoLists(entityIds) {
   const reqIdsRef = useRef({});
   const key = (entityIds || []).join(",");
 
+  /* `entityIds` is a fresh array literal on almost every render, so it can't
+     be a dependency of anything without re-running it forever (LESSONS.md
+     pattern 1). The joined `key` is the stable identity, and the ids are read
+     back out of it — entity ids can't contain a comma. */
   const refresh = useCallback(
     async (entityId) => {
-      const ids = entityId ? [entityId] : entityIds || [];
+      const ids = entityId ? [entityId] : key ? key.split(",") : [];
       if (ids.length === 0 || getConnectionStatus() !== "ready") return;
       await Promise.all(
         ids.map(async (id) => {
@@ -95,7 +99,6 @@ export function useTodoLists(entityIds) {
         }),
       );
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [key],
   );
 
@@ -106,22 +109,23 @@ export function useTodoLists(entityIds) {
       if (s === "ready") setConnectionTick((t) => t + 1);
     });
   }, []);
+  // `refresh` only changes when `key` does, so this is the same trigger set as
+  // [key, connectionTick] with nothing stale captured.
   useEffect(() => {
     refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, connectionTick]);
+  }, [refresh, connectionTick]);
 
   /* Each entity's state attribute changes when items are added/removed
      (state = count). Subscribe per-entity so iPhone-side changes flow in. */
   useEffect(() => {
-    const unsubs = (entityIds || []).map((id) =>
+    const ids = key ? key.split(",") : [];
+    const unsubs = ids.map((id) =>
       subscribe(id, () => {
         refresh(id);
       }),
     );
     return () => unsubs.forEach((u) => u());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, refresh]);
 
   const add = useCallback(
     async (entityId, summary) => {

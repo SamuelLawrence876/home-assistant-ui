@@ -1,0 +1,131 @@
+/* Error log card (cards/system/ErrorLogCard.jsx).
+   Only the bits inline styles can't express: hover, the <details> marker,
+   the scroll container and the mono stack block. Everything else is inline
+   on the component, as the rest of the codebase does it. */
+
+.errlog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.errlog-row + .errlog-row {
+  border-top: 1px solid var(--rule);
+}
+
+.errlog-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 4px;
+  font-size: 13px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.errlog-head-static {
+  cursor: default;
+}
+
+/* Safari/Chrome disclosure triangle — replaced by the caret below so the
+   row can keep its own alignment. */
+.errlog-head::-webkit-details-marker {
+  display: none;
+}
+
+.errlog-row details > summary::after {
+  content: "▸";
+  font-size: 10px;
+  color: var(--ink-4);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.errlog-row details[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.errlog-head:hover {
+  background: color-mix(in oklch, var(--ink), transparent 96%);
+}
+
+.errlog-head-static:hover {
+  background: transparent;
+}
+
+.errlog-body {
+  padding: 2px 4px 12px 4px;
+}
+
+.errlog-detail {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  word-break: break-word;
+}
+
+.errlog-stack {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--ink), transparent 95%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--ink-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.errlog-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 6px 2px 10px;
+}
+
+.errlog-empty-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 15px;
+  color: var(--good);
+  border: 1px solid color-mix(in oklch, var(--good), transparent 70%);
+  background: color-mix(in oklch, var(--good), transparent 92%);
+}
+
+.errlog-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+/* Scoped, not a global .btn:disabled — the rest of the app has never had one
+   and this slice is imported last, so a global rule here would silently
+   restyle every button in Glasshouse. */
+.errlog-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.errlog-note {
+  font-size: 11px;
+  color: var(--ink-4);
+  margin-left: auto;
+  text-align: right;
+}

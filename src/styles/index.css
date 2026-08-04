@@ -21,3 +21,8 @@
 @import "./system-cards.css";
 @import "./sambox.css";
 @import "./diffuser.css";
+@import "./errorlog.css";
+/* Last on purpose — see the header of a11y.css. Its rules correct
+   the slices above (clipped focus rings, UA heading margins), so
+   they have to be able to win a specificity tie. */
+@import "./a11y.css";

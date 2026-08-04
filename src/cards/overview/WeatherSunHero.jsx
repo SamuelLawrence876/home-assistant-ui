@@ -1,23 +1,25 @@
-import { useState, useEffect } from "react";
 import { nowFractionalHour } from "../../theme.js";
 import { fmtTime } from "../../lib/format.js";
 import { useEntityStatus, combineStatuses } from "../../ha/useEntity.js";
-import { getForecast } from "../../ha/client.js";
+import { useForecast } from "../../ha/useForecast.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
 import { WeatherIcon } from "../../components/WeatherIcon.jsx";
 
+const WEATHER_ENTITY = "weather.forecast_home";
+const DASH = "—";
+
+/* A sensor that has gone quiet renders an em-dash, never a number we made up
+   and never NaN. LESSONS.md pattern 4. */
+const num = (v, suffix = "") =>
+  v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? DASH : `${v}${suffix}`;
+
 export function WeatherSunHero({ index = 0, sky, compact }) {
-  const { entity: w, status: wStatus } = useEntityStatus("weather.forecast_home");
+  const { entity: w, status: wStatus } = useEntityStatus(WEATHER_ENTITY);
   const t = w?.attributes?.temperature;
-  const [forecast, setForecast] = useState([]);
-  useEffect(() => {
-    if (!w) return;
-    getForecast("weather.forecast_home", "daily")
-      .then((fc) => { if (fc.length) setForecast(fc); })
-      .catch(() => {});
-  }, [w?.last_updated]);
-  const f = forecast;
+  // Live via the weather.get_forecasts service on a deliberate hourly schedule —
+  // the legacy `attributes.forecast` HA used to publish is empty post-2024.
+  const { forecast: f, status: fStatus } = useForecast(WEATHER_ENTITY, "daily");
   const condLabels = {
     sunny: "Sunny",
     partlycloudy: "Partly cloudy",
@@ -52,11 +54,14 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
   const { entity: liveRising, status: rStatus } = useEntityStatus("sensor.sun_next_rising");
   const { entity: liveSetting, status: sStatus } = useEntityStatus("sensor.sun_next_setting");
   const status = combineStatuses(wStatus, rStatus, sStatus);
+  /* sensor.sun_next_* carries an ISO timestamp, or "unavailable"/"unknown" when
+     the integration is down. Anything that isn't a real date renders as an
+     em-dash — never the raw sensor string, and never "Invalid Date". */
   const fmtSun = (s) => {
-    if (!s) return "—";
+    if (!s) return DASH;
     const d = new Date(s);
     return isNaN(d.getTime())
-      ? s
+      ? DASH
       : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   };
   const sunrise = fmtSun(liveRising?.state);
@@ -64,8 +69,8 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
 
   if (!w) {
     return (
-      <Card index={index} className="weather-hero" eyebrow="Weather · weather.forecast_home" title="Outside, right now" meta="Loading…">
-        <EntityGuard status={status} entityId="weather.forecast_home" />
+      <Card index={index} className="weather-hero" eyebrow={`Weather · ${WEATHER_ENTITY}`} title="Outside, right now" meta="Loading…">
+        <EntityGuard status={status} entityId={WEATHER_ENTITY} />
       </Card>
     );
   }
@@ -74,11 +79,11 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
     <Card
       index={index}
       className="weather-hero"
-      eyebrow="Weather · weather.forecast_home"
+      eyebrow={`Weather · ${WEATHER_ENTITY}`}
       title="Outside, right now"
       meta={`${sky.isDay ? "Sun" : "Night"} · ${fmtTime(nowFractionalHour())}`}
     >
-      <EntityGuard status={status} entityId="weather.forecast_home">
+      <EntityGuard status={status} entityId={WEATHER_ENTITY}>
       <div className="weather-body">
         <div className="weather-now">
           <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
@@ -98,7 +103,7 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
             </div>
             <div style={{ minWidth: 0 }}>
               <div className="readout temp" style={{ fontSize: 96 }}>
-                {t}
+                {num(t)}
                 <span className="u">°c</span>
               </div>
               <div
@@ -125,27 +130,27 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
             }}
           >
             {condDescription[w.state] || ""}{" "}
-            Feels like <b style={{ color: "var(--ink)" }}>{w.attributes.apparent_temperature}°</b>,
-            humidity <b style={{ color: "var(--ink)" }}>{w.attributes.humidity}%</b>, wind{" "}
-            <b style={{ color: "var(--ink)" }}>{w.attributes.wind_speed} km/h</b>.
+            Feels like <b style={{ color: "var(--ink)" }}>{num(w.attributes.apparent_temperature, "°")}</b>,
+            humidity <b style={{ color: "var(--ink)" }}>{num(w.attributes.humidity, "%")}</b>, wind{" "}
+            <b style={{ color: "var(--ink)" }}>{num(w.attributes.wind_speed, " km/h")}</b>.
           </div>
 
           <div className="weather-attrs" style={{ marginTop: 14 }}>
             <div>
               <div className="k">Humidity</div>
-              <div className="v">{w.attributes.humidity}%</div>
+              <div className="v">{num(w.attributes.humidity, "%")}</div>
             </div>
             <div>
               <div className="k">Pressure</div>
               <div className="v">
-                {w.attributes.pressure}
+                {num(w.attributes.pressure)}
                 <span style={{ fontSize: 10, color: "var(--ink-3)", marginLeft: 3 }}>hPa</span>
               </div>
             </div>
             <div>
               <div className="k">Wind</div>
               <div className="v">
-                {w.attributes.wind_speed}
+                {num(w.attributes.wind_speed)}
                 <span style={{ fontSize: 10, color: "var(--ink-3)", marginLeft: 3 }}>km/h</span>
               </div>
             </div>
@@ -153,7 +158,11 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
         </div>
 
         <div className="sun-arc">
-          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
+          {/* Decorative. Every fact it draws — sunrise, sunset, how far
+              through the daylight we are — is restated as text in
+              .sun-info below, so exposing it as well would read the two
+              bare times out a second time with no context. */}
+          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
             <line x1={0} x2={W} y1={cy} y2={cy} className="horizon" />
             <path d={arcPath} className="arc-bg" />
             <path
@@ -196,24 +205,33 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
         </div>
       </div>
 
-      <div className="forecast">
-        {f.slice(0, 5).map((d, i) => {
-          const dt = d.datetime ? new Date(d.datetime) : null;
-          const dayLabel = dt && !isNaN(dt)
-            ? dt.toLocaleDateString("en-GB", { weekday: "short" })
-            : `+${i + 1}d`;
-          return (
-            <div key={i} className="day">
-              <div className="d">{dayLabel}</div>
-              <div style={{ marginTop: 4, marginBottom: 4 }}>
-                <WeatherIcon condition={d.condition} size={42} />
+      {fStatus === "ready" ? (
+        <div className="forecast">
+          {f.slice(0, 5).map((d, i) => {
+            const dt = d.datetime ? new Date(d.datetime) : null;
+            const dayLabel = dt && !isNaN(dt.getTime())
+              ? dt.toLocaleDateString("en-GB", { weekday: "short" })
+              : DASH;
+            return (
+              <div key={d.datetime || i} className="day">
+                <div className="d">{dayLabel}</div>
+                <div style={{ marginTop: 4, marginBottom: 4 }}>
+                  <WeatherIcon condition={d.condition} size={42} />
+                </div>
+                <div className="t">{num(d.temperature, "°")}</div>
+                <div className="lo">↓ {num(d.templow, "°")}</div>
               </div>
-              <div className="t">{d.temperature}°</div>
-              <div className="lo">↓ {d.templow}°</div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* No invented strip. Either we are still waiting on the first
+           weather.get_forecasts response, or the service did not answer —
+           and in that case the card says so instead of showing old numbers. */
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--rule)" }}>
+          <EntityGuard status={fStatus === "loading" ? "loading" : "unavailable"} entityId="5-day forecast" />
+        </div>
+      )}
       </EntityGuard>
     </Card>
   );

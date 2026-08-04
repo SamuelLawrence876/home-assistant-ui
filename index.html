@@ -3,11 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Glasshouse: a live dashboard for Samuel's Home Assistant — lights, climate, media, the 3D printer and the house schedule, on one screen."
+    />
+    <!-- The app paints its own sky gradient day and night, so a single dark
+         chrome colour is correct in both; it is not tied to prefers-color-scheme. -->
     <meta name="theme-color" content="#0a0d12" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="application-name" content="Glasshouse" />
+    <!-- mobile-web-app-capable is the standard name; the apple- prefixed one is
+         still what older iOS reads, so both are present on purpose. -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Glasshouse" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <!-- iOS ignores the manifest icons and does not accept an SVG here; until a
+         180x180 PNG exists it falls back to a screenshot of the page. See
+         USER_ACTIONS.md / roadmap [37b]. -->
     <link rel="apple-touch-icon" href="/icon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Glasshouse · Home Assistant</title>

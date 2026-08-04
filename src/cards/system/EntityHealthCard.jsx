@@ -27,7 +27,9 @@ export function EntityHealthCard({ index = 0 }) {
     }
     const sorted = Object.entries(byDomain).sort((a, b) => b[1].length - a[1].length);
     return { groups: sorted, available: avail, unavailable: unavail };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Deliberately keyed on `tick` rather than on the entity map itself: the map
+    // is mutated in place by the socket layer, so it is never a new reference to
+    // depend on. `tick` is the invalidation signal.
   }, [tick, connStatus]);
 
   const loading = connStatus !== "ready";
@@ -47,8 +49,10 @@ export function EntityHealthCard({ index = 0 }) {
           {groups.map(([domain, entities]) => (
             <div key={domain} className="health-group">
               <button
+                type="button"
                 className={`health-group-header ${expanded === domain ? "open" : ""}`}
                 onClick={() => setExpanded(expanded === domain ? null : domain)}
+                aria-expanded={expanded === domain}
               >
                 <span className="health-domain">{domain}</span>
                 <span className="health-count">{entities.length}</span>

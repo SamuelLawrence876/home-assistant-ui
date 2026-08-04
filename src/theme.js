@@ -38,17 +38,124 @@ export function isDay(phase) {
   return phase >= 0 && phase <= 1;
 }
 
-// Returns { top, bottom, accent, isDay } in oklch strings
-export function skyColors(hour /*, lean */) {
+/* ----------------------------------------------------------------
+   Sun times
+
+   The keyframe palette below was authored against one specific day —
+   a British midsummer, sunrise 06:38, sunset 20:48. Those numbers used
+   to be the *only* numbers: in December the theme kept the sky bright
+   until half eight while Home Assistant, on the same screen, said the
+   sun had set at 15:52. SUN_FALLBACK is that authored day, kept as the
+   fallback for mock mode and the screenshot harness (no sun.sun there),
+   and as the reference frame every real day is mapped onto.
+   ----------------------------------------------------------------*/
+export const SUN_FALLBACK = Object.freeze({
+  dawn: 6.07,
+  sunrise: 6.63,
+  noon: 13.4,
+  sunset: 20.8,
+  dusk: 21.37,
+});
+
+/* An ISO timestamp -> local fractional hour-of-day, or null.
+   Only the time-of-day is taken, never the date, which is what makes
+   `next_setting` usable after dark: once the sun is down HA points it at
+   tomorrow's sunset, and tomorrow's sunset is within a couple of minutes
+   of today's. Anything unparseable returns null and the caller falls back —
+   never NaN, which would reach oklch() (LESSONS.md pattern 4). */
+function hourOfDayFromISO(iso) {
+  if (typeof iso !== "string" || !iso) return null;
+  const d = new Date(iso);
+  const ms = d.getTime();
+  if (!Number.isFinite(ms)) return null;
+  const v = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+  return Number.isFinite(v) && v >= 0 && v < 24 ? v : null;
+}
+
+/* Twilight offsets used only when HA doesn't publish next_dawn / next_dusk.
+   They are the gaps the palette was authored with (SUN_FALLBACK). */
+const DAWN_LEAD = SUN_FALLBACK.sunrise - SUN_FALLBACK.dawn;
+const DUSK_LAG = SUN_FALLBACK.dusk - SUN_FALLBACK.sunset;
+
+/* Every sun window has to survive this before it can steer a colour:
+   dawn strictly inside the day, dusk after it, and a daylight span long
+   enough that sunPhase's divisions stay sane. A window that fails is not
+   patched up — it is rejected, and the caller uses SUN_FALLBACK. */
+function isUsableWindow(t) {
+  return (
+    t &&
+    Number.isFinite(t.dawn) &&
+    Number.isFinite(t.dusk) &&
+    Number.isFinite(t.sunrise) &&
+    Number.isFinite(t.sunset) &&
+    t.dawn > 0.25 &&
+    t.dusk < 23.75 &&
+    t.dusk - t.dawn >= 1 &&
+    t.sunset > t.sunrise
+  );
+}
+
+/* Home Assistant's sun.sun -> { dawn, sunrise, noon, sunset, dusk } in local
+   fractional hours, or null when the entity is missing, unavailable, or
+   describing something this model can't draw (polar day, say).
+
+   Pure: the only clock it reads is the one inside the entity's own
+   attributes, so it never becomes an incidental `new Date()` during render
+   (LESSONS.md pattern 1). */
+export function sunTimesFromEntity(sunEntity) {
+  const state = sunEntity?.state;
+  // "unavailable" / "unknown" / undefined all mean: we do not know.
+  if (state !== "above_horizon" && state !== "below_horizon") return null;
+
+  const a = sunEntity.attributes || {};
+  const sunrise = hourOfDayFromISO(a.next_rising);
+  const sunset = hourOfDayFromISO(a.next_setting);
+  if (sunrise === null || sunset === null) return null;
+
+  // next_dawn / next_dusk are published by modern HA; derive them from the
+  // authored twilight gaps if this instance doesn't send them.
+  const dawn = hourOfDayFromISO(a.next_dawn) ?? sunrise - DAWN_LEAD;
+  const dusk = hourOfDayFromISO(a.next_dusk) ?? sunset + DUSK_LAG;
+  const noon = hourOfDayFromISO(a.next_noon) ?? (sunrise + sunset) / 2;
+
+  const times = { dawn, sunrise, noon, sunset, dusk };
+  return isUsableWindow(times) ? times : null;
+}
+
+/* Accepts whatever a caller hands over — a real window, null, a half-built
+   object from somewhere else — and always returns something drawable. */
+export function resolveSunTimes(times) {
+  return isUsableWindow(times) ? times : SUN_FALLBACK;
+}
+
+/* Map a real clock hour onto the reference day the palette was painted for,
+   piecewise-linearly: night-before-dawn, daylight, night-after-dusk. A
+   December afternoon at 15:00 lands near the reference day's late afternoon
+   rather than its bright noon, so the sky darkens when the sun actually
+   goes down instead of four hours later. */
+function toReferenceHour(h, sun) {
+  if (h <= sun.dawn) return SUN_FALLBACK.dawn * (h / sun.dawn);
+  if (h >= sun.dusk) {
+    return (
+      SUN_FALLBACK.dusk + (24 - SUN_FALLBACK.dusk) * ((h - sun.dusk) / (24 - sun.dusk))
+    );
+  }
+  return (
+    SUN_FALLBACK.dawn +
+    (SUN_FALLBACK.dusk - SUN_FALLBACK.dawn) * ((h - sun.dawn) / (sun.dusk - sun.dawn))
+  );
+}
+
+/* Returns { top, bot, warmth, isDay, phase, sunrise, sunset, dawn, dusk, noon }.
+   `sunTimes` is sunTimesFromEntity(sun.sun) or null. */
+export function skyColors(hour, sunTimes /*, lean */) {
   // Last line of defence: a non-finite hour makes every keyframe comparison
   // false, leaves t = NaN, and emits oklch(NaN NaN NaN) into --sky-top.
-  const h = Number.isFinite(hour) ? Math.min(Math.max(hour, 0), 24) : 12;
+  const clockHour = Number.isFinite(hour) ? Math.min(Math.max(hour, 0), 24) : 12;
 
-  const dawn = 6.07,
-    sunrise = 6.63,
-    noon = 13.4,
-    sunset = 20.8,
-    dusk = 21.37;
+  const sun = resolveSunTimes(sunTimes);
+  const { dawn, sunrise, noon, sunset, dusk } = sun;
+  const h = Math.min(Math.max(toReferenceHour(clockHour, sun), 0), 24);
 
   const keyframes = [
     { h: 0, top: [0.12, 0.025, 250], bot: [0.08, 0.03, 240], warmth: 0.0, day: false },
@@ -80,7 +187,9 @@ export function skyColors(hour /*, lean */) {
   const warmth = mix(a.warmth, b.warmth);
   const day = t < 0.5 ? a.day : b.day;
 
-  const phase = sunPhase(h, dawn, dusk);
+  // Phase is measured on the real clock against the real window — `h` above is
+  // only a lookup key into the painted palette.
+  const phase = sunPhase(clockHour, dawn, dusk);
 
   return {
     top: `oklch(${top[0].toFixed(3)} ${top[1].toFixed(3)} ${Math.round(top[2])})`,

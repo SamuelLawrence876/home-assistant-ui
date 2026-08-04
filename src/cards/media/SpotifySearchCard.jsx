@@ -29,6 +29,9 @@ export function SpotifySearchCard({ index = 0 }) {
     <Card index={index} eyebrow="Search · Spotify" title="Search" meta={loading ? "Loading" : null}>
       <input
         type="text"
+        /* A placeholder is not a name: it is only used as one when
+           nothing better exists, and it vanishes the moment you type. */
+        aria-label="Search Spotify for songs, artists and albums"
         placeholder="Search songs, artists, albums..."
         value={query}
         onChange={(e) => handleSearch(e.target.value)}

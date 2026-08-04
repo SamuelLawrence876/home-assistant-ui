@@ -1,6 +1,13 @@
+// Fractional hour (13.5 -> "13:30") for the topbar and the weather meta line.
+// Rounds on total minutes, not on the fraction alone: rounding the fraction
+// produced a 60th minute, so the clock read "13:60" for the last ~30 seconds of
+// every hour and "23:60" at midnight. Wraps at 24h — both callers pass a
+// time of day, never a duration.
 export const fmtTime = (h) => {
-  const hh = Math.floor(h);
-  const mm = Math.round((h - hh) * 60);
+  if (!Number.isFinite(h)) return "—";
+  const total = Math.round(h * 60);
+  const hh = ((Math.floor(total / 60) % 24) + 24) % 24;
+  const mm = ((total % 60) + 60) % 60;
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 };
 

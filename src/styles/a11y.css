@@ -1,0 +1,112 @@
+/* ============================================================
+   Glasshouse — accessibility slice.
+
+   Appended LAST in index.css on purpose. Everything in here is a
+   correction that has to win over the slice that created the
+   problem — a focus ring clipped by a rounded, overflow:hidden
+   parent, or a user-agent heading margin arriving with a real
+   <h1>/<h2>. Put it earlier in the manifest and the fix loses.
+
+   Nothing here changes what a mouse user sees. Every rule is
+   either invisible until something takes keyboard focus, or
+   restores the exact metrics an element had before it was given
+   correct semantics.
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   Off-screen, still announced.
+   For text only a screen reader needs. Not `display: none` and
+   not `visibility: hidden` — both of those remove it from the
+   accessibility tree, which is the one thing it exists for.
+   ------------------------------------------------------------ */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------
+   Skip link — off-screen until it takes focus, then a normal
+   pill in the top-left of the shell. Without it, reaching the
+   dashboard from the keyboard costs seven tab stops through the
+   section tabs on every load.
+   ------------------------------------------------------------ */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+.skip-link:focus {
+  left: 12px;
+  top: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--glass-bg-2);
+  border: 1px solid var(--glass-stroke);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+
+/* The skip link's target. Drawn inside the panel's own box so
+   landing there can't widen the page or shift a card. */
+[role="tabpanel"]:focus {
+  outline: none;
+}
+[role="tabpanel"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+/* ------------------------------------------------------------
+   Headings.
+   The card title and the wordmark became a real <h2>/<h1> so the
+   dashboard has a document outline to navigate by. Both rules
+   below only undo what the user-agent stylesheet adds with the
+   tag — the size, colour and family still come from card.css and
+   shell.css, which is why neither is restated here.
+   ------------------------------------------------------------ */
+.card h2.title {
+  margin-bottom: 0;
+}
+.brand-text h1.nm {
+  margin: 0;
+  font-weight: normal;
+}
+
+/* ------------------------------------------------------------
+   Focus rings that would otherwise be clipped.
+   base.css draws focus 2px OUTSIDE the element. Where the parent
+   is `overflow: hidden` with a radius, that ring is cut off and
+   the keyboard user sees nothing at all — so these two draw
+   theirs inside instead.
+   ------------------------------------------------------------ */
+
+/* body.viewport-phone .bottom-nav is overflow:hidden (phone.css)
+   so the pill animation stays inside its radius. */
+body.viewport-phone .bottom-nav button:focus-visible {
+  outline-offset: -3px;
+}
+/* The selected tab sits on a solid --ink pill; the accent ring is
+   too close to it in day mode. Use the same token the label does. */
+body.viewport-phone .bottom-nav button.on:focus-visible {
+  outline-color: var(--on-ink, #fff);
+}
+
+/* .health-group is overflow:hidden (system-cards.css) so the
+   expanded list tucks under the header's radius. */
+.health-group-header:focus-visible {
+  outline-offset: -3px;
+}

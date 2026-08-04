@@ -7,6 +7,7 @@
    tokens automatically — callers always get a fresh one. */
 
 import { getEntity, getFreshAccessToken, getHaUrl, sendWsMessage, waitForConnection } from "./socket.js";
+import { logError } from "../lib/errorLog.js";
 
 /* Is the app pointed at a real HA instance? (mock-mode builds set VITE_HA_URL="") */
 export const haConfigured = () => Boolean(getHaUrl());
@@ -19,6 +20,14 @@ async function req(path, init = {}) {
   const res = await fetch(`${url}${path}`, { ...init, headers: hdrs });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+    // Recorded, then thrown exactly as before — logging observes, it does not
+    // change what the caller sees. The path is logged, never `hdrs`, which
+    // holds the bearer token.
+    logError({
+      source: "rest",
+      message: `HA ${init.method || "GET"} ${path} → ${res.status}`,
+      detail: body.slice(0, 300),
+    });
     throw new Error(`HA ${init.method || "GET"} ${path} → ${res.status} ${body.slice(0, 200)}`);
   }
   if (res.status === 204) return null;
@@ -41,6 +50,14 @@ export const callService = async (domain, service, data = {}, target = undefined
       service_data: serviceData,
     });
   } catch (e) {
+    /* Only the entity id goes in, not the whole service_data payload —
+       service data is arbitrary and a caller could put anything in it. */
+    logError({
+      source: "service",
+      message: `${domain}.${service} failed`,
+      detail: [data?.entity_id, e?.message || String(e)].filter(Boolean).join(" · "),
+      stack: e?.stack || null,
+    });
     errorListeners.forEach((cb) => cb({ domain, service, data, error: e }));
     throw e;
   }

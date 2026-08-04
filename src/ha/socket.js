@@ -25,6 +25,7 @@ import {
   subscribeEntities,
 } from "home-assistant-js-websocket";
 import { clearSpotifyToken } from "./spotify.js";
+import { logError, clearErrors } from "../lib/errorLog.js";
 
 const HA_URL = import.meta.env.VITE_HA_URL || "";
 const TOKENS_KEY = "ha_tokens";
@@ -110,6 +111,11 @@ async function setup() {
     // getAuth either resolves with an Auth, or redirects to HA login (no resolve).
     // We only land here on hard errors (network down, HA unreachable, etc.).
     console.warn("[ha-ws] getAuth failed", err);
+    logError({
+      source: "connection",
+      message: "Home Assistant sign-in failed",
+      detail: err?.message || String(err),
+    });
     setStatus("disconnected");
     return;
   }
@@ -132,13 +138,28 @@ async function setup() {
     connection = await createConnection({ auth });
   } catch (err) {
     console.warn("[ha-ws] createConnection failed", err);
+    logError({
+      source: "connection",
+      message: "WebSocket connection failed",
+      detail: err?.message || String(err),
+    });
     setStatus("disconnected");
     return;
   }
 
   connection.addEventListener("ready", () => setStatus("ready"));
-  connection.addEventListener("disconnected", () => setStatus("disconnected"));
-  connection.addEventListener("reconnect-error", () => setStatus("disconnected"));
+  /* Drops are recorded, not announced. The chip in the topbar is the live
+     signal; this is the record you read afterwards to find out that the Pi
+     dropped eleven times at 3am. errorLog dedupes a burst of identical
+     entries, so a reconnect storm can't flush the buffer. */
+  connection.addEventListener("disconnected", () => {
+    logError({ source: "connection", message: "Home Assistant WebSocket disconnected" });
+    setStatus("disconnected");
+  });
+  connection.addEventListener("reconnect-error", () => {
+    logError({ source: "connection", message: "Home Assistant WebSocket reconnect failed" });
+    setStatus("disconnected");
+  });
 
   subscribeEntities(connection, applyEntities);
   setStatus("ready");
@@ -236,6 +257,12 @@ export async function signOut() {
   // Clear every credential this app owns, not just HA's — on a shared tablet the
   // next person used to inherit a working Spotify refresh token.
   clearSpotifyToken();
+  // Same reasoning for the error log. No credential can reach it (errorLog
+  // redacts on the way in and again on the way out), but it holds entity ids,
+  // HA's own error text and full stack traces from the previous session, and
+  // the card promises "kept in this browser" — which reads as a session
+  // guarantee. Signing out is where that promise has to be kept.
+  clearErrors();
   if (connection) {
     try { connection.close(); } catch {}
   }

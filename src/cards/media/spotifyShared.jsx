@@ -137,7 +137,9 @@ export function SpotifyTrackRow({ item, playing, onPlay, subtitle, label }) {
           {sub}
         </div>
       </div>
-      <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", flexShrink: 0 }}>
+      {/* Decorative: the button already reads out the track, and a bare
+          "▶" is announced as "black right-pointing triangle". */}
+      <span aria-hidden="true" style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", flexShrink: 0 }}>
         {isPlaying ? "..." : "▶"}
       </span>
     </button>

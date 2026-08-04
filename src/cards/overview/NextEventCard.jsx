@@ -1,15 +1,44 @@
 import { useMemo, useState, useEffect } from "react";
-import { useEntitiesByDomain } from "../../ha/useEntity.js";
+import { useEntitiesByDomain, useConnectionStatus } from "../../ha/useEntity.js";
+import { useDashReady } from "../../hooks/useDashReady.js";
 import { useCalendarEvents } from "../../ha/useCalendarEvents.js";
 import { Card } from "../../components/Card.jsx";
 
 const HOUR_MS = 3600_000;
+
+/* Empty and unreachable are different answers. useCalendarEvents' own contract
+   says an empty list with an error set means "we don't know", not "nothing is
+   scheduled" — and when the socket isn't ready it returns early, so `loading`
+   is false and `events` is [] with no error at all. Printing "Nothing scheduled
+   this week" in either case states a fact we don't have, next to a topbar chip
+   already reading PI OFFLINE. Mirrors weekState() in WeeklyCalendarCard. */
+function nextState({ connStatus, dashReady, liveMode, loading, error, count }) {
+  const connecting =
+    connStatus === "connecting" ||
+    connStatus === "authenticating" ||
+    (connStatus === "ready" && !dashReady);
+  const offline = connStatus !== "ready";
+
+  if (count > 0) {
+    if (offline) return { meta: `${count} events · not connected`, body: null };
+    if (error) return { meta: `${count} events · may be out of date`, body: null };
+    return { meta: `${count} events`, body: null };
+  }
+  if (connecting) return { meta: "connecting…", body: "Connecting to Home Assistant…" };
+  if (offline) return { meta: "not connected", body: "Calendar unavailable — not connected to Home Assistant." };
+  if (!liveMode) return { meta: "no calendars", body: "No calendars are exposed to this dashboard." };
+  if (loading) return { meta: "loading", body: "Loading events…" };
+  if (error) return { meta: "unavailable", body: "Calendar unavailable — Home Assistant didn't answer." };
+  return { meta: null, body: "Nothing scheduled this week" };
+}
 
 /* ----------------------------------------------------------------
    Next event — compact card for Overview
    ----------------------------------------------------------------*/
 export function NextEventCard({ index = 0 }) {
   const calendarEntities = useEntitiesByDomain("calendar");
+  const connStatus = useConnectionStatus();
+  const dashReady = useDashReady();
   const calendarIds = useMemo(
     () => calendarEntities.map((e) => e.entity_id).sort(),
     [calendarEntities.length, calendarEntities.map((e) => e.entity_id).join(",")],
@@ -37,7 +66,7 @@ export function NextEventCard({ index = 0 }) {
     return { startISO: from.toISOString(), endISO: to.toISOString() };
   }, [rangeHour]);
 
-  const { events, loading } = useCalendarEvents(calendarIds, startISO, endISO);
+  const { events, loading, error } = useCalendarEvents(calendarIds, startISO, endISO);
 
   const upcoming = useMemo(() => {
     if (!events.length) return [];
@@ -65,8 +94,17 @@ export function NextEventCard({ index = 0 }) {
     return `${dayLabel} · ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
   }
 
+  const { meta, body } = nextState({
+    connStatus,
+    dashReady,
+    liveMode: calendarIds.length > 0,
+    loading,
+    error,
+    count: upcoming.length,
+  });
+
   return (
-    <Card index={index} eyebrow="Calendar · Upcoming" meta={loading ? "Loading" : upcoming.length > 0 ? `${upcoming.length} events` : null}>
+    <Card index={index} eyebrow="Calendar · Upcoming" meta={meta}>
       {upcoming.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {upcoming.map((ev, i) => (
@@ -88,7 +126,7 @@ export function NextEventCard({ index = 0 }) {
         </div>
       ) : (
         <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)" }}>
-          {loading ? "Loading events..." : "Nothing scheduled this week"}
+          {body}
         </div>
       )}
     </Card>
