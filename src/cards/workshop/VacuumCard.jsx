@@ -8,6 +8,13 @@ import { EntityGuard } from "../../components/EntityGuard.jsx";
 /* ----------------------------------------------------------------
    Vacuum — Roborock S8 "Gregory"
    ----------------------------------------------------------------*/
+/* One gate for every reading. Roborock's cloud sensors report "unavailable" when the
+   dock drops off and "unknown" before they have ever reported — `??` lets both of
+   those strings through, so they render raw ("unavailable m²") in a 20px stat face. */
+const has = (v) => v != null && v !== "" && v !== "unavailable" && v !== "unknown";
+const numOr = (v, d) => (has(v) && !Number.isNaN(+v) ? +v : d);
+const txtOr = (v, d = "—") => (has(v) ? v : d);
+
 function FloorPlan({ cleaning }) {
   const W = 320, H = 220;
   return (
@@ -97,9 +104,12 @@ export function VacuumCard({ index = 0 }) {
   const liveMapImage = useEntity("image.roborock_s8_map_0");
   const liveError = useEntity("sensor.roborock_s8_vacuum_error");
 
-  const battery = Number(liveBat?.state ?? 0);
-  const vStatus = liveStatus?.state ?? "—";
-  const last = formatRelativeIso(liveLast?.state) || "—";
+  // Roborock's cloud sensors go "unavailable" while the dock is offline —
+  // null here so the readouts render an em dash instead of "NaN%".
+  const battery = numOr(liveBat?.state, null);
+  const vStatus = txtOr(liveStatus?.state);
+  // formatRelativeIso hands an unparseable string straight back, so gate it first.
+  const last = has(liveLast?.state) ? formatRelativeIso(liveLast.state) : "—";
   const mapOptions = liveMap?.attributes?.options || [];
   const currentMap = liveMap?.state;
   const mopIntensityOptions = liveMopIntensity?.attributes?.options || [];
@@ -107,26 +117,26 @@ export function VacuumCard({ index = 0 }) {
   const mopModeOptions = liveMopMode?.attributes?.options || [];
   const currentMopMode = liveMopMode?.state;
   const currentRoom = liveRoom?.state;
-  const cleanArea = liveArea?.state;
-  const cleanTime = liveTime?.state;
-  const cleanProgress = Number(liveProgress?.state ?? 0);
+  const cleanArea = numOr(liveArea?.state, null);
+  const cleanTime = numOr(liveTime?.state, null);
+  const cleanProgress = numOr(liveProgress?.state, null);
   const dndOn = liveDnd?.state === "on";
   const charging = liveCharging?.state === "on";
   const mopAttached = liveMopAttached?.state === "on";
   const waterShortage = liveWaterShortage?.state === "on";
-  const mainBrushRaw = Number(liveMainBrush?.state ?? 0);
-  const sideBrushRaw = Number(liveSideBrush?.state ?? 0);
-  const filterRaw = Number(liveFilter?.state ?? 0);
+  const mainBrushRaw = numOr(liveMainBrush?.state, null);
+  const sideBrushRaw = numOr(liveSideBrush?.state, null);
+  const filterRaw = numOr(liveFilter?.state, null);
   const consumableUnit = liveMainBrush?.attributes?.unit_of_measurement || "";
-  const toHours = (v) => consumableUnit === "s" || v > 10000 ? Math.round(v / 3600) : v;
+  const toHours = (v) => v == null ? null : consumableUnit === "s" || v > 10000 ? Math.round(v / 3600) : v;
   const mainBrushLeft = toHours(mainBrushRaw);
   const sideBrushLeft = toHours(sideBrushRaw);
   const filterLeft = toHours(filterRaw);
   const maxBrush = 300;
-  const brushPct = (v) => Math.max(0, Math.min(100, (v / maxBrush) * 100));
+  const brushPct = (v) => v == null ? 0 : Math.max(0, Math.min(100, (v / maxBrush) * 100));
   const brushColor = (v) => brushPct(v) > 50 ? "var(--good)" : brushPct(v) > 20 ? "var(--warn)" : "var(--bad)";
   const vacError = liveError?.state;
-  const hasError = vacError && vacError !== "none" && vacError !== "0" && vacError !== "unknown";
+  const hasError = has(vacError) && vacError !== "none" && vacError !== "0";
   const mapImgSrc = liveMapImage ? imageUrl("image.roborock_s8_map_0", liveMapImage.last_updated) : null;
   const [mapBroken, setMapBroken] = useState(false);
   useEffect(() => { setMapBroken(false); }, [mapImgSrc]);
@@ -138,6 +148,20 @@ export function VacuumCard({ index = 0 }) {
   }, [liveVac?.state]);
   const cleaning = state === "cleaning";
   const paused = state === "paused";
+
+  // Acting flips `state` optimistically, which re-renders a different command into
+  // the same slot — click Return and "Full" lands under the cursor, so a fast second
+  // click starts a whole-house clean nobody asked for. Hold the set the user clicked
+  // in, and lock it, until the command has had time to land.
+  const [lockedMode, setLockedMode] = useState(null);
+  useEffect(() => {
+    if (!lockedMode) return;
+    const id = setTimeout(() => setLockedMode(null), 600);
+    return () => clearTimeout(id);
+  }, [lockedMode]);
+  const actionMode = lockedMode || (cleaning ? "cleaning" : paused ? "paused" : "idle");
+  const actionsLocked = unavailable || lockedMode != null;
+  const act = (fn) => { setLockedMode(actionMode); fn(); };
 
   function start() {
     setState("cleaning");
@@ -172,17 +196,18 @@ export function VacuumCard({ index = 0 }) {
   }
 
   const charge = cleaning ? "var(--accent)" : "var(--good)";
+  const batteryLabel = battery != null ? `${battery}%` : "—";
   const chargeLabel = cleaning
-    ? `cleaning · ${battery}%`
+    ? `cleaning · ${batteryLabel}`
     : charging
-    ? `charging · ${battery}%`
-    : `${vStatus} · ${battery}%`;
+    ? `charging · ${batteryLabel}`
+    : `${vStatus} · ${batteryLabel}`;
 
   return (
     <Card
       index={index}
       className="ws-vacuum"
-      eyebrow="Vacuum · roborock_s8"
+      eyebrow="Vacuum · Roborock S8"
       title="Gregory"
       meta={`Last clean · ${last}`}
       headRight={
@@ -216,8 +241,8 @@ export function VacuumCard({ index = 0 }) {
       <div className="ws-vac-actions">
         <div className="ws-vac-stat">
           <span className="k">Battery</span>
-          <span className="v" style={{ color: battery >= 90 ? "var(--good)" : "var(--ink)" }}>
-            {battery}<i>%</i>
+          <span className="v" style={{ color: battery != null && battery >= 90 ? "var(--good)" : "var(--ink)" }}>
+            {battery ?? "—"}<i>%</i>
           </span>
         </div>
         <div className="ws-vac-stat">
@@ -225,20 +250,20 @@ export function VacuumCard({ index = 0 }) {
           <span className="v small">{cleaning ? "ACTIVE" : paused ? "PAUSED" : (vStatus || "—").toUpperCase()}</span>
         </div>
         <div className="ws-vac-actbtns">
-          {cleaning ? (
+          {actionMode === "cleaning" ? (
             <>
-              <button className="btn primary" onClick={pause} disabled={unavailable}>Pause</button>
-              <button className="btn" onClick={dock} disabled={unavailable}>Return</button>
+              <button className="btn primary" onClick={() => act(pause)} disabled={actionsLocked}>Pause</button>
+              <button className="btn" onClick={() => act(dock)} disabled={actionsLocked}>Return</button>
             </>
-          ) : paused ? (
+          ) : actionMode === "paused" ? (
             <>
-              <button className="btn accent" onClick={start} disabled={unavailable}>Resume</button>
-              <button className="btn" onClick={dock} disabled={unavailable}>Dock</button>
+              <button className="btn accent" onClick={() => act(start)} disabled={actionsLocked}>Resume</button>
+              <button className="btn" onClick={() => act(dock)} disabled={actionsLocked}>Dock</button>
             </>
           ) : (
             <>
-              <button className="btn accent" onClick={start} disabled={unavailable}>Start</button>
-              <button className="btn" onClick={fullClean} disabled={unavailable}>Full</button>
+              <button className="btn accent" onClick={() => act(start)} disabled={actionsLocked}>Start</button>
+              <button className="btn" onClick={() => act(fullClean)} disabled={actionsLocked}>Full</button>
             </>
           )}
           <button className="btn ghost" onClick={locate} disabled={unavailable} title="Beep so I can find it">Locate</button>
@@ -249,7 +274,7 @@ export function VacuumCard({ index = 0 }) {
         <div className="ws-therm-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <div className="ws-therm">
             <span className="k">Progress</span>
-            <span className="v">{cleanProgress}<i>%</i></span>
+            <span className="v">{cleanProgress ?? "—"}<i>%</i></span>
           </div>
           <div className="ws-therm">
             <span className="k">Area</span>
@@ -295,10 +320,27 @@ export function VacuumCard({ index = 0 }) {
               </div>
             </>
           )}
-          <span className="ws-flag" title="Do not disturb">
-            <span className={`mini-tog ${dndOn ? "on" : ""}`} onClick={toggleDnd} />
+          {/* The whole pill is the switch — the 22x12 knob alone is under the
+              24x24 minimum target size, and a bare <span> announced as nothing. */}
+          <button
+            type="button"
+            className="ws-flag"
+            role="switch"
+            aria-checked={dndOn}
+            aria-label="Do not disturb"
+            onClick={toggleDnd}
+            disabled={unavailable}
+            style={{
+              appearance: "none",
+              WebkitAppearance: "none",
+              lineHeight: "inherit",   // buttons don't inherit it; keeps the pill the same height as its siblings
+              cursor: unavailable ? "not-allowed" : "pointer",
+              opacity: unavailable ? 0.5 : 1,
+            }}
+          >
+            <span className={`mini-tog ${dndOn ? "on" : ""}`} aria-hidden />
             DND
-          </span>
+          </button>
           {mopAttached && (
             <span className="ws-flag ok">
               <span className="dot" /> Mop attached
@@ -320,7 +362,7 @@ export function VacuumCard({ index = 0 }) {
               <span style={{ "--p": `${brushPct(v)}%`, "--c": brushColor(v) }} />
             </span>
             <span className="val">
-              {v}<i>h left</i>
+              {v ?? "—"}<i>h left</i>
             </span>
           </div>
         ))}

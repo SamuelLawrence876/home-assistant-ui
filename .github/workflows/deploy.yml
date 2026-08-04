@@ -13,7 +13,9 @@ name: Deploy
 #   Variables:
 #     UI_BUCKET_NAME          — S3 bucket the UI is uploaded to
 #     CLOUDFRONT_DIST_ID      — CloudFront distribution to invalidate
-#     VITE_HA_URL             — Home Assistant base URL (embedded in bundle at build time)
+#     VITE_HA_URL             — Home Assistant base URL (embedded in bundle at build time).
+#                               Currently the Tailscale Funnel host, hit directly.
+#     VITE_SPOTIFY_CLIENT_ID  — Spotify Web API client id for the Media tab (PKCE, public)
 
 on:
   push:
@@ -45,6 +47,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Same gate as ci.yml: esbuild won't catch an undefined identifier, and a
+      # lazy-loaded view only fails when its tab is opened — i.e. in production.
+      - name: Lint
+        run: npm run lint
+
       - name: Build
         env:
           VITE_HA_URL: ${{ vars.VITE_HA_URL }}
@@ -57,21 +64,35 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
+      # Only dist/assets/* carries a content hash in its filename, so only that
+      # is safe to mark immutable. index.html, icon.svg and manifest.webmanifest
+      # keep stable names and are copied separately below — marking those
+      # immutable would freeze the app icon and PWA manifest in every browser
+      # that had already fetched them, for a year, with no way to bust it.
       - name: Sync hashed assets (long cache)
         run: |
           aws s3 sync dist/ "s3://${{ vars.UI_BUCKET_NAME }}/" \
             --delete \
             --exclude index.html \
+            --exclude icon.svg \
+            --exclude manifest.webmanifest \
             --cache-control "public, max-age=31536000, immutable"
 
-      - name: Upload index.html (no cache)
+      - name: Upload unhashed root files (short cache)
         run: |
           aws s3 cp dist/index.html "s3://${{ vars.UI_BUCKET_NAME }}/index.html" \
             --cache-control "no-cache, no-store, must-revalidate" \
             --content-type "text/html; charset=utf-8"
+          aws s3 cp dist/icon.svg "s3://${{ vars.UI_BUCKET_NAME }}/icon.svg" \
+            --cache-control "public, max-age=300, must-revalidate" \
+            --content-type "image/svg+xml"
+          aws s3 cp dist/manifest.webmanifest "s3://${{ vars.UI_BUCKET_NAME }}/manifest.webmanifest" \
+            --cache-control "public, max-age=300, must-revalidate" \
+            --content-type "application/manifest+json"
 
+      # Every unhashed path gets invalidated; /assets/* never needs it.
       - name: Invalidate CloudFront
         run: |
           aws cloudfront create-invalidation \
             --distribution-id "${{ vars.CLOUDFRONT_DIST_ID }}" \
-            --paths "/index.html" "/"
+            --paths "/" "/index.html" "/icon.svg" "/manifest.webmanifest"

@@ -38,10 +38,13 @@ export function useClimateDerived() {
   const tempMin = trueMinArr.length > 0 ? Math.min(...trueMinArr, temp) : Math.min(...tempHist);
   const tempMax = trueMaxArr.length > 0 ? Math.max(...trueMaxArr, temp) : Math.max(...tempHist);
 
-  // Trend over last 3h (index 20 vs 23)
-  const prev = tempHist[tempHist.length - 4];
-  const delta = temp - prev;
-  const trend = delta > 0.2 ? "up" : delta < -0.2 ? "down" : "flat";
+  // Trend over last 3h (index 20 vs 23). Recorder statistics arrive on an async
+  // WS round-trip and can be missing for good (sensor excluded from recorder,
+  // purged, or younger than an hour), so there may be no point 4 back. `delta`
+  // is null in that case — never NaN. Consumers render an em dash.
+  const prev = tempHist.length >= 4 ? tempHist[tempHist.length - 4] : null;
+  const delta = prev == null ? null : temp - prev;
+  const trend = delta == null ? "flat" : delta > 0.2 ? "up" : delta < -0.2 ? "down" : "flat";
   const trendIcon = trend === "up" ? "↗" : trend === "down" ? "↘" : "→";
 
   // Comfort verdict

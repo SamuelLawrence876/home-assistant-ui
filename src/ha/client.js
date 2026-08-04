@@ -6,17 +6,10 @@
    flow via home-assistant-js-websocket. The library refreshes access
    tokens automatically — callers always get a fresh one. */
 
-import { getAccessToken, getFreshAccessToken, getHaUrl, sendWsMessage, waitForConnection } from "./socket.js";
+import { getEntity, getFreshAccessToken, getHaUrl, sendWsMessage, waitForConnection } from "./socket.js";
 
-export const getHAConfig = () => ({
-  url: getHaUrl(),
-  token: getAccessToken() || "",
-});
-
-export const haConfigured = () => {
-  const { url, token } = getHAConfig();
-  return Boolean(url && token);
-};
+/* Is the app pointed at a real HA instance? (mock-mode builds set VITE_HA_URL="") */
+export const haConfigured = () => Boolean(getHaUrl());
 
 async function req(path, init = {}) {
   const url = getHaUrl();
@@ -53,16 +46,23 @@ export const callService = async (domain, service, data = {}, target = undefined
   }
 };
 
-/* HA proxies images (for entities of type `image`). Use this for the Bambu cover. */
+/* HA proxies images (for entities of type `image`). Use this for the Bambu cover.
+
+   HA publishes the signed path on the entity itself — `entity_picture` already
+   carries that entity's own short-lived, single-path token, which is what
+   HA's ImageView actually checks. We used to paste the OAuth *bearer* into the
+   query string instead: full API access, written into CloudFront's and HA's
+   access logs, readable from the DOM, and dead after 30 minutes.
+
+   Returns null when the entity isn't in the state map yet; both callers already
+   render a placeholder for that. `ts` (the entity's last_updated) busts the
+   browser cache when the picture changes. */
 export const imageUrl = (entityId, ts) => {
-  const { url, token } = getHAConfig();
-  // Build the query string properly: when `ts` is absent the token must still
-  // start the query with `?` (the old `&token=` with no `?` produced a malformed
-  // URL that HA rejected with 401/403).
-  const q = ts
-    ? `?t=${encodeURIComponent(ts)}&token=${encodeURIComponent(token)}`
-    : `?token=${encodeURIComponent(token)}`;
-  return `${url}/api/image_proxy/${entityId}${q}`;
+  const base = getHaUrl();
+  const picture = getEntity(entityId)?.attributes?.entity_picture;
+  if (!base || !picture) return null;
+  const bust = ts ? `${picture.includes("?") ? "&" : "?"}t=${encodeURIComponent(ts)}` : "";
+  return picture.startsWith("http") ? `${picture}${bust}` : `${base}${picture}${bust}`;
 };
 
 /* Get forecasts via the modern service (HA changed this in 2024 — legacy `forecast` attribute is gone). */
@@ -98,5 +98,4 @@ export async function browseMedia(entityId, mediaContentType, mediaContentId) {
   return sendWsMessage(msg);
 }
 
-export const haUrl = () => getHAConfig().url;
-export const haToken = () => getHAConfig().token;
+export const haUrl = () => getHaUrl();

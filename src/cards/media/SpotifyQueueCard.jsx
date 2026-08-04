@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { isSpotifyConfigured, getQueue } from "../../ha/spotify.js";
 import { Card } from "../../components/Card.jsx";
-import { useSpotifyConnect, useSpotifyPlay, SpotifyTrackRow, _emptyMsg, _notConnected } from "../../cards/media/spotifyShared.jsx";
+import { useSpotifyConnect, useSpotifyPlay, SpotifyTrackRow, _emptyMsg, _notConnected, _linkBtnStyle } from "../../cards/media/spotifyShared.jsx";
 
 export function SpotifyQueueCard({ index = 0 }) {
   const [connected] = useSpotifyConnect();
@@ -31,9 +31,9 @@ export function SpotifyQueueCard({ index = 0 }) {
       title="Up next"
       meta={loading ? "Loading" : queueData.queue.length > 0 ? `${queueData.queue.length} tracks` : null}
       headRight={
-        <span onClick={refresh} style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", cursor: "pointer" }}>
+        <button type="button" onClick={refresh} style={_linkBtnStyle}>
           Refresh
-        </span>
+        </button>
       }
     >
       {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>{error}</div>}

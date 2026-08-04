@@ -43,6 +43,11 @@ export function SamBoxStrip({ compact = false }) {
     }
   }, [livePlug?.state]);
 
+  // Revert from the plug's latest known state, not the one captured at click
+  // time — the resync effect above only fires on a *changed* state string.
+  const plugOnRef = useRef(plugOn);
+  plugOnRef.current = plugOn;
+
   function powerOn() {
     setOnLocal(true);
     setTurning(true);
@@ -51,14 +56,14 @@ export function SamBoxStrip({ compact = false }) {
     callService("switch", "turn_on", { entity_id: PLUG_ENTITY }).catch(() => {
       clearTimeout(timer.current);
       setTurning(false);
-      setOnLocal(plugOn); // revert to last-known state on failure
+      setOnLocal(plugOnRef.current); // revert to last-known state on failure
     });
   }
   function powerOff() {
     clearTimeout(timer.current);
     setTurning(false);
     setOnLocal(false);
-    callService("switch", "turn_off", { entity_id: PLUG_ENTITY }).catch(() => setOnLocal(plugOn));
+    callService("switch", "turn_off", { entity_id: PLUG_ENTITY }).catch(() => setOnLocal(plugOnRef.current));
   }
 
   // Richer "Streaming" label once the Pi reports a session sensor; ignored until it exists.
@@ -96,9 +101,11 @@ export function SamBoxStrip({ compact = false }) {
             {statusLabel}
           </div>
           <button
+            type="button"
             className="sambox-switch"
             role="switch"
             aria-checked={displayOn}
+            aria-label="SamBox360 power"
             data-on={displayOn}
             data-turning={turning}
             onClick={displayOn || turning ? powerOff : powerOn}

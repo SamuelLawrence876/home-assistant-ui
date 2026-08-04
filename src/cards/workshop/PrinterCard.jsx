@@ -7,6 +7,13 @@ import { EntityGuard } from "../../components/EntityGuard.jsx";
 /* ----------------------------------------------------------------
    Printer — Bambu X1C
    ----------------------------------------------------------------*/
+/* One gate for every reading. HA reports "unavailable" when a sensor drops out and
+   "unknown" before it has ever reported — neither may reach the screen, be parsed
+   as a number, or be handed to Date(), which turns them into "Invalid Date". */
+const has = (v) => v != null && v !== "" && v !== "unavailable" && v !== "unknown";
+const numOr = (v, d) => (has(v) && !Number.isNaN(+v) ? +v : d);
+const txtOr = (v, d = "—") => (has(v) ? v : d);
+
 function PrinterPreview({ progress = 0, color = "#d97757" }) {
   const H = 220, W = 240;
   const layers = 36;
@@ -104,26 +111,28 @@ export function PrinterCard({ index = 0 }) {
   const liveWeight = useEntity(`sensor.${PREFIX}_print_weight`);
   const liveLength = useEntity(`sensor.${PREFIX}_print_length`);
 
-  const prog = Number(liveProg?.state ?? 0);
-  const stage = liveStage?.state ?? "—";
-  const remaining = Number(liveRemaining?.state ?? 0);
-  const nozzle = Number(liveNozzle?.state ?? 0);
-  const nozzleTarget = Number(liveNozzleTarget?.state ?? 0);
-  const bed = Number(liveBed?.state ?? 0);
-  const bedTarget = Number(liveBedTarget?.state ?? 0);
-  const chamber = Number(liveChamber?.state ?? 0);
-  const ams = Number(liveAms?.state ?? 0);
-  const tray = liveTray?.state ?? "—";
+  // The X1C drops every sensor to "unavailable" the moment it goes offline,
+  // so these are null (→ em dash) rather than NaN or a fake 0.
+  const prog = numOr(liveProg?.state, null);
+  const stage = txtOr(liveStage?.state);
+  const remaining = numOr(liveRemaining?.state, null);
+  const nozzle = numOr(liveNozzle?.state, null);
+  const nozzleTarget = numOr(liveNozzleTarget?.state, 0);
+  const bed = numOr(liveBed?.state, null);
+  const bedTarget = numOr(liveBedTarget?.state, 0);
+  const chamber = numOr(liveChamber?.state, null);
+  const ams = numOr(liveAms?.state, null);
+  const tray = txtOr(liveTray?.state);
   const fileName = liveProg?.attributes?.file_name || "—";
-  const curLayer = liveLayer?.state ?? "—";
-  const totalLayers = liveTotalLayers?.state ?? "—";
-  const speedProfile = liveSpeed?.state ?? "—";
-  const auxFan = liveAuxFan?.state ?? "—";
-  const chamberFan = liveChamberFan?.state ?? "—";
-  const coolingFan = liveCoolingFan?.state ?? "—";
+  const curLayer = has(liveLayer?.state) ? String(liveLayer.state).padStart(3, "0") : "—";
+  const totalLayers = txtOr(liveTotalLayers?.state);
+  const speedProfile = txtOr(liveSpeed?.state);
+  const auxFan = txtOr(liveAuxFan?.state);
+  const chamberFan = txtOr(liveChamberFan?.state);
+  const coolingFan = txtOr(liveCoolingFan?.state);
   const startTime = liveStart?.state;
   const endTime = liveEnd?.state;
-  const printStatus = livePrintStatus?.state ?? "unknown";
+  const printStatus = txtOr(livePrintStatus?.state, "unknown");
   const doorOpen = liveDoor?.state === "on";
   const hasHmsError = liveHmsErrors?.state === "on";
   const hasPrintError = livePrintError?.state === "on";
@@ -133,7 +142,7 @@ export function PrinterCard({ index = 0 }) {
   const printLength = liveLength?.state;
   const printing = printStatus === "running" || (remaining > 0 && stage !== "idle");
   const amsTrayNames = [liveTray1, liveTray2, liveTray3, liveTray4].map(
-    (t) => t?.state && t.state !== "unknown" && t.state !== "Empty" ? t.state : null
+    (t) => has(t?.state) && t.state !== "Empty" ? t.state : null
   );
 
   const [light, setLight] = useState(liveLight?.state === "on");
@@ -146,11 +155,20 @@ export function PrinterCard({ index = 0 }) {
   function toggleCamera() {
     callService("switch", cameraOn ? "turn_off" : "turn_on", { entity_id: `switch.${PREFIX}_camera` }).catch(() => {});
   }
+  // HA rotates the entity_picture token, so a cached URL can 401 — fall back to the
+  // drawn preview like the vacuum map does, rather than leaving an empty tile with
+  // white-on-dark overlay buttons stranded on the pale card background.
   const coverSrc = liveImage ? imageUrl(`image.${PREFIX}_cover_image`, liveImage.last_updated) : null;
+  const [coverBroken, setCoverBroken] = useState(false);
+  useEffect(() => { setCoverBroken(false); }, [coverSrc]);
+  const cover = coverBroken ? null : coverSrc;
 
   const fmtIsoTime = (iso) => {
-    if (!iso || iso === "unknown") return "—";
-    try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; }
+    if (!has(iso)) return "—";
+    // new Date("unavailable") doesn't throw — it returns an Invalid Date that
+    // formats as the literal string "Invalid Date".
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
   const formatRemaining = (m) => {
@@ -187,29 +205,34 @@ export function PrinterCard({ index = 0 }) {
       )}
       <div className="ws-printer-grid">
         {/* LEFT: live preview tile */}
-        <div className="ws-printer-tile" style={coverSrc ? {
-          backgroundImage: `url(${coverSrc})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-        } : undefined}>
-          {!coverSrc && <PrinterPreview progress={prog} color={activeTrayIdx >= 0 ? trayColors[activeTrayIdx] : "#d97757"} />}
+        <div className="ws-printer-tile">
+          {cover ? (
+            <img
+              src={cover}
+              alt="Print cover"
+              onError={() => setCoverBroken(true)}
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          ) : (
+            <PrinterPreview progress={prog ?? 0} color={activeTrayIdx >= 0 ? trayColors[activeTrayIdx] : "#d97757"} />
+          )}
           <div className="ws-tile-overlay">
             <span className="ws-tile-live">
-              <span className="dot" /> {coverSrc ? "LIVE · cover" : "cover_image"}
+              <span className="dot" /> {cover ? "LIVE · cover" : "cover_image"}
             </span>
             <span className="ws-tile-layer">
-              Layer <b>{String(curLayer).padStart(3, "0")}</b> / {totalLayers}
+              Layer <b>{curLayer}</b> / {totalLayers}
             </span>
           </div>
           <div className="ws-tile-toggles">
-            <button className={`ws-tog ${cameraOn ? "on" : ""}`} onClick={toggleCamera}>
+            <button className={`ws-tog ${cameraOn ? "on" : ""}`} onClick={toggleCamera} aria-pressed={cameraOn}>
               <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.4">
                 <rect x="1" y="4" width="10" height="8" rx="1.5" />
                 <path d="M11 7l4-2v6l-4-2z" />
               </svg>
               Cam
             </button>
-            <button className={`ws-tog ${light ? "on" : ""}`} onClick={toggleLight}>
+            <button className={`ws-tog ${light ? "on" : ""}`} onClick={toggleLight} aria-pressed={light}>
               <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.4">
                 <path d="M5 7a3 3 0 1 1 6 0c0 1.5-1.2 2.2-1.2 3.5H6.2C6.2 9.2 5 8.5 5 7z" />
                 <path d="M6.5 13h3M7 14.5h2" strokeLinecap="round" />
@@ -224,25 +247,25 @@ export function PrinterCard({ index = 0 }) {
           <div className="ws-file">
             <div className="ws-file-name" title={fileName}>{fileName}</div>
             <div className="ws-file-sub">
-              {startTime && startTime !== "unknown" ? `Started ${fmtIsoTime(startTime)}` : "—"}
-              {endTime && endTime !== "unknown" && <> · ETA <b>{fmtIsoTime(endTime)}</b></>}
+              {has(startTime) ? `Started ${fmtIsoTime(startTime)}` : "—"}
+              {has(endTime) && <> · ETA <b>{fmtIsoTime(endTime)}</b></>}
               {doorOpen && <span style={{ color: "var(--accent-2)", marginLeft: 6 }}>· door open</span>}
             </div>
           </div>
 
           <div className="ws-progress-block">
             <div className="ws-progress-readout">
-              <span className="big">{prog}<span className="u">%</span></span>
+              <span className="big">{prog ?? "—"}<span className="u">%</span></span>
               <span className="rem">{formatRemaining(remaining)} <span className="muted">remaining</span></span>
             </div>
             <div className="ws-progress-track">
-              <span style={{ "--p": `${prog}%` }} />
-              <em style={{ left: `${prog}%` }} />
+              <span style={{ "--p": `${prog ?? 0}%` }} />
+              <em style={{ left: `${prog ?? 0}%` }} />
             </div>
             {printing && (
               <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--ink-3)", fontFamily: "var(--font-mono)", marginTop: 4 }}>
                 <span>Speed · <b style={{ color: "var(--ink-2)" }}>{speedProfile}</b></span>
-                {printWeight && printWeight !== "unknown" && <span>Weight · <b style={{ color: "var(--ink-2)" }}>{printWeight}g</b></span>}
+                {has(printWeight) && <span>Weight · <b style={{ color: "var(--ink-2)" }}>{printWeight}g</b></span>}
               </div>
             )}
           </div>
@@ -250,23 +273,23 @@ export function PrinterCard({ index = 0 }) {
           <div className="ws-therm-grid">
             <div className="ws-therm">
               <span className="k">Nozzle</span>
-              <span className="v">{nozzle}<i>°</i></span>
+              <span className="v">{nozzle ?? "—"}<i>°</i></span>
               <span className="tgt">{nozzleTarget > 0 ? `→ ${nozzleTarget}°` : "idle"}</span>
             </div>
             <div className="ws-therm">
               <span className="k">Bed</span>
-              <span className="v">{bed}<i>°</i></span>
+              <span className="v">{bed ?? "—"}<i>°</i></span>
               <span className="tgt">{bedTarget > 0 ? `→ ${bedTarget}°` : "idle"}</span>
             </div>
             <div className="ws-therm">
               <span className="k">Chamber</span>
-              <span className="v">{chamber}<i>°</i></span>
+              <span className="v">{chamber ?? "—"}<i>°</i></span>
               <span className="tgt">passive</span>
             </div>
             <div className="ws-therm">
               <span className="k">AMS RH</span>
-              <span className="v">{ams}<i>%</i></span>
-              <span className="tgt">{ams < 50 ? "ok < 50%" : "high"}</span>
+              <span className="v">{ams ?? "—"}<i>%</i></span>
+              <span className="tgt">{ams == null ? "no reading" : ams < 50 ? "ok < 50%" : "high"}</span>
             </div>
           </div>
 
@@ -297,8 +320,11 @@ export function PrinterCard({ index = 0 }) {
             <span className="hint">active · {tray}</span>
           </div>
           <div className="ws-ams-trays">
+            {/* Read-only: the Bambu integration exposes no select-tray service, so these
+                are plain tiles — as <button>s they were four dead tab stops between the
+                printer card and the vacuum card. */}
             {amsTrayNames.map((name, i) => (
-              <button key={i} className={`ws-ams-tray ${name && name === tray ? "active" : ""}`}>
+              <div key={i} className={`ws-ams-tray ${name && name === tray ? "active" : ""}`} style={{ cursor: "default" }}>
                 <span className="swatch" style={{ background: name ? trayColors[i] : "var(--ink-4)" }}>
                   {name && name === tray && <span className="active-mark" />}
                 </span>
@@ -306,7 +332,7 @@ export function PrinterCard({ index = 0 }) {
                   <span className="slot">Tray {i + 1}</span>
                   <span className="mat">{name || "Empty"}</span>
                 </span>
-              </button>
+              </div>
             ))}
           </div>
         </div>

@@ -4,10 +4,12 @@ import { getTodoItems } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
 
+const numOr = (v, d) => (v != null && v !== "unavailable" && v !== "unknown" && !Number.isNaN(+v) ? +v : d);
+
 export function InProgressCard({ index = 0 }) {
   const { entity: live, status } = useEntityStatus("todo.doing_2");
   const [items, setItems] = useState([]);
-  const count = Number(live?.state ?? 0);
+  const count = numOr(live?.state, null);
   useEffect(() => {
     if (!live) return;
     getTodoItems("todo.doing_2")
@@ -17,7 +19,7 @@ export function InProgressCard({ index = 0 }) {
       .catch(() => {});
   }, [live?.state]);
   return (
-    <Card index={index} eyebrow={`In Progress · ${count} items`} title="Doing now">
+    <Card index={index} eyebrow={`In Progress · ${count ?? "—"} items`} title="Doing now">
       <EntityGuard status={status} entityId="todo.doing_2">
       <ul className="shopping">
         {items.slice(0, 6).map((it, i) => (

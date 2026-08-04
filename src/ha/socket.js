@@ -14,7 +14,7 @@
      reconnect()
 
    New exports for the OAuth refactor:
-     getAccessToken()                -> string | null   (auto-refreshing)
+     getFreshAccessToken()           -> Promise<string | null>  (refreshes if expired)
      getHaUrl()                      -> string
      signOut()                       -> revokes tokens + reloads
 */
@@ -24,6 +24,7 @@ import {
   getAuth,
   subscribeEntities,
 } from "home-assistant-js-websocket";
+import { clearSpotifyToken } from "./spotify.js";
 
 const HA_URL = import.meta.env.VITE_HA_URL || "";
 const TOKENS_KEY = "ha_tokens";
@@ -83,6 +84,14 @@ const loadTokens = async () => {
   }
 };
 
+/* Remove the last occurrence of a repeated query param, keeping the earlier ones. */
+function dropLastParam(params, name) {
+  const all = params.getAll(name);
+  if (all.length === 0) return;
+  params.delete(name);
+  all.slice(0, -1).forEach((v) => params.append(name, v));
+}
+
 async function setup() {
   if (!HA_URL) {
     console.warn("[ha-ws] VITE_HA_URL not set — cannot connect");
@@ -105,12 +114,16 @@ async function setup() {
     return;
   }
 
-  // Clean HA OAuth callback params only (not Spotify's — state=spotify is handled by spotify.js).
+  // Clean HA OAuth callback params only. A Spotify callback that lands while we
+  // have no HA tokens gets carried through HA's login round trip (the library
+  // builds its redirect URI from the current query string), so the URL can hold
+  // two code/state pairs — and `delete` removes every occurrence. HA appends its
+  // own last, so drop only the last of each and leave Spotify's alone.
   if (window.location.search.includes("auth_callback=")) {
     const url = new URL(window.location.href);
     url.searchParams.delete("auth_callback");
-    url.searchParams.delete("code");
-    url.searchParams.delete("state");
+    dropLastParam(url.searchParams, "code");
+    dropLastParam(url.searchParams, "state");
     window.history.replaceState(null, "", url.toString());
   }
 
@@ -197,10 +210,10 @@ export function reconnect() {
 
 /* OAuth-specific extras */
 
-export function getAccessToken() {
-  return auth?.accessToken ?? null;
-}
-
+/* The only token getter. There used to be a synchronous `getAccessToken()`
+   beside this one that handed out `auth.accessToken` without checking expiry —
+   the WS library only refreshes at connect time, so REST callers that picked it
+   started 401ing ~30 minutes in while the socket still read "live". */
 export async function getFreshAccessToken() {
   if (!auth) return null;
   if (auth.expired) {
@@ -220,6 +233,9 @@ export async function signOut() {
     console.warn("[ha-ws] revoke failed (logging out locally anyway)", e);
   }
   try { localStorage.removeItem(TOKENS_KEY); } catch {}
+  // Clear every credential this app owns, not just HA's — on a shared tablet the
+  // next person used to inherit a working Spotify refresh token.
+  clearSpotifyToken();
   if (connection) {
     try { connection.close(); } catch {}
   }
@@ -234,12 +250,32 @@ export function sendWsMessage(message) {
   });
 }
 
-export function waitForConnection() {
+/* Resolves once the socket is live, rejects after `timeoutMs`. It used to have
+   neither a timeout nor a rejection: with HA unreachable the promise stayed
+   pending forever and its listener stayed in `connectionListeners` for good —
+   useStatistics adds one every 10 minutes. */
+export function waitForConnection(timeoutMs = 15000) {
   if (connectionStatus === "ready" && connection) return Promise.resolve();
-  return new Promise((resolve) => {
-    const unsub = onConnectionChange((s) => {
-      if (s === "ready") { unsub(); resolve(); }
+  return new Promise((resolve, reject) => {
+    let unsub = null;
+    let done = false;
+    const finish = (settle, arg) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (unsub) unsub();
+      settle(arg);
+    };
+    const timer = setTimeout(
+      () => finish(reject, new Error("HA connection timed out")),
+      timeoutMs,
+    );
+    // onConnectionChange calls back synchronously with the current status, i.e.
+    // before `unsub` exists — hence the `done` flag and the cleanup below.
+    unsub = onConnectionChange((s) => {
+      if (s === "ready" && connection) finish(resolve);
     });
+    if (done) unsub();
   });
 }
 

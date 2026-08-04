@@ -1,9 +1,10 @@
 /* Service error toast — frosted glass beacon, bottom of the stack.
-   Subscribes to onServiceError from the HA client; shows the last 5. */
+   Presentational only: it takes a { id, label, detail } list and a dismiss
+   callback. The onServiceError subscription that fills that list lives in
+   App.jsx, because components/ must stay entity-agnostic (CLAUDE.md: no
+   ha/ or data.js imports in here). */
 import { useState, useEffect, useCallback } from "react";
-import { onServiceError } from "../ha/client.js";
 
-let toastIdCounter = 0;
 const TOAST_DURATION = 6000;
 
 function ToastItem({ toast, onDismiss }) {
@@ -34,7 +35,7 @@ function ToastItem({ toast, onDismiss }) {
         <div className="toast-label">{toast.label}</div>
         <div className="toast-detail">{toast.detail}</div>
       </div>
-      <button className="toast-close" onClick={dismiss} aria-label="Dismiss">
+      <button className="toast-close" onClick={dismiss} aria-label={`Dismiss error: ${toast.label}`}>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
           <line x1="4" y1="4" x2="12" y2="12" />
           <line x1="12" y1="4" x2="4" y2="12" />
@@ -47,28 +48,15 @@ function ToastItem({ toast, onDismiss }) {
   );
 }
 
-export function ServiceErrorToast() {
-  const [toasts, setToasts] = useState([]);
-  const dismiss = useCallback((id) => {
-    setToasts((t) => t.filter((x) => x.id !== id));
-  }, []);
-  useEffect(() => {
-    return onServiceError(({ domain, service, data, error }) => {
-      const entityId = data?.entity_id || "";
-      const errMsg = error?.message || String(error);
-      const shortErr = errMsg.length > 120 ? errMsg.slice(0, 120) + "…" : errMsg;
-      const label = entityId
-        ? `${domain}.${service} on ${entityId}`
-        : `${domain}.${service}`;
-      const id = ++toastIdCounter;
-      setToasts((t) => [...t.slice(-4), { id, label, detail: shortErr }]);
-    });
-  }, []);
-  if (toasts.length === 0) return null;
+export function ServiceErrorToast({ toasts = [], onDismiss }) {
+  // The stack is always mounted, even with nothing in it: a live region that
+  // arrives in the same DOM mutation as its first message is not announced —
+  // screen readers only report changes to a region already in the tree. It is
+  // `pointer-events: none` (toast.css) and collapses to nothing when empty.
   return (
-    <div className="toast-stack">
+    <div className="toast-stack" role="status" aria-live="polite">
       {toasts.map((t) => (
-        <ToastItem key={t.id} toast={t} onDismiss={dismiss} />
+        <ToastItem key={t.id} toast={t} onDismiss={onDismiss} />
       ))}
     </div>
   );

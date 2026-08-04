@@ -1,7 +1,7 @@
 import { useEntityStatus } from "../../ha/useEntity.js";
-import { isSpotifyConfigured, startSpotifyAuth, clearSpotifyToken } from "../../ha/spotify.js";
+import { isSpotifyConfigured, startSpotifyAuth } from "../../ha/spotify.js";
 import { Card } from "../../components/Card.jsx";
-import { useSpotifyConnect } from "../../cards/media/spotifyShared.jsx";
+import { useSpotifyConnect, _linkBtnStyle } from "../../cards/media/spotifyShared.jsx";
 
 export function SpotifyConnectCard({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
@@ -102,12 +102,13 @@ export function SpotifyConnectCard({ index = 0 }) {
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#1db954", boxShadow: "0 0 6px #1db954" }} />
                 Spotify connected
               </div>
-              <span
-                onClick={() => { clearSpotifyToken(); setSpotifyConnected(false); }}
-                style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", cursor: "pointer" }}
+              <button
+                type="button"
+                onClick={() => setSpotifyConnected(false)}
+                style={_linkBtnStyle}
               >
                 Disconnect
-              </span>
+              </button>
             </div>
           ) : (
             <button

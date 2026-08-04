@@ -220,6 +220,11 @@
   gap: 8px;
   margin-top: 6px;
 }
+/* Two 123px tiles at 320px cut "Goodnight" to "Goodni" — indistinguishable
+   from "Good Morning". Below that width one column per row fits the label. */
+@media (max-width: 360px) {
+  .scenes-grid { grid-template-columns: 1fr; }
+}
 .scene {
   display: grid;
   grid-template-columns: 36px 1fr;
@@ -233,6 +238,9 @@
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s ease;
   position: relative;
   overflow: hidden;
+  /* .scene is a <button>: without this it inherits the UA `buttontext` (black),
+     which reads 1.28:1 on the night card while every sibling label is light. */
+  color: var(--ink);
 }
 .scene:hover { transform: translateY(-2px); }
 .scene:active { transform: scale(0.98); }
@@ -246,9 +254,11 @@
   z-index: 0;
 }
 .scene.firing::after { transform: scaleX(1); }
-.scene > * { position: relative; z-index: 1; }
-.scene.firing { color: var(--sky-top); }
-.scene.firing .scene-sub { color: color-mix(in oklch, var(--sky-top), transparent 50%); }
+/* min-width: 0 — the 1fr text column defaults to a min-content floor, so a long
+   scene name pushes past the tile's padding box instead of ellipsising. */
+.scene > * { position: relative; z-index: 1; min-width: 0; }
+.scene.firing { color: var(--on-ink); }
+.scene.firing .scene-sub { color: color-mix(in oklch, var(--on-ink), transparent 50%); }
 .scene-ic {
   width: 36px; height: 36px;
   border-radius: 12px;
@@ -271,6 +281,9 @@
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .scene .scene-sub {
   font-family: var(--font-mono);
@@ -279,6 +292,9 @@
   text-transform: uppercase;
   color: var(--ink-3);
   margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* Toggle tiles: lit while a script is running / a paired scene is active. */
 .scene.active {

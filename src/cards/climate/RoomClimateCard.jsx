@@ -39,9 +39,11 @@ export function RoomClimateCard({ index = 0, compact }) {
     );
   }
 
-  // Dew point approximation (Magnus formula)
-  const gamma = Math.log(humidity / 100) + (17.67 * temp) / (243.5 + temp);
-  const dewPt = (243.5 * gamma) / (17.67 - gamma);
+  // Dew point approximation (Magnus formula). log(0) is -Infinity, so a
+  // missing/zero humidity reading has to short-circuit to an em dash.
+  const dewOk = Number.isFinite(humidity) && humidity > 0 && Number.isFinite(temp);
+  const gamma = dewOk ? Math.log(humidity / 100) + (17.67 * temp) / (243.5 + temp) : 0;
+  const dewPt = dewOk ? (243.5 * gamma) / (17.67 - gamma) : null;
 
   // Humidity ring geometry (60px radius)
   const R = 60;
@@ -93,8 +95,10 @@ export function RoomClimateCard({ index = 0, compact }) {
   const tGrid = [];
   for (let v = tGridLo; v <= tGridHi; v++) tGrid.push(v);
 
-  const trendIcon = trend === "up" ? "↗" : trend === "down" ? "↘" : "→";
-  const trendColor = trend === "up" ? "var(--accent)" : trend === "down" ? "var(--accent-2)" : "var(--ink-3)";
+  // With no delta there is no direction to claim — fall back to the neutral arrow.
+  const dir = delta == null ? "flat" : trend;
+  const trendIcon = dir === "up" ? "↗" : dir === "down" ? "↘" : "→";
+  const trendColor = dir === "up" ? "var(--accent)" : dir === "down" ? "var(--accent-2)" : "var(--ink-3)";
 
   const source = liveTemp?.attributes?.friendly_name || "Govee H5075";
 
@@ -115,7 +119,9 @@ export function RoomClimateCard({ index = 0, compact }) {
           <div className="roomclim-trend" style={{ color: trendColor }}>
             <span className="ic">{trendIcon}</span>
             <span>
-              {delta === 0 ? "steady" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}°`} <span className="muted">last 3h</span>
+              {/* delta is null when the recorder has under 4h of history. */}
+              {delta == null ? "—" : delta === 0 ? "steady" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}°`}{" "}
+              <span className="muted">last 3h</span>
             </span>
           </div>
 
@@ -130,7 +136,7 @@ export function RoomClimateCard({ index = 0, compact }) {
             </div>
             <div className="chip-stat">
               <span className="k">Dew pt</span>
-              <span className="v">{dewPt.toFixed(1)}°</span>
+              <span className="v">{dewPt != null ? `${dewPt.toFixed(1)}°` : "—"}</span>
             </div>
           </div>
         </div>

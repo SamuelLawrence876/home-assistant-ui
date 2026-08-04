@@ -270,12 +270,12 @@
   transform: translate(-50%, calc(-100% - 12px));
 }
 .chart-tag.tag-now .lbl {
-  color: color-mix(in oklch, var(--sky-top, #fff), transparent 30%);
+  color: color-mix(in oklch, var(--on-ink, #fff), transparent 30%);
   font-size: 7px;
   letter-spacing: 0.22em;
 }
 .chart-tag.tag-now .val {
-  color: var(--sky-top, #fff);
+  color: var(--on-ink, #fff);
   font-size: 13px;
 }
 .chart-tag.tag-now::after {

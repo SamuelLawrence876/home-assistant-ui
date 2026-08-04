@@ -1,7 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useEntitiesByDomain } from "../../ha/useEntity.js";
 import { useCalendarEvents } from "../../ha/useCalendarEvents.js";
 import { Card } from "../../components/Card.jsx";
+
+const HOUR_MS = 3600_000;
 
 /* ----------------------------------------------------------------
    Next event — compact card for Overview
@@ -13,11 +15,27 @@ export function NextEventCard({ index = 0 }) {
     [calendarEntities.length, calendarEntities.map((e) => e.entity_id).join(",")],
   );
 
-  const now = new Date();
-  const startISO = now.toISOString();
-  const end = new Date(now);
-  end.setDate(end.getDate() + 7);
-  const endISO = end.toISOString();
+  // Clock tick for the "Today / Tomorrow" labels and the already-started
+  // filter. Once a minute is plenty and keeps the render rate sane.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const now = new Date(nowMs);
+
+  // The fetch window is bucketed to the top of the hour. useCalendarEvents
+  // keys its refetch off the range strings, so a millisecond-fresh `new Date()`
+  // read in the render body gives it a new key on every render — and its own
+  // setEvents re-renders us, which is an unbounded REST loop at the Pi. An
+  // hourly bucket is stable between renders and still rolls the window forward.
+  const rangeHour = Math.floor(nowMs / HOUR_MS);
+  const { startISO, endISO } = useMemo(() => {
+    const from = new Date(rangeHour * HOUR_MS);
+    const to = new Date(from);
+    to.setDate(to.getDate() + 7);
+    return { startISO: from.toISOString(), endISO: to.toISOString() };
+  }, [rangeHour]);
 
   const { events, loading } = useCalendarEvents(calendarIds, startISO, endISO);
 
@@ -35,7 +53,7 @@ export function NextEventCard({ index = 0 }) {
       .filter(Boolean)
       .sort((a, b) => a.start - b.start)
       .slice(0, 3);
-  }, [events]);
+  }, [events, nowMs]);
 
   function fmtDate(d, allDay) {
     const isToday = d.toDateString() === now.toDateString();

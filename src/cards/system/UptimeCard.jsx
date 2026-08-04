@@ -7,10 +7,11 @@ import { EntityGuard } from "../../components/EntityGuard.jsx";
    ----------------------------------------------------------------*/
 export function UptimeCard({ index = 0 }) {
   const { entity: live, status: uptimeStatus } = useEntityStatus("sensor.uptime");
-  const iso = live?.state || "2000-01-01T00:00:00";
-  const started = new Date(iso);
-  const now = new Date();
-  const diffMs = now - started;
+  // "unavailable"/"unknown" parse to an Invalid Date, which turns every
+  // figure below into NaN — treat it as no reading instead.
+  const started = new Date(live?.state ?? "");
+  const valid = !Number.isNaN(started.getTime());
+  const diffMs = valid ? Date.now() - started.getTime() : 0;
   const days = Math.floor(diffMs / (24 * 3600 * 1000));
   const hours = Math.floor((diffMs % (24 * 3600 * 1000)) / (3600 * 1000));
   const minutes = Math.floor((diffMs % (3600 * 1000)) / (60 * 1000));
@@ -28,12 +29,16 @@ export function UptimeCard({ index = 0 }) {
           fontFeatureSettings: "'tnum'",
         }}
       >
-        {days}
-        <span style={{ fontSize: 18, color: "var(--ink-3)", fontWeight: 400, marginLeft: 4 }}>d</span>{" "}
-        {hours}
-        <span style={{ fontSize: 18, color: "var(--ink-3)", fontWeight: 400, marginLeft: 4 }}>h</span>{" "}
-        {minutes}
-        <span style={{ fontSize: 18, color: "var(--ink-3)", fontWeight: 400, marginLeft: 4 }}>m</span>
+        {valid ? (
+          <>
+            {days}
+            <span style={{ fontSize: 18, color: "var(--ink-3)", fontWeight: 400, marginLeft: 4 }}>d</span>{" "}
+            {hours}
+            <span style={{ fontSize: 18, color: "var(--ink-3)", fontWeight: 400, marginLeft: 4 }}>h</span>{" "}
+            {minutes}
+            <span style={{ fontSize: 18, color: "var(--ink-3)", fontWeight: 400, marginLeft: 4 }}>m</span>
+          </>
+        ) : "—"}
       </div>
       <div
         style={{
@@ -44,14 +49,15 @@ export function UptimeCard({ index = 0 }) {
           letterSpacing: "0.04em",
         }}
       >
-        Since{" "}
-        {started.toLocaleString("en-GB", {
-          day: "numeric",
-          month: "short",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
+        {valid
+          ? `Since ${started.toLocaleString("en-GB", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}`
+          : "sensor.uptime has no reading"}
       </div>
       </EntityGuard>
     </Card>

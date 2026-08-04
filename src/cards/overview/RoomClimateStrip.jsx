@@ -33,7 +33,6 @@ export function RoomClimateStrip({ index = 0 }) {
   const humOffset = C * (1 - humidity / 100);
 
   // Sparkline
-  const hasHistory = tempHist.length >= 2;
   const SW = 260, SH = 44, PAD = 3;
   const tMin = Math.min(...tempHist);
   const tMax = Math.max(...tempHist);
@@ -58,9 +57,15 @@ export function RoomClimateStrip({ index = 0 }) {
           <div className="readout temp" style={{ fontSize: 64 }}>
             {temp.toFixed(1)}<span className="u">°c</span>
           </div>
+          {/* delta is null until recorder statistics land — and stays null if
+              the sensor has no hourly history at all. Show an em dash, not NaN. */}
           <div className="rcstrip-trend">
-            <span className="ic">{trendIcon}</span>
-            {delta === 0 ? "steady" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}° · 3h`}
+            {delta == null ? "—" : (
+              <>
+                <span className="ic">{trendIcon}</span>
+                {delta === 0 ? "steady" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)}° · 3h`}
+              </>
+            )}
           </div>
         </div>
 

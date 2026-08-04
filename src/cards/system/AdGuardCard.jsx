@@ -1,7 +1,11 @@
 import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { useOptimisticToggle } from "../../hooks/useOptimistic.js";
+
+const numOr = (v, d) => (v != null && v !== "unavailable" && v !== "unknown" && !Number.isNaN(+v) ? +v : d);
+const count = (n) => (n != null ? n.toLocaleString() : "—");
 
 /* ----------------------------------------------------------------
    AdGuard — full card (with ring + filtering toggle)
@@ -12,12 +16,12 @@ export function AdGuardCard({ index = 0 }) {
   const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
   const { on: prot, toggle: toggleProt } = useOptimisticToggle("switch.adguard_home_protection");
   const { on: filt, toggle: toggleFilt } = useOptimisticToggle("switch.adguard_home_filtering");
-  const ratio = Number(liveRatio?.state ?? 0);
-  const total = Number(liveTotal?.state ?? 0);
-  const blocked = Number(liveBlocked?.state ?? 0);
+  const ratio = numOr(liveRatio?.state, null);
+  const total = numOr(liveTotal?.state, null);
+  const blocked = numOr(liveBlocked?.state, null);
 
   const C = 2 * Math.PI * 90;
-  const offset = C * (1 - ratio / 100);
+  const offset = ratio != null ? C * (1 - ratio / 100) : C;
 
   return (
     <Card
@@ -25,7 +29,7 @@ export function AdGuardCard({ index = 0 }) {
       eyebrow="Network · AdGuard Home"
       title="Filtering"
       meta={prot ? "Protected" : "Disabled"}
-      headRight={<div className={`toggle ${prot ? "on" : ""}`} onClick={toggleProt} role="switch" />}
+      headRight={<ToggleSwitch on={prot} onToggle={toggleProt} label="AdGuard protection" />}
     >
       <EntityGuard status={adgStatus} entityId="sensor.adguard_home_dns_queries_blocked_ratio">
       <div className="adg-body">
@@ -46,7 +50,7 @@ export function AdGuardCard({ index = 0 }) {
             <div>
               <div className="label">Blocked</div>
               <div className="big">
-                {ratio.toFixed(1)}
+                {ratio != null ? ratio.toFixed(1) : "—"}
                 <span style={{ fontSize: "0.45em", color: "var(--bad)" }}>%</span>
               </div>
               <div className="sub">last 24h</div>
@@ -55,23 +59,20 @@ export function AdGuardCard({ index = 0 }) {
         </div>
         <div className="adg-info">
           <div className="h">
-            <b>{blocked.toLocaleString()}</b> of {total.toLocaleString()} queries blocked today.
+            <b>{count(blocked)}</b> of {count(total)} queries blocked today.
           </div>
           <div className="adg-cap">
             <div>
               <div className="k">Queries</div>
-              <div className="v">{total.toLocaleString()}</div>
+              <div className="v">{count(total)}</div>
             </div>
             <div>
               <div className="k">Filtering</div>
               <div className="v good" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {filt ? "Active" : "Off"}
-                <div
-                  className={`toggle ${filt ? "on" : ""}`}
-                  style={{ transform: "scale(0.85)" }}
-                  onClick={toggleFilt}
-                  role="switch"
-                />
+                {/* Was scale(0.85) — dropped, a 36x20 switch is under the
+                    24x24 minimum target size and the row has room for both. */}
+                <ToggleSwitch on={filt} onToggle={toggleFilt} label="AdGuard filtering" />
               </div>
             </div>
           </div>
@@ -107,9 +108,9 @@ export function AdGuardSimpleCard({ index = 0 }) {
   const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
   const liveRatio = useEntity("sensor.adguard_home_dns_queries_blocked_ratio");
   const { on: prot, toggle: toggleProt } = useOptimisticToggle("switch.adguard_home_protection");
-  const total = Number(liveTotal?.state ?? 0);
-  const blocked = Number(liveBlocked?.state ?? 0);
-  const ratio = Number(liveRatio?.state ?? 0);
+  const total = numOr(liveTotal?.state, null);
+  const blocked = numOr(liveBlocked?.state, null);
+  const ratio = numOr(liveRatio?.state, null);
 
   return (
     <Card index={index} eyebrow="Network · AdGuard" title="AdGuard" meta={prot ? "Live" : "Off"}>
@@ -140,11 +141,11 @@ export function AdGuardSimpleCard({ index = 0 }) {
                 marginTop: 2,
               }}
             >
-              {ratio.toFixed(1)}% blocked · {blocked.toLocaleString()} / {total.toLocaleString()}
+              {ratio != null ? ratio.toFixed(1) : "—"}% blocked · {count(blocked)} / {count(total)}
             </div>
           </div>
         </div>
-        <div className={`toggle ${prot ? "on" : ""}`} onClick={toggleProt} role="switch" />
+        <ToggleSwitch on={prot} onToggle={toggleProt} label="AdGuard protection" />
       </div>
       </EntityGuard>
     </Card>

@@ -4,6 +4,7 @@ import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 
 /* ----------------------------------------------------------------
    Fan
@@ -45,7 +46,7 @@ export function FanCard({ index = 0 }) {
       eyebrow="Fan · fan.ceiling"
       title="Ceiling fan"
       meta={on ? `${preset || "manual"} · ${pct}%` : "Off"}
-      headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={toggleFan} role="switch" />}
+      headRight={<ToggleSwitch on={on} onToggle={toggleFan} disabled={unavailable} label="Ceiling fan" />}
     >
       <EntityGuard status={fanStatus} entityId="fan.ceiling">
       <div style={{ display: "flex", alignItems: "center", gap: 18, marginTop: 4 }}>
@@ -102,9 +103,9 @@ export function FanCard({ index = 0 }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Speed</div>
-          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }} role="group" aria-label="Fan speed">
             {presets.map((p) => (
-              <button key={p} className={`preset ${preset === p ? "on" : ""}`} onClick={() => pick(p)}>
+              <button key={p} className={`preset ${preset === p ? "on" : ""}`} aria-pressed={preset === p} onClick={() => pick(p)} disabled={unavailable}>
                 {p}
               </button>
             ))}

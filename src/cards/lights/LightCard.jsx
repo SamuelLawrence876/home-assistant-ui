@@ -4,12 +4,21 @@ import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { rgbStr, kelvinToRgb } from "../../cards/lights/colorUtils.js";
 import { PresetSwatches } from "./presets.jsx";
 
 /* ----------------------------------------------------------------
    Light card — toggle + brightness + color
    ----------------------------------------------------------------*/
+// The only keys that move a range input's value. Commit on keyup so a held
+// arrow key sends one command, but filter on the key — keyup fires for every
+// key, and focus moves on keydown, so an unfiltered handler treats the Tab
+// that lands on the slider as an edit and fires a real light.turn_on.
+const VALUE_KEYS = new Set([
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
+]);
+
 const LIGHT_PRESETS = [
   { id: "warm", label: "Warm 2200K", rgb: [255, 170, 110], kelvin: 2200 },
   { id: "amber", label: "Amber 2700K", rgb: [255, 198, 130], kelvin: 2700 },
@@ -31,6 +40,9 @@ export function LightCard({ index = 0, entityId }) {
   const e = status === "ready" ? live : GH_DATA.lights[entityId] || live;
   const placeholder = e?.attributes?.placeholder;
   const inert = placeholder || status !== "ready";
+  // Every control on the card is named after this, so two light cards on the
+  // same tab never announce as an identical pair of unlabelled sliders.
+  const name = e?.attributes?.friendly_name || entityId.split(".")[1];
   const initialRgb = e?.attributes?.rgb_color || [255, 198, 130];
   const supportsColorTemp = e?.attributes?.supported_color_modes?.includes("color_temp");
   const minKelvin = e?.attributes?.min_color_temp_kelvin || 2000;
@@ -89,7 +101,7 @@ export function LightCard({ index = 0, entityId }) {
     <Card
       index={index}
       eyebrow={`Light · ${entityId}`}
-      title={e?.attributes?.friendly_name || entityId.split(".")[1]}
+      title={name}
       meta={placeholder ? "Not yet added" : on ? `On · ${Math.round((bright / 255) * 100)}%` : "Off"}
       headRight={
         placeholder ? (
@@ -109,7 +121,7 @@ export function LightCard({ index = 0, entityId }) {
             future
           </span>
         ) : (
-          <div className={`toggle ${on ? "on" : ""}`} onClick={toggle} role="switch" aria-checked={on} />
+          <ToggleSwitch on={on} onToggle={toggle} label={name} disabled={inert} />
         )
       }
     >
@@ -157,7 +169,8 @@ export function LightCard({ index = 0, entityId }) {
             disabled={placeholder || !on}
             onChange={(ev) => setB(Number(ev.target.value))}
             onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
-            onKeyUp={(ev) => commitBrightness(Number(ev.target.value))}
+            onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitBrightness(Number(ev.target.value)); }}
+            aria-label={`${name} brightness`}
             className="gh-slider"
             style={{ width: "100%", accentColor: on ? rgbStr(rgb) : "var(--ink-4)" }}
           />
@@ -181,7 +194,8 @@ export function LightCard({ index = 0, entityId }) {
             disabled={!on}
             onChange={(ev) => { setKelvin(Number(ev.target.value)); setRgb(kelvinToRgb(Number(ev.target.value))); }}
             onPointerUp={(ev) => commitKelvin(Number(ev.target.value))}
-            onKeyUp={(ev) => commitKelvin(Number(ev.target.value))}
+            onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitKelvin(Number(ev.target.value)); }}
+            aria-label={`${name} color temperature`}
             className="gh-slider"
             style={{
               width: "100%",
@@ -198,7 +212,7 @@ export function LightCard({ index = 0, entityId }) {
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <PresetSwatches presets={LIGHT_PRESETS} rgb={rgb} onPick={pickColor} />
+            <PresetSwatches presets={LIGHT_PRESETS} rgb={rgb} onPick={pickColor} targetName={name} />
           </div>
         </div>
       )}

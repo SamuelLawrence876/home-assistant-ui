@@ -35,7 +35,7 @@ export function SpotifySearchCard({ index = 0 }) {
         style={{
           background: "var(--glass-bg-2)", border: "1px solid var(--glass-stroke)", borderRadius: 10,
           padding: "10px 12px", fontSize: 13, fontFamily: "var(--font-mono)", color: "var(--ink)",
-          outline: "none", width: "100%", boxSizing: "border-box", marginBottom: 10,
+          width: "100%", boxSizing: "border-box", marginBottom: 10,
         }}
       />
       {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>{error}</div>}

@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useEntity } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
+import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { GH_DATA } from "../../data.js";
 import { DIFFUSER, SPRAY_OPTIONS, DEFAULT_RGB, rgbCss, nearestColorName } from "../../lib/diffuser.js";
 
@@ -32,15 +33,26 @@ export function DiffuserMini({ index = 0 }) {
   const led = lightOn ? rgbCss(rgb) : "var(--ink-4)";
   const statusColor = misting ? "var(--good)" : "var(--ink-4)";
 
+  // Revert from HA's truth at failure time rather than the value captured at
+  // click time: the resync effects above only fire on a *changed* state, so a
+  // stale revert would stick. Falls back to the pre-click value in mock mode,
+  // where there is no live entity to revert to.
+  const sprayRef = useRef(liveSpray);
+  sprayRef.current = liveSpray;
+  const ledRef = useRef(liveLed);
+  ledRef.current = liveLed;
+
   function changeMode(m) {
     const prev = mode;
     setMode(m);
-    callService("select", "select_option", { entity_id: DIFFUSER.spray, option: m }).catch(() => setMode(prev));
+    callService("select", "select_option", { entity_id: DIFFUSER.spray, option: m })
+      .catch(() => setMode(sprayRef.current?.state ?? prev));
   }
   function toggleLight() {
     const next = !lightOn;
     setLightOn(next);
-    callService("light", next ? "turn_on" : "turn_off", { entity_id: DIFFUSER.light }).catch(() => setLightOn(!next));
+    callService("light", next ? "turn_on" : "turn_off", { entity_id: DIFFUSER.light })
+      .catch(() => setLightOn(ledRef.current ? ledRef.current.state === "on" : !next));
   }
 
   return (
@@ -68,9 +80,9 @@ export function DiffuserMini({ index = 0 }) {
         </div>
 
         <div className="dmini-mist">
-          <div className="diff-seg">
+          <div className="diff-seg" role="group" aria-label="Mist mode">
             {SPRAY_OPTIONS.map((m) => (
-              <button key={m} className={mode === m ? "on" : ""} onClick={() => changeMode(m)}>{m}</button>
+              <button key={m} className={mode === m ? "on" : ""} aria-pressed={mode === m} onClick={() => changeMode(m)}>{m}</button>
             ))}
           </div>
         </div>
@@ -79,7 +91,7 @@ export function DiffuserMini({ index = 0 }) {
           <span className="k">LED light</span>
           <span className="dmini-led">
             <span className={`w ${lightOn ? "lit" : ""}`}>{lightOn ? "On" : "Off"}</span>
-            <div className={`toggle ${lightOn ? "on" : ""}`} onClick={toggleLight} role="switch" aria-checked={lightOn} aria-label="Toggle diffuser LED" />
+            <ToggleSwitch on={lightOn} onToggle={toggleLight} label="Diffuser LED" />
           </span>
         </div>
       </div>

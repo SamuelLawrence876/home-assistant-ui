@@ -1,8 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+
+/* The only keys that move a range input. Focus moves on keydown, so the keyup for
+   Tab is delivered to the slider you just landed on — committing on every keyup
+   means merely tabbing past the volume control writes a volume_set to HA. */
+const RANGE_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
 
 export function NowPlayingHero({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
@@ -20,10 +25,16 @@ export function NowPlayingHero({ index = 0 }) {
     if (m.attributes?.media_position != null) setPos(m.attributes.media_position);
     if (m.attributes?.volume_level != null) setVol(Math.round(m.attributes.volume_level * 100));
   }, [m?.state, m?.attributes?.media_position, m?.attributes?.volume_level]);
+  // Revert from HA's truth at failure time, not the boolean captured at click
+  // time — the resync effect only fires on a changed state, so a stale revert sticks.
+  const mRef = useRef(m);
+  mRef.current = m;
+
   function playPause() {
     const next = !playing;
     setPlaying(next);
-    callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY }).catch(() => setPlaying(playing));
+    callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY })
+      .catch(() => setPlaying(mRef.current?.state === "playing"));
   }
   function seek(toSec) {
     if (!hasDuration) return;
@@ -36,7 +47,9 @@ export function NowPlayingHero({ index = 0 }) {
   }
   useEffect(() => {
     if (!playing || !hasDuration) return;
-    const id = setInterval(() => setPos((p) => (p + 1) % duration), 1000);
+    // Clamp, don't wrap: modulo restarts the bar (and the countdown) from zero
+    // for the same track while we wait for HA to push the next one.
+    const id = setInterval(() => setPos((p) => Math.min(p + 1, duration)), 1000);
     return () => clearInterval(id);
   }, [playing, duration, hasDuration]);
   const pct = hasDuration ? (pos / duration) * 100 : 0;
@@ -135,15 +148,16 @@ export function NowPlayingHero({ index = 0 }) {
             className="nowplaying-controls"
             style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18 }}
           >
-            <button className="btn icon" onClick={() => seek(Math.max(0, pos - 15))}>⏮</button>
+            <button className="btn icon" aria-label="Back 15 seconds" onClick={() => seek(Math.max(0, pos - 15))}>⏮</button>
             <button
               className="btn icon primary"
               onClick={playPause}
+              aria-label={playing ? "Pause" : "Play"}
               style={{ width: 48, height: 48 }}
             >
               {playing ? "⏸" : "▶"}
             </button>
-            <button className="btn icon" onClick={() => seek(Math.min(duration - 1, pos + 15))}>⏭</button>
+            <button className="btn icon" aria-label="Forward 15 seconds" onClick={() => seek(Math.min(duration - 1, pos + 15))}>⏭</button>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12, flex: 1, minWidth: 120 }}>
               <span
                 style={{
@@ -161,9 +175,10 @@ export function NowPlayingHero({ index = 0 }) {
                 min="0"
                 max="100"
                 value={vol}
+                aria-label="Volume"
                 onChange={(e) => setVol(Number(e.target.value))}
                 onPointerUp={(e) => commitVolume(Number(e.target.value))}
-                onKeyUp={(e) => commitVolume(Number(e.target.value))}
+                onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) commitVolume(Number(e.target.value)); }}
                 className="gh-slider"
                 style={{ flex: 1, maxWidth: 200, accentColor: "var(--accent)" }}
               />

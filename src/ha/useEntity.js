@@ -123,9 +123,12 @@ export function useStatistics(statisticIds, hours = 24) {
   const lastKey = useRef("");
 
   const fetch = useCallback(async () => {
-    await waitForConnection();
     const startTime = new Date(Date.now() - hours * 3600_000).toISOString();
     try {
+      // Inside the try: waitForConnection() now rejects on timeout, and this
+      // used to sit outside it — with HA unreachable the charts hung on
+      // `loading` forever because setLoading(false) was never reached.
+      await waitForConnection();
       const result = await sendWsMessage({
         type: "recorder/statistics_during_period",
         start_time: startTime,

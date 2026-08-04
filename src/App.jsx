@@ -5,6 +5,8 @@
      ?mode=auto|day|night
      ?tab=overview|lights|media|schedule|climate|workshop|system
      ?clock=HH:MM (forces theme.js's clock override)
+   Every one of these is coerced on the way in (theme.js's coerce* helpers):
+   an unrecognised value falls back to the default and is never persisted.
    Tweaks (lean / mode / clock override) are also editable live via the
    in-app Tweaks drawer (cog button, top right). Settings persist to
    localStorage.
@@ -12,17 +14,29 @@
    Views are lazy-loaded per tab (Overview eager — it's the landing tab),
    so each tab's cards ship as their own chunk. */
 
-import { useState, useEffect, useMemo, useRef, lazy, Suspense } from "react";
-import { skyColors, TWEAK_DEFAULTS, loadStoredTweaks, persistTweaks, applyTheme } from "./theme.js";
+import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from "react";
+import {
+  skyColors,
+  loadStoredTweaks,
+  persistTweaks,
+  applyTheme,
+  LEANS,
+  coerceLean,
+  coerceMode,
+  coerceClock,
+  coerceBootStyle,
+} from "./theme.js";
 import { useConnectionStatus, useEntityCounts } from "./ha/useEntity.js";
 import { useCurrentUser } from "./ha/useCurrentUser.js";
+import { onServiceError } from "./ha/client.js";
 import { readURLParam } from "./lib/url.js";
-import { deriveRole, canSeeTab } from "./lib/roles.js";
+import { deriveRole, canSeeTab, ROLE_PENDING } from "./lib/roles.js";
 import { fmtTime } from "./lib/format.js";
 import { useNow } from "./hooks/useNow.js";
 import { useViewport } from "./hooks/useViewport.js";
 import { useDashReady } from "./hooks/useDashReady.js";
 import { ServiceErrorToast } from "./components/Toast.jsx";
+import { ErrorBoundary, takePendingTab } from "./components/ErrorBoundary.jsx";
 import BootScreen from "./BootScreen.jsx";
 import { TweaksDrawer } from "./TweaksDrawer.jsx";
 
@@ -43,6 +57,39 @@ const TABS = [
   { id: "workshop", label: "Workshop" },
   { id: "system", label: "System" },
 ];
+
+/* Service-error toasts. The subscription lives here rather than inside
+   components/Toast.jsx: components/ is entity-agnostic by rule and must not
+   import ha/. Toast.jsx just draws the list it is handed. */
+let toastIdCounter = 0;
+function useServiceErrors() {
+  const [toasts, setToasts] = useState([]);
+  const dismiss = useCallback((id) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+  useEffect(
+    () =>
+      onServiceError(({ domain, service, data, error }) => {
+        const entityId = data?.entity_id || "";
+        const errMsg = error?.message || String(error);
+        const shortErr = errMsg.length > 120 ? errMsg.slice(0, 120) + "…" : errMsg;
+        const label = entityId ? `${domain}.${service} on ${entityId}` : `${domain}.${service}`;
+        setToasts((t) => [...t.slice(-4), { id: ++toastIdCounter, label, detail: shortErr }]);
+      }),
+    [],
+  );
+  return { toasts, dismiss };
+}
+
+/* Shown while a lazy view chunk downloads. `fallback={null}` used to leave
+   the tab body completely empty on a slow phone connection. */
+function ViewSkeleton() {
+  return (
+    <div className="grid" role="status" aria-label="Loading tab">
+      <div className="col-8"><div className="entity-loading" style={{ height: 260 }} /></div>
+      <div className="col-4"><div className="entity-loading" style={{ height: 260 }} /></div>
+      <div className="col-12"><div className="entity-loading" style={{ height: 140 }} /></div>
+    </div>
+  );
+}
 
 function ConnectionChip() {
   const status = useConnectionStatus();
@@ -113,22 +160,32 @@ export default function App() {
   const connectionStatus = useConnectionStatus();
   const currentUser = useCurrentUser();
   const role = deriveRole(currentUser, connectionStatus === "ready");
+  const rolePending = role === ROLE_PENDING;
   const visibleTabs = useMemo(() => TABS.filter((t) => canSeeTab(role, t.id)), [role]);
 
   const initial = useMemo(() => {
-    const url = {
-      lean: readURLParam("lean", null),
-      mode: readURLParam("mode", null),
-      tab: readURLParam("tab", "overview"),
-    };
     const stored = loadStoredTweaks();
+    // A chunk-load failure auto-reloads (components/ErrorBoundary.jsx) and
+    // stashes the tab it died on, because the effect below has already
+    // stripped ?tab= — without the hand-off the self-heal silently dumps you
+    // back on Overview.
+    const tab = takePendingTab() || readURLParam("tab", "overview");
+    // Coerce everything on the way in. A mistyped ?lean= used to reach
+    // applyTheme, throw out of a useEffect, and take the whole root with it —
+    // after the persist effect had already written the bad value to
+    // localStorage, so every later visit was bricked too.
+    // coerceLean's `LEANS[v]` test reads through the prototype chain, so
+    // ?lean=constructor / toString / valueOf / __proto__ all sail past it and
+    // land on a config object with no .day. Screen the raw value against
+    // LEANS's *own* keys before it gets there.
+    const rawLean = readURLParam("lean", null) || stored.lean;
     return {
-      lean: url.lean || stored.lean || TWEAK_DEFAULTS.lean,
-      mode: url.mode || stored.mode || TWEAK_DEFAULTS.mode,
-      clockOverride: stored.clockOverride ?? TWEAK_DEFAULTS.clockOverride,
-      clock: stored.clock ?? TWEAK_DEFAULTS.clock,
-      bootStyle: stored.bootStyle || TWEAK_DEFAULTS.bootStyle,
-      tab: url.tab,
+      lean: coerceLean(Object.hasOwn(LEANS, String(rawLean)) ? rawLean : undefined),
+      mode: coerceMode(readURLParam("mode", null) || stored.mode),
+      clockOverride: stored.clockOverride === true,
+      clock: coerceClock(stored.clock),
+      bootStyle: coerceBootStyle(stored.bootStyle),
+      tab: TABS.some((t) => t.id === tab) ? tab : "overview",
     };
   }, []);
 
@@ -138,12 +195,17 @@ export default function App() {
   const [clock, setClock] = useState(initial.clock);
   const [bootStyle, setBootStyle] = useState(initial.bootStyle);
   const [tab, setTab] = useState(initial.tab);
+  const { toasts, dismiss: dismissToast } = useServiceErrors();
 
   // If the current tab isn't allowed for this role (deep link, or role
   // resolved after connect), snap to the first tab the role can see.
+  // Skipped while the role is still pending: auth/current_user is a WS
+  // round-trip behind "ready", and treating that window as "guest" threw
+  // away every ?tab= deep link before the real role arrived.
   useEffect(() => {
-    if (!canSeeTab(role, tab)) setTab(visibleTabs[0].id);
-  }, [role, tab, visibleTabs]);
+    if (rolePending) return;
+    if (!canSeeTab(role, tab)) setTab(visibleTabs[0]?.id || "overview");
+  }, [rolePending, role, tab, visibleTabs]);
 
   // Clean ?tab= from URL after reading it so refreshes default to overview
   useEffect(() => {
@@ -153,11 +215,6 @@ export default function App() {
       window.history.replaceState(null, "", url.toString());
     }
   }, []);
-
-  // Persist tweaks
-  useEffect(() => {
-    persistTweaks({ lean, mode: modePref, clockOverride, clock, bootStyle });
-  }, [lean, modePref, clockOverride, clock, bootStyle]);
 
   // Live clock (rerenders every 30s); honors clockOverride
   const liveNow = useNow();
@@ -172,6 +229,12 @@ export default function App() {
     document.body.classList.toggle("viewport-phone", viewport === "phone");
     document.body.classList.toggle("viewport-desktop", viewport !== "phone");
   }, [lean, effectiveMode, sky.top, sky.bot, sky.phase, viewport]);
+
+  // Persist tweaks. Declared *after* applyTheme on purpose: effects run in
+  // declaration order, so a value applyTheme rejects never reaches storage.
+  useEffect(() => {
+    persistTweaks({ lean, mode: modePref, clockOverride, clock, bootStyle });
+  }, [lean, modePref, clockOverride, clock, bootStyle]);
 
   // Tab indicator position
   useEffect(() => {
@@ -223,10 +286,15 @@ export default function App() {
           </div>
 
           {viewport !== "phone" && (
-            <nav className="tabs" ref={tabsRef}>
-              <span className="indicator" />
+            <nav className="tabs" ref={tabsRef} aria-label="Sections">
+              <span className="indicator" aria-hidden />
               {visibleTabs.map((t) => (
-                <button key={t.id} className={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)}>
+                <button
+                  key={t.id}
+                  className={tab === t.id ? "on" : ""}
+                  onClick={() => setTab(t.id)}
+                  aria-current={tab === t.id ? "page" : undefined}
+                >
                   {t.label}
                 </button>
               ))}
@@ -242,26 +310,39 @@ export default function App() {
           </div>
         </header>
 
+        {/* key={tab} remounts the boundary per tab, so a crash on one tab
+            clears itself the moment you switch away. */}
         <main className="view" key={tab}>
-          <Suspense fallback={null}>
-            {canSeeTab(role, tab) && (
-              <>
-                {tab === "overview" && <OverviewView viewport={viewport} sky={sky} />}
-                {tab === "lights" && <LightsView />}
-                {tab === "media" && <MediaView />}
-                {tab === "schedule" && <ScheduleView />}
-                {tab === "climate" && <ClimateView sky={sky} />}
-                {tab === "workshop" && <WorkshopView />}
-                {tab === "system" && <SystemView />}
-              </>
-            )}
-          </Suspense>
+          <ErrorBoundary tab={tab}>
+            <Suspense fallback={<ViewSkeleton />}>
+              {canSeeTab(role, tab) && (
+                <>
+                  {tab === "overview" && <OverviewView viewport={viewport} sky={sky} />}
+                  {tab === "lights" && <LightsView />}
+                  {tab === "media" && <MediaView />}
+                  {tab === "schedule" && <ScheduleView />}
+                  {tab === "climate" && <ClimateView sky={sky} />}
+                  {tab === "workshop" && <WorkshopView />}
+                  {tab === "system" && <SystemView />}
+                </>
+              )}
+            </Suspense>
+          </ErrorBoundary>
         </main>
 
-        <nav className="bottom-nav">
+        <nav className="bottom-nav" aria-label="Sections">
           {visibleTabs.map((t) => (
-            <button key={t.id} className={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)}>
-              <span className="ic">
+            /* aria-label, not the markup, is what names these: phone.css hides
+               .lbl on every button but the active one, and the glyph is
+               decorative — leaving six of seven buttons with no name at all. */
+            <button
+              key={t.id}
+              className={tab === t.id ? "on" : ""}
+              onClick={() => setTab(t.id)}
+              aria-label={t.label}
+              aria-current={tab === t.id ? "page" : undefined}
+            >
+              <span className="ic" aria-hidden>
                 {
                   {
                     overview: "◐",
@@ -293,7 +374,7 @@ export default function App() {
         onBootStyleChange={setBootStyle}
       />
 
-      <ServiceErrorToast />
+      <ServiceErrorToast toasts={toasts} onDismiss={dismissToast} />
 
       {booting && (
         <BootScreen ready={dashReady} style={bootStyle} onDone={() => setBooting(false)} />

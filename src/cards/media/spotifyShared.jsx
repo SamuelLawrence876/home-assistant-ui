@@ -1,10 +1,48 @@
-import { useState, useEffect } from "react";
-import { isSpotifyConnected, callbackReady, playUri } from "../../ha/spotify.js";
+import { useState, useEffect, useSyncExternalStore } from "react";
+import { isSpotifyConnected, clearSpotifyToken, callbackReady, playUri } from "../../ha/spotify.js";
+
+/* ----------------------------------------------------------------
+   Spotify auth — one module-level store, not per-component state.
+
+   The token lives in localStorage and ha/spotify.js drops it from several
+   places (Disconnect, a failed refresh, a 401 mid-session). A useState copy
+   per card means only the card that noticed re-gates; Search / Playlists /
+   Queue / Recent carry on rendering against a token that is already gone.
+   Every consumer subscribes here instead, and the snapshot is re-read from
+   the token itself rather than mirrored, so it can't drift from the truth.
+
+   This properly belongs beside the token in ha/spotify.js; it sits here
+   because cards/ owns this file.
+   ----------------------------------------------------------------*/
+const authListeners = new Set();
+let authSnapshot = isSpotifyConnected();
+
+function subscribeSpotifyAuth(fn) {
+  authListeners.add(fn);
+  return () => authListeners.delete(fn);
+}
+
+/* Re-read the token and wake every subscriber if it changed. Safe to call
+   speculatively — after any Spotify call that may have hit a 401, say. */
+export function syncSpotifyAuth() {
+  const next = isSpotifyConnected();
+  if (next === authSnapshot) return;
+  authSnapshot = next;
+  authListeners.forEach((fn) => fn());
+}
+
+export function setSpotifyConnected(next) {
+  if (!next) clearSpotifyToken(); // idempotent: spotify.js may have cleared it already
+  syncSpotifyAuth();
+}
+
+// Another tab connecting or disconnecting writes the same key.
+window.addEventListener("storage", syncSpotifyAuth);
 
 export function useSpotifyConnect() {
-  const [connected, setConnected] = useState(isSpotifyConnected);
-  useEffect(() => { callbackReady.then((ok) => { if (ok) setConnected(true); }); }, []);
-  return [connected, setConnected];
+  const connected = useSyncExternalStore(subscribeSpotifyAuth, () => authSnapshot);
+  useEffect(() => { callbackReady.then((ok) => { if (ok) setSpotifyConnected(true); }); }, []);
+  return [connected, setSpotifyConnected];
 }
 
 const _spotifyItemStyle = {
@@ -23,6 +61,28 @@ const _spotifyItemStyle = {
   width: "100%",
 };
 
+/* Text-only card action ("Disconnect", "Refresh"). A real <button> so it takes
+   a tab stop and fires on Enter/Space; the inline reset keeps it looking like
+   the mono caption it replaced, without needing a new rule in styles/. */
+export const _linkBtnStyle = {
+  background: "none",
+  border: "none",
+  // A 9px caption is a 12px line box on its own — pad it out to the 24px minimum
+  // target, then pull the padding back out of the layout so the label still sits
+  // flush with the card edge it is aligned to.
+  display: "inline-flex",
+  alignItems: "center",
+  minHeight: 24,
+  padding: "0 8px",
+  margin: "0 -8px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 9,
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+  color: "var(--ink-3)",
+  cursor: "pointer",
+};
+
 const _spotifyThumbStyle = {
   width: 40,
   height: 40,
@@ -36,13 +96,15 @@ const _spotifyThumbStyle = {
 export function useSpotifyPlay() {
   const [playing, setPlaying] = useState(null);
   const [error, setError] = useState(null);
-  const [, setConnected] = useSpotifyConnect();
   async function play(uri) {
     setPlaying(uri);
     setError(null);
     try { await playUri(uri); }
     catch (e) {
-      if (e.message?.includes("expired")) { setConnected(false); setError("Session expired"); }
+      // A 401 or a failed refresh inside spotify.js has already binned the
+      // token — re-read it so every card re-gates, not just this one.
+      syncSpotifyAuth();
+      if (e.message?.includes("expired")) setError("Session expired");
       else setError("Open Spotify on a device first");
     }
     setTimeout(() => setPlaying(null), 2000);
@@ -50,13 +112,14 @@ export function useSpotifyPlay() {
   return { playing, error, play };
 }
 
-export function SpotifyTrackRow({ item, playing, onPlay, subtitle, label, keyPrefix }) {
+export function SpotifyTrackRow({ item, playing, onPlay, subtitle, label }) {
   const uri = item.uri;
   const isPlaying = playing === uri;
   const img = item.image || null;
   const sub = subtitle || `${item.artist} · ${item.album}`;
   return (
     <button
+      type="button"
       style={{ ..._spotifyItemStyle, opacity: isPlaying ? 0.6 : 1 }}
       onClick={() => onPlay(uri)}
     >
