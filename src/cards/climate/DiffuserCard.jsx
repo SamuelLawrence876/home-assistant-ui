@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useEntity } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
+import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { GH_DATA } from "../../data.js";
 import { DIFFUSER, SPRAY_OPTIONS, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName } from "../../lib/diffuser.js";
 
@@ -19,7 +20,7 @@ const MIST_DOTS = [
   { dl: "3.4s", dx: "4px",   dur: "5.0s" },
 ];
 
-function Swatches({ rgb, onPick }) {
+function Swatches({ rgb, onPick, disabled }) {
   return (
     <div className="diff-swatches">
       {DIFFUSER_COLORS.map((c) => {
@@ -29,6 +30,9 @@ function Swatches({ rgb, onPick }) {
             key={c.name}
             className={`diff-swatch ${on ? "on" : ""}`}
             title={c.name}
+            aria-label={`LED colour ${c.name}`}
+            aria-pressed={on}
+            disabled={disabled}
             style={{ background: rgbCss(c.rgb), "--c": rgbCss(c.rgb) }}
             onClick={() => onPick(c.rgb)}
           />
@@ -124,9 +128,9 @@ export function DiffuserCard({ index = 0 }) {
 
           <div className="diff-field">
             <span className="flabel">Mist</span>
-            <div className="diff-seg">
+            <div className="diff-seg" role="group" aria-label="Mist mode">
               {SPRAY_OPTIONS.map((m) => (
-                <button key={m} className={mode === m ? "on" : ""} onClick={() => changeMode(m)}>{m}</button>
+                <button key={m} className={mode === m ? "on" : ""} aria-pressed={mode === m} onClick={() => changeMode(m)}>{m}</button>
               ))}
             </div>
           </div>
@@ -136,9 +140,13 @@ export function DiffuserCard({ index = 0 }) {
               <span>LED light</span>
               <span className="diff-led-state">
                 <span className={`w ${lightOn ? "lit" : ""}`}>{lightOn ? "On" : "Off"}</span>
-                <div className={`toggle ${lightOn ? "on" : ""}`} onClick={toggleLight} role="switch" aria-checked={lightOn} aria-label="Toggle diffuser LED" />
+                <ToggleSwitch on={lightOn} onToggle={toggleLight} label="Diffuser LED light" />
               </span>
             </span>
+            {/* Dimmed when the LED is off. `disabled` is what actually blocks the
+                controls — pointer-events only stops the mouse and leaves the slider
+                and swatches in the tab order, fully operable by keyboard. It stays
+                on top so the dimmed block doesn't answer hover either. */}
             <div
               className="diff-led-controls"
               style={{ opacity: lightOn ? 1 : 0.4, pointerEvents: lightOn ? "auto" : "none", filter: lightOn ? "none" : "saturate(0.4)" }}
@@ -146,12 +154,14 @@ export function DiffuserCard({ index = 0 }) {
               <div className="diff-bright">
                 <input
                   type="range" min="1" max="100" value={bright} className="diff-range"
+                  aria-label="Diffuser LED brightness"
+                  disabled={!lightOn}
                   style={{ "--bp": `${bright}%`, "--led": led }}
                   onChange={(e) => commitBright(+e.target.value)}
                 />
                 <span className="val">{bright}%</span>
               </div>
-              <Swatches rgb={rgb} onPick={pickColor} />
+              <Swatches rgb={rgb} onPick={pickColor} disabled={!lightOn} />
             </div>
           </div>
 

@@ -54,12 +54,21 @@
   transform: translateY(-8px) scale(0.98);
   opacity: 0;
   pointer-events: none;
-  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.18s ease;
+  /* Closed = out of the tab order and the a11y tree, not just invisible.
+     visibility flips instantly on the way in and is delayed to the end of the
+     transition on the way out, so the close animation still plays. Additive
+     with `inert` / conditional mounting on the React side — never in conflict. */
+  visibility: hidden;
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.18s ease,
+              visibility 0s linear 0.22s;
 }
 .tweaks-drawer.open {
   transform: translateY(0) scale(1);
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.18s ease,
+              visibility 0s;
 }
 
 .tweaks-head {
@@ -186,7 +195,7 @@
 }
 .tweaks-segments .seg.on {
   background: var(--ink);
-  color: var(--sky-top, #fff);
+  color: var(--on-ink, #fff);
 }
 
 .tweaks-toggle {
@@ -232,6 +241,20 @@
   text-transform: uppercase;
   color: var(--ink-4);
   text-align: center;
+}
+
+/* The FAB is fixed 52px in from the window edge (38px wide at right: 14px) while
+   .shell only contributes 32px of padding, so it lands 20px inside the topbar and
+   covers the connection chip. Reserve that 20px plus the topbar's own 10px gutter.
+   phone.css:16 already does the equivalent for the phone layout.
+
+   Only below ~1540px, though. .shell caps at 1480px and centres, so past that the
+   window's right gutter grows and the FAB walks away from the chips on its own —
+   at 1920px there is already 230px of clear air. Reserving unconditionally left
+   the chips 30px short of the cards while .brand stayed flush on the left, which
+   reads as a lopsided header. */
+@media (max-width: 1560px) {
+  body.viewport-desktop .topbar { padding-right: 30px; }
 }
 
 body.viewport-phone .tweaks-fab {

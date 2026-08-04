@@ -25,11 +25,13 @@
    so changes from the iPhone propagate without polling. */
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { getHaUrl, getAccessToken, getConnectionStatus, onConnectionChange, subscribe } from "./socket.js";
+import { getHaUrl, getFreshAccessToken, getConnectionStatus, onConnectionChange, subscribe } from "./socket.js";
 
 async function fetchItems(entityId) {
   const url = getHaUrl();
-  const token = getAccessToken();
+  // Refreshing getter — a cached access token 401s ~30 minutes into a session
+  // even though the WebSocket is still connected.
+  const token = await getFreshAccessToken();
   if (!url || !token) throw new Error("HA not configured");
   const res = await fetch(`${url}/api/services/todo/get_items?return_response`, {
     method: "POST",
@@ -49,7 +51,7 @@ async function fetchItems(entityId) {
 
 async function callTodoService(service, entityId, extraData = {}) {
   const url = getHaUrl();
-  const token = getAccessToken();
+  const token = await getFreshAccessToken();
   if (!url || !token) throw new Error("HA not configured");
   const res = await fetch(`${url}/api/services/todo/${service}`, {
     method: "POST",

@@ -185,8 +185,8 @@
 }
 .sys-action.firing::after { transform: scaleX(1); }
 .sys-action > * { position: relative; z-index: 1; }
-.sys-action.firing { color: var(--sky-top); }
-.sys-action.firing .sys-action-sub { color: color-mix(in oklch, var(--sky-top), transparent 50%); }
+.sys-action.firing { color: var(--on-ink); }
+.sys-action.firing .sys-action-sub { color: color-mix(in oklch, var(--on-ink), transparent 50%); }
 .sys-action.confirming {
   border-color: oklch(0.65 0.15 25);
   background: color-mix(in oklch, oklch(0.65 0.15 25), transparent 88%);

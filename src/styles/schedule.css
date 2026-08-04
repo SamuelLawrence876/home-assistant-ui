@@ -16,7 +16,13 @@ body.mode-night {
 
 /* Weekly calendar grid */
 .weekcal {
-  --col-h: 26px;     /* per 30 min */
+  /* Per 30 min. SINGLE SOURCE OF TRUTH: this draws the hour gutter and the
+     column gridlines, and WeeklyCalendarCard.jsx reads it back off the DOM to
+     place events and the now-line. Two copies of the number is what dragged
+     every phone event ~2h late by the evening, so there is exactly one
+     viewport override and it lives with the rest of the phone weekcal tuning
+     (phone.css: `body.viewport-phone .weekcal { --col-h: 20px }`). */
+  --col-h: 26px;
   display: grid;
   grid-template-columns: 48px repeat(7, 1fr);
   gap: 0;
@@ -88,7 +94,10 @@ body.mode-night {
   font-family: var(--font-mono);
   font-size: 9px;
   letter-spacing: 0.06em;
-  color: var(--ink-4);
+  /* --ink-4 measured 2.25:1 day / 3.08:1 night on this card — the least
+     readable text on the tab. --ink-3 still only reaches 4.30:1 in
+     conservatory day, so the time axis takes the next step up. */
+  color: var(--ink-2);
   text-align: right;
   position: relative;
 }
@@ -167,7 +176,9 @@ body.mode-night {
 .weekcal-event .w {
   font-family: var(--font-mono);
   font-size: 9px;
-  color: var(--ink-3);
+  /* Sits on the event's own tinted fill, not the card — --ink-3 only reached
+     3.56:1 day / 3.80:1 night there. */
+  color: var(--ink-2);
   letter-spacing: 0.04em;
   white-space: nowrap;
   overflow: hidden;
@@ -448,7 +459,6 @@ body.mode-night {
   font-size: 13px;
   color: var(--ink);
   font-family: inherit;
-  outline: none;
   transition: border-color 0.2s;
 }
 .kanban-input:focus { border-color: var(--accent); }
@@ -526,8 +536,10 @@ body.mode-night {
   flex-direction: column;
   box-shadow: 0 8px 24px rgba(0,0,0,0.25);
 }
-[data-theme="dark"] .kanban-tag-menu,
-body.night .kanban-tag-menu {
+/* applyTheme() only ever sets body.mode-night — nothing in the app writes
+   data-theme or body.night, so the old pair of selectors never matched and the
+   menu kept its near-white fill under --ink text (1.03:1) all evening. */
+body.mode-night .kanban-tag-menu {
   background: oklch(0.22 0 0);
 }
 .kanban-tag-option {
@@ -571,8 +583,15 @@ body.viewport-phone .kanban {
   scroll-snap-type: x mandatory;
 }
 body.viewport-phone .kanban-col { scroll-snap-align: start; }
-body.viewport-phone .weekcal {
-  --col-h: 22px;
+/* .kanban is a horizontal scroll container here, so overflow-y computes to auto
+   and clips anything drawn outside it. The menu is absolute + bottom:0, i.e. it
+   grows upward out of the form, and its first four options landed outside the
+   container — invisible and not hit-testable. In flow it just makes the column
+   taller, which the container already scrolls. */
+body.viewport-phone .kanban-tag-menu {
+  position: static;
+  margin-top: 6px;
+  box-shadow: none;
 }
 /* ----------------------------------------------------------------
    Modal — simple centered dialog (used by NewEventDialog).
@@ -618,7 +637,6 @@ body.viewport-phone .weekcal {
   font-family: inherit;
   font-size: 13px;
   color: var(--ink);
-  outline: none;
   transition: border-color 0.15s;
 }
 .modal-row input:focus, .modal-row select:focus {
@@ -666,7 +684,6 @@ body.viewport-phone .weekcal {
   height: 4px;
   border-radius: 2px;
   background: var(--rule);
-  outline: none;
 }
 .gh-slider:disabled { opacity: 0.45; }
 .gh-slider::-webkit-slider-thumb {

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useEntityStatus } from "../../ha/useEntity.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 
 /* ----------------------------------------------------------------
    Pixoo 64
@@ -113,7 +114,7 @@ export function PixooCard({ index = 0 }) {
       eyebrow="Light · light.divoom_pixoo_64"
       title="Pixoo 64 · bedroom"
       meta={pixooStatus !== "ready" ? "—" : on ? `${channel} · ${Math.round((bright / 255) * 100)}%` : "Off"}
-      headRight={<div className={`toggle ${on ? "on" : ""}`} onClick={() => setOn(!on)} role="switch" />}
+      headRight={<ToggleSwitch on={on} onToggle={() => setOn(!on)} label="Pixoo 64 display" />}
     >
       <EntityGuard status={pixooStatus} entityId="light.divoom_pixoo_64">
       <div style={{ display: "grid", gridTemplateColumns: "92px 1fr", gap: 18, alignItems: "center", marginTop: 4 }}>
@@ -164,6 +165,7 @@ export function PixooCard({ index = 0 }) {
             min="0"
             max="255"
             step="1"
+            aria-label="Pixoo 64 brightness"
             value={bright}
             disabled={!on}
             onChange={(ev) => setB(Number(ev.target.value))}

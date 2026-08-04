@@ -69,8 +69,9 @@ export function WeatherIcon({ condition, size = 88, sunColor = "var(--accent-2)"
     </g>
   );
 
+  // role="img" — an <svg> carrying only aria-label isn't reliably exposed.
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${vb} ${vb}`} aria-label={condition}>
+    <svg width={size} height={size} viewBox={`0 0 ${vb} ${vb}`} role="img" aria-label={condition}>
       {condition === "sunny" && <Sun cx={50} cy={50} r={22} />}
       {condition === "partlycloudy" && (
         <>

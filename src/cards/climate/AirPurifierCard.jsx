@@ -3,6 +3,7 @@ import { useEntity } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { useOptimisticToggle } from "../../hooks/useOptimistic.js";
 
 /* ----------------------------------------------------------------
@@ -10,6 +11,9 @@ import { useOptimisticToggle } from "../../hooks/useOptimistic.js";
    ----------------------------------------------------------------*/
 const SPEED_TO_PCT = { low: 33, medium: 67, high: 100 };
 const PCT_TO_SPEED = (pct) => pct <= 33 ? "low" : pct <= 67 ? "medium" : "high";
+const numOr = (v, d) => (v != null && v !== "unavailable" && v !== "unknown" && !Number.isNaN(+v) ? +v : d);
+/* WHO / EPA-ish PM2.5 bands, so the readout can't claim "excellent" at 90 µg/m³. */
+const pmBand = (v) => (v == null ? "—" : v <= 12 ? "excellent" : v <= 35 ? "good" : v <= 55 ? "moderate" : "poor");
 
 export function AirPurifierCard({ index = 0 }) {
   const { entity: liveFan, status: fanStatus, on, setOn, toggle: doToggle } =
@@ -19,8 +23,10 @@ export function AirPurifierCard({ index = 0 }) {
   const liveFilt = useEntity("sensor.core_300s_series_filter_lifetime");
   const unavailable = liveFan?.state === "unavailable" || liveFan?.state === "unknown";
   const q = liveQ?.state ?? "—";
-  const pm = Number(livePm?.state ?? 0);
-  const filt = Number(liveFilt?.state ?? 0);
+  // The VeSync cloud sensors drop out independently of the fan, so these are
+  // null (→ em dash) rather than 0 when they go "unavailable".
+  const pm = numOr(livePm?.state, null);
+  const filt = numOr(liveFilt?.state, null);
   const [mode, setMode] = useState(liveFan?.attributes?.preset_mode ?? "auto");
   useEffect(() => {
     if (!liveFan) return;
@@ -28,10 +34,6 @@ export function AirPurifierCard({ index = 0 }) {
     if (attrs?.preset_mode) setMode(attrs.preset_mode);
     else if (attrs?.percentage) setMode(PCT_TO_SPEED(attrs.percentage));
   }, [liveFan?.state, liveFan?.attributes?.preset_mode, liveFan?.attributes?.percentage]);
-  function toggleFan() {
-    if (unavailable) return;
-    doToggle();
-  }
   function pickMode(m) {
     setMode(m);
     if (!on) setOn(true);
@@ -44,16 +46,17 @@ export function AirPurifierCard({ index = 0 }) {
   }
 
   const C = 2 * Math.PI * 90;
-  const offset = C * (1 - filt / 100);
+  // No filter reading → draw an empty ring rather than stroke-dashoffset="NaN".
+  const offset = filt != null ? C * (1 - filt / 100) : C;
 
   return (
     <Card
       index={index}
       eyebrow="Air · core_300s_series"
       title="Air purifier"
-      meta={unavailable ? "Unavailable" : `filter · ${filt}%`}
+      meta={unavailable ? "Unavailable" : `filter · ${filt != null ? `${filt}%` : "—"}`}
       headRight={
-        <div className={`toggle ${on && !unavailable ? "on" : ""}`} onClick={toggleFan} role="switch" aria-checked={on} style={unavailable ? { opacity: 0.4 } : undefined} />
+        <ToggleSwitch on={on && !unavailable} onToggle={doToggle} disabled={unavailable} label="Air purifier" />
       }
     >
       <EntityGuard status={fanStatus} entityId="fan.core_300s_series">
@@ -66,21 +69,21 @@ export function AirPurifierCard({ index = 0 }) {
           <div className="purifier-num">
             <div>
               <div className="label">PM 2.5</div>
-              <div className="big">{pm}</div>
-              <div className="sub">µg/m³ · excellent</div>
+              <div className="big">{pm ?? "—"}</div>
+              <div className="sub">µg/m³ · {pmBand(pm)}</div>
             </div>
           </div>
         </div>
         <div className="purifier-info">
           <div className="h">
-            Air is <b>{q}</b>. Filter has <b style={{ color: "var(--ink)" }}>{filt}%</b> life left.
+            Air is <b>{q}</b>. Filter has <b style={{ color: "var(--ink)" }}>{filt != null ? `${filt}%` : "—"}</b> life left.
           </div>
           <div className="dek">
             Currently running <b>{mode}</b>. Display is on. Last filter check 12 days ago.
           </div>
-          <div className="preset-row">
+          <div className="preset-row" role="group" aria-label="Purifier mode">
             {["sleep", "auto", "low", "medium", "high"].map((p) => (
-              <button key={p} className={`preset ${mode === p ? "on" : ""}`} onClick={() => pickMode(p)} disabled={unavailable}>
+              <button key={p} className={`preset ${mode === p ? "on" : ""}`} aria-pressed={mode === p} onClick={() => pickMode(p)} disabled={unavailable}>
                 {p}
               </button>
             ))}

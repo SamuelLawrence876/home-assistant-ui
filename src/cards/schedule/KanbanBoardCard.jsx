@@ -41,15 +41,31 @@ function buildDescription(tags, text) {
   return parts.join(" ") || undefined;
 }
 
+/* HA to-do items carry either a bare date ("2026-06-10") or a full datetime
+   ("2026-06-10T14:30:00+01:00"). Only the bare form needs the midnight suffix
+   to parse as local time — appending it to a datetime yields Invalid Date. */
 function fmtDue(dateStr) {
   if (!dateStr) return null;
-  const d = new Date(dateStr + "T00:00:00");
+  const hasTime = dateStr.length > 10;
+  const d = new Date(hasTime ? dateStr : dateStr + "T00:00:00");
+  if (isNaN(d)) return null;
   const now = new Date();
-  const diff = Math.round((d - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+  if (hasTime && d < now) return "overdue";
+  const dueMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((dueMidnight - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
   if (diff < 0) return "overdue";
   if (diff === 0) return "today";
   if (diff === 1) return "tomorrow";
   return d.toLocaleDateString("en-GB", { weekday: "short", month: "short", day: "numeric" });
+}
+
+/* `todo.add_item` has two mutually exclusive due fields: `due_date` is validated
+   as a bare date and `due_datetime` as a timestamp. Passing an item's raw due
+   value into the wrong one throws, so route it by the same shape test fmtDue
+   uses — otherwise moving a card that carries a due *time* fails outright. */
+function dueFields(due) {
+  if (!due) return {};
+  return due.length > 10 ? { due_datetime: due } : { due_date: due };
 }
 
 function useKanbanItems(entityIds) {
@@ -130,37 +146,39 @@ export function KanbanBoardCard({ index = 0 }) {
             status: "needs_action",
           });
         } else {
-          await callService("todo", "update_item", {
-            entity_id: card._entity,
+          /* Cross-list move is two calls with no transaction. Add to the
+             target FIRST so a failure between them leaves a recoverable
+             duplicate instead of deleting the task from both lists. The
+             new item lands as needs_action, so no status update is needed. */
+          await callService("todo", "add_item", {
+            entity_id: targetEntity,
             item: card.summary,
-            status: "needs_action",
+            ...dueFields(card.due),
+            ...(card.description ? { description: card.description } : {}),
           });
           await callService("todo", "remove_item", {
             entity_id: card._entity,
             item: card.summary,
           });
-          await callService("todo", "add_item", {
-            entity_id: targetEntity,
-            item: card.summary,
-            ...(card.due ? { due_date: card.due } : {}),
-            ...(card.description ? { description: card.description } : {}),
-          });
         }
       } else {
+        /* Add-then-remove for the same reason as above. */
+        await callService("todo", "add_item", {
+          entity_id: toCol,
+          item: card.summary,
+          ...dueFields(card.due),
+          ...(card.description ? { description: card.description } : {}),
+        });
         await callService("todo", "remove_item", {
           entity_id: fromCol,
           item: card.summary,
         });
-        await callService("todo", "add_item", {
-          entity_id: toCol,
-          item: card.summary,
-          ...(card.due ? { due_date: card.due } : {}),
-          ...(card.description ? { description: card.description } : {}),
-        });
       }
       setTimeout(refresh, 500);
     } catch {
-      optimisticMove(uid, toCol, fromCol);
+      /* Don't trust the optimistic revert — half the move may have landed.
+         Re-read both lists from the Pi so the board shows what really exists. */
+      refresh();
     }
   }
 
@@ -173,7 +191,7 @@ export function KanbanBoardCard({ index = 0 }) {
       await callService("todo", "add_item", {
         entity_id: colId,
         item: summary,
-        ...(due ? { due_date: due } : {}),
+        ...dueFields(due),
         ...(desc ? { description: desc } : {}),
       });
       setTimeout(refresh, 500);
@@ -253,7 +271,15 @@ export function KanbanBoardCard({ index = 0 }) {
                     onDragStart={(ev) => onDragStart(ev, key, id)}
                     onDragEnd={onDragEnd}
                   >
-                    <button className="kanban-card-x" onClick={() => removeItem(id, c)} title="Delete">&times;</button>
+                    <button
+                      type="button"
+                      className="kanban-card-x"
+                      onClick={() => removeItem(id, c)}
+                      title="Delete"
+                      aria-label={`Delete ${c.summary}`}
+                    >
+                      &times;
+                    </button>
                     <div className="summary">{c.summary}</div>
                     <div className="meta">
                       <span className="tags">
@@ -267,7 +293,7 @@ export function KanbanBoardCard({ index = 0 }) {
               {adding === id ? (
                 <KanbanAddForm onSubmit={(s, t, d) => addItem(id, s, t, d)} onCancel={() => setAdding(null)} />
               ) : canAdd ? (
-                <button className="kanban-add" onClick={() => setAdding(id)}>+ Add</button>
+                <button type="button" className="kanban-add" onClick={() => setAdding(id)} aria-label={`Add a task to ${label}`}>+ Add</button>
               ) : null}
             </div>
           );
@@ -315,10 +341,16 @@ function KanbanAddForm({ onSubmit, onCancel }) {
 
   return (
     <form className="kanban-add-form" onSubmit={handle}>
-      <input ref={ref} className="kanban-input" placeholder="What needs doing?" value={summary} onChange={(ev) => setSummary(ev.target.value)} />
+      <input ref={ref} className="kanban-input" placeholder="What needs doing?" aria-label="Task summary" value={summary} onChange={(ev) => setSummary(ev.target.value)} />
       <div className="kanban-add-row">
         <div className="kanban-tag-picker" ref={menuRef}>
-          <button type="button" className="kanban-tag-toggle" onClick={() => setShowTagMenu(!showTagMenu)}>
+          <button
+            type="button"
+            className="kanban-tag-toggle"
+            onClick={() => setShowTagMenu(!showTagMenu)}
+            aria-label="Choose tags"
+            aria-expanded={showTagMenu}
+          >
             {selectedTags.length ? selectedTags.map((t) => (
               <span key={t} className={`tag tag-${t}`}>{tagLabel(t)} <span className="tag-rm" onClick={(ev) => { ev.stopPropagation(); removeTag(t); }}>&times;</span></span>
             )) : <span className="placeholder">+ Tags</span>}
@@ -332,13 +364,23 @@ function KanbanAddForm({ onSubmit, onCancel }) {
                   {selectedTags.includes(id) && <span className="check">✓</span>}
                 </button>
               ))}
-              <form className="kanban-tag-custom" onSubmit={addCustomTag}>
-                <input className="kanban-input kanban-input-sm" placeholder="Custom tag…" value={customTag} onChange={(ev) => setCustomTag(ev.target.value)} />
-              </form>
+              {/* Deliberately a div, not a form: nesting forms is invalid HTML
+                  and the inner submit bubbles up, firing the outer form's
+                  handler and creating the task before the tag is applied. */}
+              <div className="kanban-tag-custom">
+                <input
+                  className="kanban-input kanban-input-sm"
+                  placeholder="Custom tag…"
+                  aria-label="Custom tag"
+                  value={customTag}
+                  onChange={(ev) => setCustomTag(ev.target.value)}
+                  onKeyDown={(ev) => { if (ev.key === "Enter") addCustomTag(ev); }}
+                />
+              </div>
             </div>
           )}
         </div>
-        <input className="kanban-input kanban-input-sm kanban-date" type="date" value={due} onChange={(ev) => setDue(ev.target.value)} />
+        <input className="kanban-input kanban-input-sm kanban-date" type="date" aria-label="Due date" value={due} onChange={(ev) => setDue(ev.target.value)} />
       </div>
       <div className="kanban-add-row">
         <button type="submit" className="kanban-add-btn">Add</button>

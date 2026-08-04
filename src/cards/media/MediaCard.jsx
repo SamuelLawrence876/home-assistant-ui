@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
@@ -7,6 +7,12 @@ import { EntityGuard } from "../../components/EntityGuard.jsx";
 /* ----------------------------------------------------------------
    Media — Spotify now playing (compact, Overview tab)
    ----------------------------------------------------------------*/
+
+/* The only keys that move a range input. Focus moves on keydown, so the keyup for
+   Tab is delivered to the slider you just landed on — committing on every keyup
+   means merely tabbing past the volume control writes a volume_set to HA. */
+const RANGE_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+
 export function MediaCard({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
   const { entity: m, status } = useEntityStatus(ENTITY);
@@ -32,10 +38,16 @@ export function MediaCard({ index = 0 }) {
 
   const pct = duration > 0 ? (pos / duration) * 100 : 0;
 
+  // Revert from HA's truth at failure time, not the boolean captured at click
+  // time — the resync effect only fires on a changed state, so a stale revert sticks.
+  const mRef = useRef(m);
+  mRef.current = m;
+
   function playPause() {
     const next = !isPlaying;
     setIsPlaying(next);
-    callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY }).catch(() => setIsPlaying(isPlaying));
+    callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY })
+      .catch(() => setIsPlaying(mRef.current?.state === "playing"));
   }
   function commitVolume(v) {
     setVol(v);
@@ -83,13 +95,15 @@ export function MediaCard({ index = 0 }) {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, opacity: dimmed }}>
-        <button className="btn icon" onClick={playPause} style={{ width: 32, height: 32 }}>
+        <button className="btn icon" onClick={playPause} aria-label={isPlaying ? "Pause" : "Play"} style={{ width: 32, height: 32 }}>
           {isPlaying ? "⏸" : "▶"}
         </button>
         <input
           type="range" min="0" max="100" value={vol}
+          aria-label="Volume"
           onChange={(e) => setVol(Number(e.target.value))}
           onPointerUp={(e) => commitVolume(Number(e.target.value))}
+          onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) commitVolume(Number(e.target.value)); }}
           className="gh-slider"
           style={{ flex: 1, accentColor: "#1db954" }}
         />

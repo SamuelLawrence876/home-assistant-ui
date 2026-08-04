@@ -20,6 +20,13 @@ export const ROLES = Object.freeze({
   GUEST: "guest",
 });
 
+/* Connected, but `auth/current_user` hasn't come back yet. This is one WS
+ * round-trip long and it is NOT the same thing as "this person is a guest":
+ * treating it as guest silently rewrote every ?tab= deep link to overview
+ * before the real role landed. Sees the same tabs as a guest (fail closed),
+ * but callers can spot it and hold off on destructive decisions. */
+export const ROLE_PENDING = "pending";
+
 /* HA user id → role, for non-admin users.
  * Find ids in HA: Settings → People → Users → click user (id is in the URL),
  * or `grep -A2 '"name"' /config/.storage/auth` on the Pi.
@@ -34,6 +41,7 @@ const TAB_ACCESS = {
   [ROLES.FAMILY]: ["overview", "lights", "media", "schedule", "climate", "workshop", "system"],
   [ROLES.FRIEND]: ["media"],
   [ROLES.GUEST]: ["overview"],
+  [ROLE_PENDING]: ["overview"],
 };
 
 /* user: result of auth/current_user, or null.
@@ -41,12 +49,12 @@ const TAB_ACCESS = {
  * Rules:
  *   - not connected (mock build / Pi offline) → family, so dev + the
  *     screenshot harness keep seeing all tabs (no real control is possible)
- *   - connected, user not resolved yet → guest (fail closed; the boot
- *     screen masks this window)
+ *   - connected, user not resolved yet → ROLE_PENDING (renders like a guest,
+ *     but callers must not act on it as if it were a final answer)
  *   - admin/owner → family; otherwise look up the id, default guest */
 export function deriveRole(user, connected) {
   if (!connected) return ROLES.FAMILY;
-  if (!user) return ROLES.GUEST;
+  if (!user) return ROLE_PENDING;
   if (user.is_owner || user.is_admin) return ROLES.FAMILY;
   return USER_ROLE_MAP[user.id] ?? ROLES.GUEST;
 }

@@ -5,17 +5,21 @@
      - per-lean CSS variable tokens
 */
 
+/* "HH:MM" (or bare "HH") → fractional hour, or null if it isn't a real time.
+   Nothing downstream tolerates NaN: an unvalidated hour propagates into
+   oklch(NaN NaN NaN) and the sky gradient collapses to none. */
 function parseHM(s) {
   if (!s) return null;
-  const [h, m] = s.split(":").map(Number);
-  return h + m / 60;
+  const [h, m = 0] = s.split(":").map(Number);
+  const v = h + m / 60;
+  return Number.isFinite(v) && v >= 0 && v < 24 ? v : null;
 }
 
 export function nowFractionalHour(override) {
-  if (typeof override === "number") return override;
+  if (typeof override === "number" && Number.isFinite(override)) return override;
   const params = new URLSearchParams(window.location.search);
-  const c = params.get("clock");
-  if (c) return parseHM(c);
+  const c = parseHM(params.get("clock"));
+  if (c !== null) return c;
   const d = new Date();
   return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
 }
@@ -36,6 +40,10 @@ export function isDay(phase) {
 
 // Returns { top, bottom, accent, isDay } in oklch strings
 export function skyColors(hour /*, lean */) {
+  // Last line of defence: a non-finite hour makes every keyframe comparison
+  // false, leaves t = NaN, and emits oklch(NaN NaN NaN) into --sky-top.
+  const h = Number.isFinite(hour) ? Math.min(Math.max(hour, 0), 24) : 12;
+
   const dawn = 6.07,
     sunrise = 6.63,
     noon = 13.4,
@@ -59,20 +67,20 @@ export function skyColors(hour /*, lean */) {
   let a = keyframes[0],
     b = keyframes[keyframes.length - 1];
   for (let i = 0; i < keyframes.length - 1; i++) {
-    if (hour >= keyframes[i].h && hour <= keyframes[i + 1].h) {
+    if (h >= keyframes[i].h && h <= keyframes[i + 1].h) {
       a = keyframes[i];
       b = keyframes[i + 1];
       break;
     }
   }
-  const t = (hour - a.h) / (b.h - a.h || 1);
+  const t = (h - a.h) / (b.h - a.h || 1);
   const mix = (x, y) => x + (y - x) * t;
   const top = a.top.map((v, i) => mix(v, b.top[i]));
   const bot = a.bot.map((v, i) => mix(v, b.bot[i]));
   const warmth = mix(a.warmth, b.warmth);
   const day = t < 0.5 ? a.day : b.day;
 
-  const phase = sunPhase(hour, dawn, dusk);
+  const phase = sunPhase(h, dawn, dusk);
 
   return {
     top: `oklch(${top[0].toFixed(3)} ${top[1].toFixed(3)} ${Math.round(top[2])})`,
@@ -88,6 +96,12 @@ export function skyColors(hour /*, lean */) {
   };
 }
 
+/* Per-lean token sets. `--on-ink` is the label colour for anything painted on
+   an `--ink` fill (the tab indicator, .btn.primary/.accent, segmented controls).
+   It has to flip with the mode because `--ink` does: near-black by day, so the
+   label is near-white; near-white at night, so the label is near-black. It is
+   deliberately NOT derived from the sky — a clock-driven text colour slides
+   through dark red at dusk and collapses the contrast to ~1:1. */
 export const LEANS = {
   conservatory: {
     label: "Conservatory",
@@ -97,6 +111,7 @@ export const LEANS = {
       "--ink-2": "oklch(0.36 0.025 80)",
       "--ink-3": "oklch(0.55 0.02 80)",
       "--ink-4": "oklch(0.72 0.015 80)",
+      "--on-ink": "oklch(0.99 0.008 80)",
       "--accent": "oklch(0.50 0.10 150)",
       "--accent-2": "oklch(0.60 0.12 60)",
       "--warn": "oklch(0.62 0.16 35)",
@@ -121,6 +136,7 @@ export const LEANS = {
       "--ink-2": "oklch(0.82 0.015 80)",
       "--ink-3": "oklch(0.65 0.02 80)",
       "--ink-4": "oklch(0.50 0.02 80)",
+      "--on-ink": "oklch(0.20 0.020 80)",
       "--accent": "oklch(0.70 0.10 150)",
       "--accent-2": "oklch(0.80 0.10 70)",
       "--warn": "oklch(0.75 0.14 50)",
@@ -144,6 +160,7 @@ export const LEANS = {
       "--ink-2": "oklch(0.34 0.01 235)",
       "--ink-3": "oklch(0.55 0.008 235)",
       "--ink-4": "oklch(0.72 0.006 235)",
+      "--on-ink": "oklch(0.99 0.003 235)",
       "--accent": "oklch(0.58 0.12 230)",
       "--accent-2": "oklch(0.60 0.10 280)",
       "--warn": "oklch(0.65 0.16 50)",
@@ -168,6 +185,7 @@ export const LEANS = {
       "--ink-2": "oklch(0.85 0.008 235)",
       "--ink-3": "oklch(0.65 0.01 235)",
       "--ink-4": "oklch(0.50 0.01 235)",
+      "--on-ink": "oklch(0.18 0.010 235)",
       "--accent": "oklch(0.78 0.10 230)",
       "--accent-2": "oklch(0.78 0.10 290)",
       "--warn": "oklch(0.78 0.14 60)",
@@ -191,6 +209,7 @@ export const LEANS = {
       "--ink-2": "oklch(0.34 0.012 60)",
       "--ink-3": "oklch(0.52 0.012 60)",
       "--ink-4": "oklch(0.68 0.01 60)",
+      "--on-ink": "oklch(0.99 0.005 60)",
       "--accent": "oklch(0.58 0.13 35)",
       "--accent-2": "oklch(0.62 0.10 90)",
       "--warn": "oklch(0.65 0.16 50)",
@@ -215,6 +234,7 @@ export const LEANS = {
       "--ink-2": "oklch(0.80 0.01 80)",
       "--ink-3": "oklch(0.60 0.012 80)",
       "--ink-4": "oklch(0.45 0.012 80)",
+      "--on-ink": "oklch(0.19 0.012 80)",
       "--accent": "oklch(0.72 0.14 35)",
       "--accent-2": "oklch(0.78 0.10 90)",
       "--warn": "oklch(0.78 0.14 55)",
@@ -239,11 +259,40 @@ export const LEANS = {
 const TWEAKS_KEY = "glasshouse-tweaks";
 export const TWEAK_DEFAULTS = { lean: "frosted", mode: "auto", clockOverride: false, clock: 18.5, bootStyle: "assemble" };
 
+export const MODE_VALUES = ["auto", "day", "night"];
+export const BOOT_STYLE_VALUES = ["assemble", "trace", "pixel"];
+
+/* Coercers. Every tweak arrives from somewhere untrusted — a hand-typed URL
+   param, a shared link, a half-written localStorage blob — so each one is
+   funnelled through here before it reaches state. An unrecognised value is
+   the default, never a crash and never something we persist. */
+export function coerceLean(v) {
+  // hasOwnProperty, not `LEANS[v]` — a plain-object lookup also answers for
+  // every Object.prototype key, so ?lean=constructor / toString / valueOf
+  // would sail through the guard and hand applyTheme a function to read
+  // .day off.
+  return Object.prototype.hasOwnProperty.call(LEANS, v) ? v : TWEAK_DEFAULTS.lean;
+}
+export function coerceMode(v) {
+  return MODE_VALUES.includes(v) ? v : TWEAK_DEFAULTS.mode;
+}
+export function coerceBootStyle(v) {
+  return BOOT_STYLE_VALUES.includes(v) ? v : TWEAK_DEFAULTS.bootStyle;
+}
+export function coerceClock(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n < 24 ? n : TWEAK_DEFAULTS.clock;
+}
+
 export function loadStoredTweaks() {
   try {
     const raw = localStorage.getItem(TWEAKS_KEY);
     if (!raw) return {};
-    return JSON.parse(raw) || {};
+    const parsed = JSON.parse(raw);
+    // Anything that isn't a plain object (a stray array, a bare number, a
+    // truncated write) is treated as absent rather than read through.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
   } catch {
     return {};
   }
@@ -258,11 +307,14 @@ export function persistTweaks(t) {
 /* Apply CSS variables for the chosen lean + mode, plus dynamic sky vars. */
 export function applyTheme(lean, mode, sky) {
   const root = document.documentElement;
+  // Never index LEANS blind. This runs inside a useEffect with no boundary
+  // above it, so an unknown lean would throw and unmount the whole app.
+  const leanName = coerceLean(lean);
+  const cfg = LEANS[leanName];
   // Day defaults inherit base font-family + display vars (set on day).
-  const dayBase = LEANS[lean].day;
-  Object.entries(dayBase).forEach(([k, v]) => root.style.setProperty(k, v));
+  Object.entries(cfg.day).forEach(([k, v]) => root.style.setProperty(k, v));
   if (mode === "night") {
-    Object.entries(LEANS[lean].night).forEach(([k, v]) => root.style.setProperty(k, v));
+    Object.entries(cfg.night).forEach(([k, v]) => root.style.setProperty(k, v));
   }
 
   root.style.setProperty("--sky-top", sky.top);
@@ -291,11 +343,11 @@ export function applyTheme(lean, mode, sky) {
   const tint = sky.warmth > 0.7 ? "#ffba6b" : sky.warmth > 0.4 ? "#ffd28a" : "#fff0c8";
   root.style.setProperty("--sun-tint", tint);
 
-  const mullionOpacity = lean === "frosted" ? 0 : lean === "atrium" ? 1 : 0.6;
+  const mullionOpacity = leanName === "frosted" ? 0 : leanName === "atrium" ? 1 : 0.6;
   root.style.setProperty("--mullion-opacity", `${mullionOpacity}`);
 
   document.body.classList.remove("lean-conservatory", "lean-frosted", "lean-atrium");
-  document.body.classList.add(`lean-${lean}`);
+  document.body.classList.add(`lean-${leanName}`);
   document.body.classList.toggle("mode-night", mode === "night");
   document.body.classList.toggle("mode-day", mode !== "night");
 }

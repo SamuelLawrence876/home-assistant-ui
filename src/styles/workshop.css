@@ -656,7 +656,7 @@
 .ws-control-row .seg button:hover { color: var(--ink); }
 .ws-control-row .seg button.on {
   background: var(--ink);
-  color: var(--sky-top, #fff);
+  color: var(--on-ink, #fff);
 }
 .ws-control-row .seg.compact button { padding: 6px 14px; font-weight: 500; }
 
@@ -683,8 +683,25 @@
   border-radius: 999px;
   background: color-mix(in oklch, var(--ink), transparent 80%);
   cursor: pointer;
+  flex-shrink: 0;
   transition: background 0.2s;
+  /* button reset — .mini-tog renders as <button> so it is keyboard operable */
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
 }
+/* The pill is only 22x12; this transparent overlay gives it a 34x24 tap target
+   without moving the track or the knob. */
+.ws-flag .mini-tog::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+}
+.ws-flag .mini-tog:disabled { cursor: not-allowed; opacity: 0.4; }
 .ws-flag .mini-tog::after {
   content: "";
   position: absolute;

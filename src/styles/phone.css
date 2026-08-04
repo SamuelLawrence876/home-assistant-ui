@@ -95,7 +95,7 @@ body.viewport-phone .bottom-nav button .lbl {
 body.viewport-phone .bottom-nav button.on {
   flex: 0 0 auto;
   background: var(--ink);
-  color: var(--sky-top, #fff);
+  color: var(--on-ink, #fff);
   padding: 9px 14px;
 }
 body.viewport-phone .bottom-nav button.on .lbl {

@@ -10,7 +10,7 @@ on:
 
 jobs:
   ci:
-    name: Build
+    name: Lint + build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # Vite/esbuild does no scope analysis, so a typo'd identifier builds
+      # cleanly and only throws when its lazy-loaded tab is opened. ESLint's
+      # no-undef is the only gate that catches it — run it before the build.
+      - name: Lint
+        run: npm run lint
 
       - name: Build
         run: npm run build

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useEntity } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
+import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { rgbStr, kelvinToRgb } from "../../cards/lights/colorUtils.js";
 import { PresetSwatches } from "./presets.jsx";
 
@@ -22,7 +23,24 @@ function parseGoveeProps(attrs) {
 }
 
 const GOVEE_GAP = 2000;
+// After sending a command, ask HA to re-poll the Govee cloud so the card can
+// correct itself if the strip didn't take the value we optimistically showed.
+const VERIFY_DELAY = 3000;
+// Upper bound on how long the card ignores incoming sensor pushes after the
+// user touches something (the poll is slow, so stale values arrive mid-drag).
+// scheduleVerify releases the freeze early — this is only the safety net.
+const RESYNC_FREEZE = 8000;
+// Colour and colour temperature drive the same physical property, so they
+// supersede each other; brightness and power are independent.
+const CMD_KIND = { color: "color", color_temp: "color", brightness: "brightness", turn: "turn" };
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+// The only keys that move a range input's value. Commit on keyup so a held
+// arrow key sends one command, but filter on the key — keyup fires for every
+// key, and focus moves on keydown, so an unfiltered handler treats the Tab
+// that lands on the slider as an edit and fires a real command at the strip.
+const VALUE_KEYS = new Set([
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
+]);
 
 const GOVEE_PRESETS = [
   { id: "warm", label: "Warm 2200K", rgb: [255, 170, 110], kelvin: 2200 },
@@ -48,11 +66,19 @@ export function DeskStripCard({ index = 0 }) {
   const userActedAt = useRef(0);
   const lastCmdTime = useRef(0);
   const cmdQueue = useRef(Promise.resolve());
-  const cmdEpoch = useRef(0);
+  // One counter per command kind, not one global counter: "latest wins" should
+  // only apply within a kind, otherwise a brightness drag started a moment
+  // after a colour tap cancels the colour command that is still waiting out
+  // the rate limit — and the card goes on showing a colour never sent.
+  const cmdEpoch = useRef({});
   const verifyTimer = useRef(null);
+  // Commands handed to the queue but not finished with. The queue is serial and
+  // rate-limited, so an earlier command's verify timer can come due while a
+  // later one is still waiting out the gap or in flight.
+  const inFlight = useRef(0);
 
   useEffect(() => {
-    if (Date.now() - userActedAt.current < 5000) return;
+    if (Date.now() - userActedAt.current < RESYNC_FREEZE) return;
     if (live) setOn(live.state === "on");
     if (hw.brightness != null) setB(hw.brightness);
     if (hw.color) setRgb(hw.color);
@@ -61,21 +87,39 @@ export function DeskStripCard({ index = 0 }) {
   function scheduleVerify() {
     clearTimeout(verifyTimer.current);
     verifyTimer.current = setTimeout(() => {
+      // Another command is still queued or in flight. Lifting the freeze now
+      // would let a poll taken before it landed write the pre-command value
+      // back into the slider; that command's own finally reschedules us.
+      if (inFlight.current > 0) return;
+      // Lift the resync freeze first, or the refresh we are about to ask for
+      // lands inside it and gets thrown away — leaving the card stuck on the
+      // optimistic value until the next slow poll.
+      userActedAt.current = 0;
       callService("homeassistant", "update_entity", { entity_id: "sensor.desk_strip_state" }).catch(() => {});
-    }, 3000);
+    }, VERIFY_DELAY);
   }
 
   function govee(cmd, data) {
     userActedAt.current = Date.now();
-    const epoch = ++cmdEpoch.current;
+    const kind = CMD_KIND[cmd] || cmd;
+    const epoch = (cmdEpoch.current[kind] = (cmdEpoch.current[kind] || 0) + 1);
+    inFlight.current += 1;
     const p = cmdQueue.current.then(async () => {
-      if (cmdEpoch.current !== epoch) return;
-      const wait = GOVEE_GAP - (Date.now() - lastCmdTime.current);
-      if (wait > 0) await delay(wait);
-      if (cmdEpoch.current !== epoch) return;
-      lastCmdTime.current = Date.now();
-      await callService("rest_command", `govee_desk_strip_${cmd}`, data);
-      scheduleVerify();
+      try {
+        if (cmdEpoch.current[kind] !== epoch) return;
+        const wait = GOVEE_GAP - (Date.now() - lastCmdTime.current);
+        if (wait > 0) await delay(wait);
+        if (cmdEpoch.current[kind] !== epoch) return;
+        lastCmdTime.current = Date.now();
+        try {
+          await callService("rest_command", `govee_desk_strip_${cmd}`, data);
+        } finally {
+          // Verify on failure too — that is exactly when the card is wrong.
+          scheduleVerify();
+        }
+      } finally {
+        inFlight.current -= 1;
+      }
     });
     cmdQueue.current = p.catch(() => {});
     return p;
@@ -84,18 +128,7 @@ export function DeskStripCard({ index = 0 }) {
   function toggle() {
     const next = !on;
     setOn(next);
-    cmdEpoch.current++;
-    const epoch = cmdEpoch.current;
-    const p = cmdQueue.current.then(async () => {
-      if (cmdEpoch.current !== epoch) return;
-      const wait = GOVEE_GAP - (Date.now() - lastCmdTime.current);
-      if (wait > 0) await delay(wait);
-      lastCmdTime.current = Date.now();
-      await callService("rest_command", "govee_desk_strip_turn", { value: next ? "on" : "off" });
-      scheduleVerify();
-    });
-    cmdQueue.current = p.catch(() => {});
-    p.catch(() => setOn(!next));
+    govee("turn", { value: next ? "on" : "off" }).catch(() => setOn(!next));
   }
 
   function commitBrightness(v) {
@@ -136,9 +169,7 @@ export function DeskStripCard({ index = 0 }) {
       eyebrow="Light · Govee H6159"
       title="Desk strip"
       meta={on ? `On · ${bright}%` : "Off"}
-      headRight={
-        <div className={`toggle ${on ? "on" : ""}`} onClick={toggle} role="switch" aria-checked={on} />
-      }
+      headRight={<ToggleSwitch on={on} onToggle={toggle} label="Desk strip" />}
     >
       <div
         style={{
@@ -182,7 +213,8 @@ export function DeskStripCard({ index = 0 }) {
             disabled={!on}
             onChange={(ev) => setB(Number(ev.target.value))}
             onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
-            onKeyUp={(ev) => commitBrightness(Number(ev.target.value))}
+            onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitBrightness(Number(ev.target.value)); }}
+            aria-label="Desk strip brightness"
             className="gh-slider"
             style={{ width: "100%", accentColor: on ? rgbStr(rgb) : "var(--ink-4)" }}
           />
@@ -205,7 +237,8 @@ export function DeskStripCard({ index = 0 }) {
           disabled={!on}
           onChange={(ev) => { setKelvin(Number(ev.target.value)); setRgb(kelvinToRgb(Number(ev.target.value))); }}
           onPointerUp={(ev) => commitKelvin(Number(ev.target.value))}
-          onKeyUp={(ev) => commitKelvin(Number(ev.target.value))}
+          onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitKelvin(Number(ev.target.value)); }}
+          aria-label="Desk strip color temperature"
           className="gh-slider"
           style={{
             width: "100%",
@@ -220,7 +253,7 @@ export function DeskStripCard({ index = 0 }) {
       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <PresetSwatches presets={GOVEE_PRESETS} rgb={rgb} onPick={pickColor} />
+          <PresetSwatches presets={GOVEE_PRESETS} rgb={rgb} onPick={pickColor} targetName="Desk strip" />
         </div>
       </div>
     </Card>

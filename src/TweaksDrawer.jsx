@@ -3,8 +3,9 @@
    Floating cog (top right), tap to open. Lets you switch lean, force
    day/night, and override the clock. Settings persist via App state. */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getHaUrl, signOut } from "./ha/socket.js";
+import { ToggleSwitch } from "./components/ToggleSwitch.jsx";
 
 const LEAN_OPTIONS = [
   { value: "frosted", label: "Frosted", tag: "cool minimal" },
@@ -13,6 +14,9 @@ const LEAN_OPTIONS = [
 ];
 
 const MODE_OPTIONS = ["auto", "day", "night"];
+
+/* Everything inside the drawer that takes a tab stop — used by the focus trap. */
+const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 const BOOT_OPTIONS = [
   { value: "assemble", label: "Assemble", tag: "tiles snap together" },
@@ -33,6 +37,10 @@ export function TweaksDrawer({
   onBootStyleChange,
 }) {
   const [open, setOpen] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const drawerRef = useRef(null);
+  const fabRef = useRef(null);
+  const wasOpen = useRef(false);
   const haUrl = getHaUrl();
 
   useEffect(() => {
@@ -43,6 +51,59 @@ export function TweaksDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Move focus with the panel: into it on open, back onto the cog on close.
+  // Without this a keyboard user is left focused on a control that has just
+  // gone inert, i.e. nowhere.
+  useEffect(() => {
+    if (open) {
+      wasOpen.current = true;
+      drawerRef.current?.querySelector("button")?.focus();
+    } else {
+      setConfirmSignOut(false);
+      if (wasOpen.current) fabRef.current?.focus();
+    }
+  }, [open]);
+
+  // Focus trap for the OPEN panel. The drawer sits last in the DOM and the
+  // page behind it is not inert, so without this Tab walks off the final
+  // control and on through the topbar tabs, the media transport and the
+  // SamBox360 mains switch — all under the scrim, invisible but live.
+  useEffect(() => {
+    if (!open) return;
+    function onTab(e) {
+      if (e.key !== "Tab") return;
+      const el = drawerRef.current;
+      if (!el) return;
+      const items = [...el.querySelectorAll(FOCUSABLE)].filter(
+        (n) => !n.disabled && n.getClientRects().length > 0,
+      );
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      // Focus escaped (the cog is outside the panel) — pull it back in.
+      if (!el.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    window.addEventListener("keydown", onTab);
+    return () => window.removeEventListener("keydown", onTab);
+  }, [open]);
+
+  // Sign-out drops the HA session with no dialog to explain it, so ask twice.
+  useEffect(() => {
+    if (!confirmSignOut) return;
+    const id = setTimeout(() => setConfirmSignOut(false), 5000);
+    return () => clearTimeout(id);
+  }, [confirmSignOut]);
+
   const hh = String(Math.floor(clock)).padStart(2, "0");
   const mm = String(Math.round((clock - Math.floor(clock)) * 60)).padStart(2, "0");
 
@@ -50,8 +111,9 @@ export function TweaksDrawer({
     <>
       <button
         className="tweaks-fab"
+        ref={fabRef}
         onClick={() => setOpen((o) => !o)}
-        aria-label="Tweaks"
+        aria-label="Settings"
         aria-expanded={open}
       >
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -62,13 +124,28 @@ export function TweaksDrawer({
 
       {open && <div className="tweaks-scrim" onClick={() => setOpen(false)} />}
 
-      <aside className={`tweaks-drawer ${open ? "open" : ""}`} aria-hidden={!open}>
+      {/* `inert` is what actually takes the closed panel out of the tab order
+          and out of the accessibility tree. The closed state is only visual
+          (opacity: 0), so without it Tab walks through a dozen invisible
+          controls — the second of which signs you out of Home Assistant.
+          React 18 has no boolean handling for `inert`; the empty-string form
+          renders inert="" and a bare `false` would render inert="false",
+          which browsers read as present. */}
+      <aside
+        ref={drawerRef}
+        className={`tweaks-drawer ${open ? "open" : ""}`}
+        role="dialog"
+        aria-modal={open ? "true" : undefined}
+        aria-label="Settings"
+        aria-hidden={!open}
+        inert={open ? undefined : ""}
+      >
         <div className="tweaks-head">
           <div>
             <div className="t">Settings</div>
             <div className="s">Glasshouse</div>
           </div>
-          <button className="x" onClick={() => setOpen(false)} aria-label="Close">×</button>
+          <button className="x" onClick={() => setOpen(false)} aria-label="Close settings">×</button>
         </div>
 
         <div className="tweaks-section">
@@ -93,7 +170,12 @@ export function TweaksDrawer({
                 Auth is handled via the HA OAuth flow. Sign out below to clear your session on this browser.
               </span>
             </div>
-            <button className="btn" onClick={signOut}>Sign out of Home Assistant</button>
+            <button
+              className="btn"
+              onClick={() => (confirmSignOut ? signOut() : setConfirmSignOut(true))}
+            >
+              {confirmSignOut ? "Tap again to confirm sign out" : "Sign out of Home Assistant"}
+            </button>
           </div>
         </div>
 
@@ -128,15 +210,26 @@ export function TweaksDrawer({
             ))}
           </div>
 
-          <label className="tweaks-toggle">
+          {/* Was a <label> around a display:none checkbox, so the control was
+              unreachable by keyboard even with the drawer open. Now a real
+              <button role="switch"> — but the row keeps its own onClick so the
+              whole 282px strip still toggles, which is what tweaks.css:210
+              (cursor: pointer) has always promised. Clicks that land on the
+              switch are left alone so it can't fire twice. */}
+          <div
+            className="tweaks-toggle"
+            onClick={(e) => {
+              if (e.target.closest?.("button")) return;
+              onClockOverrideChange(!clockOverride);
+            }}
+          >
             <span>Override clock</span>
-            <input
-              type="checkbox"
-              checked={clockOverride}
-              onChange={(e) => onClockOverrideChange(e.target.checked)}
+            <ToggleSwitch
+              on={clockOverride}
+              onToggle={() => onClockOverrideChange(!clockOverride)}
+              label="Override clock"
             />
-            <span className={`toggle ${clockOverride ? "on" : ""}`} />
-          </label>
+          </div>
 
           {clockOverride && (
             <div className="tweaks-slider">
@@ -152,6 +245,8 @@ export function TweaksDrawer({
                 value={clock}
                 onChange={(e) => onClockChange(Number(e.target.value))}
                 className="gh-slider"
+                aria-label="Time of day"
+                aria-valuetext={`${hh}:${mm}`}
               />
             </div>
           )}

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { GH_DATA } from "../../data.js";
 import { useNow } from "../../hooks/useNow.js";
 import { useEntitiesByDomain } from "../../ha/useEntity.js";
@@ -53,52 +53,112 @@ const CAL_PALETTE = [
   "var(--cal-family)",
 ];
 
-/* HA event → { day, start, end } in the visible week's local time.
+/* HA event → one { day, start, end } per day of the visible week it covers.
    `start`/`end` are floats (hours, e.g. 14.5 = 2:30pm).
-   `day` is 0-6 where 0 = Monday. Events outside [0,6] are dropped. */
-function haEventToGridPos(ev, weekStartLocal) {
+   `day` is 0-6 where 0 = Monday. Returns [] if the span misses the week.
+
+   HA returns a single object per event even when it runs over several days
+   (all-day events carry an *exclusive* end.date), so a Mon–Wed trip has to be
+   exploded into one entry per covered day. The span is clipped to the visible
+   week, which also keeps events that started before Monday on the board. */
+function haEventToGridPositions(ev, weekStartLocal) {
   const isAllDay = !ev.start?.dateTime;
   const startStr = ev.start?.dateTime || (ev.start?.date ? `${ev.start.date}T00:00:00` : null);
   const endStr = ev.end?.dateTime || (ev.end?.date ? `${ev.end.date}T00:00:00` : null);
-  if (!startStr || !endStr) return null;
+  if (!startStr || !endStr) return [];
   const sd = new Date(startStr);
   const ed = new Date(endStr);
-  if (isNaN(sd) || isNaN(ed)) return null;
+  if (isNaN(sd) || isNaN(ed)) return [];
 
-  // Day index relative to Monday-of-week, in local time.
+  // Day indices relative to Monday-of-week, in local time. Rounding absorbs
+  // the 23h/25h gap between local midnights across a DST change.
   const dayMs = 24 * 3600 * 1000;
-  const sLocalMidnight = new Date(sd.getFullYear(), sd.getMonth(), sd.getDate()).getTime();
   const wsMidnight = weekStartLocal.getTime();
-  const day = Math.round((sLocalMidnight - wsMidnight) / dayMs);
-  if (day < 0 || day > 6) return null;
+  const midnightOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayIndex = (ms) => Math.round((ms - wsMidnight) / dayMs);
 
-  if (isAllDay) {
-    // Render all-day events as a thin top-of-day bar so they're visible
-    // without dominating the column.
-    return { day, start: 0, end: 0.5, allDay: true };
+  const firstDay = dayIndex(midnightOf(sd));
+  /* An end that lands exactly on midnight belongs to the previous day —
+     that's how all-day end.date is defined, and a 22:00–00:00 meeting
+     shouldn't paint the next morning either. */
+  const endsAtMidnight = ed.getTime() === midnightOf(ed);
+  let lastDay = dayIndex(midnightOf(ed)) - (endsAtMidnight ? 1 : 0);
+  // Single-day all-day events from feeds that send a non-exclusive end.
+  if (isAllDay && lastDay < firstDay) lastDay = firstDay;
+  if (lastDay < firstDay) return [];
+
+  const from = Math.max(firstDay, 0);
+  const to = Math.min(lastDay, 6);
+  if (to < from) return []; // whole span sits outside the visible week
+
+  const spanStart = sd.getHours() + sd.getMinutes() / 60;
+  const spanEnd = endsAtMidnight ? 24 : ed.getHours() + ed.getMinutes() / 60;
+
+  const out = [];
+  for (let day = from; day <= to; day++) {
+    if (isAllDay) {
+      // Render all-day events as a thin top-of-day bar so they're visible
+      // without dominating the column.
+      out.push({ day, start: 0, end: 0.5, allDay: true });
+      continue;
+    }
+    const start = day === firstDay ? spanStart : 0;
+    const end = day === lastDay ? spanEnd : 24;
+    // Zero-length events would otherwise render as an invisible sliver.
+    out.push({ day, start, end: Math.max(end, start + 0.25), allDay: false });
   }
-  const start = sd.getHours() + sd.getMinutes() / 60;
-  const sameDay =
-    ed.getFullYear() === sd.getFullYear() &&
-    ed.getMonth() === sd.getMonth() &&
-    ed.getDate() === sd.getDate();
-  const end = sameDay ? ed.getHours() + ed.getMinutes() / 60 : 24;
-  return { day, start, end, allDay: false };
+  return out;
 }
+
+/* First-paint value only, until the real one is read off the DOM. Matches the
+   desktop `--col-h` so the pre-measurement frame is already correct there. */
+const SLOT_PX_FALLBACK = 26;
 
 export function WeeklyCalendarCard({ index = 0 }) {
   const mock = GH_DATA.schedule;
   const startHour = 8;
   const endHour = 22;
   const slotsPerHour = 2;
-  const slotPx = 26;
 
-  /* Today / this-week boundaries, computed live (not from mock today_iso). */
+  /* The 30-minute row height is owned by schedule.css (`--col-h`: 26px, 22px
+     under body.viewport-phone) because it draws the hour gutter and the column
+     gridlines. Read it back rather than keeping a second copy of the number
+     here — the two disagreeing is what pushed every phone event progressively
+     further down the day (~2h late by evening) and dragged the now-line with
+     it. CSS stays the single source of truth. */
+  const gridRef = useRef(null);
+  const [slotPx, setSlotPx] = useState(SLOT_PX_FALLBACK);
+  useLayoutEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const measure = () => {
+      const px = parseFloat(getComputedStyle(el).getPropertyValue("--col-h"));
+      if (px > 0) setSlotPx((cur) => (cur === px ? cur : px));
+    };
+    measure();
+    /* Re-measure on resize: crossing the phone breakpoint swaps `--col-h`
+       and always changes the grid's width along with it. */
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  /* Today / this-week boundaries, computed live (not from mock today_iso).
+     This is a wall dashboard that stays open for days, so the date has to
+     roll over on its own: `now` already ticks every 30s, and `dayKey` only
+     changes when the local calendar date does — which then re-derives
+     `today`, the week range fetched from HA and the highlighted column. */
+  const now = useNow();
+  const [dayKey, setDayKey] = useState(() => ymd(new Date()));
+  useEffect(() => {
+    const k = ymd(new Date());
+    setDayKey((cur) => (cur === k ? cur : k));
+  }, [now]);
   const today = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
-  }, []);
+  }, [dayKey]);
   const weekStart = useMemo(() => {
     const d = new Date(today);
     const dow = (d.getDay() + 6) % 7; // Mon=0
@@ -182,29 +242,37 @@ export function WeeklyCalendarCard({ index = 0 }) {
     });
   }
 
-  /* Transform HA events → grid-positioned events the renderer expects. */
+  /* Transform HA events → grid-positioned events the renderer expects.
+     A multi-day event yields one entry per day, all sharing an `evId` so the
+     header count still reads as events rather than day-slices. */
   const events = useMemo(() => {
     if (!liveMode) return mock.events;
     const out = [];
     for (const ev of liveEventsRaw) {
-      const pos = haEventToGridPos(ev, weekStart);
-      if (!pos) continue;
-      out.push({
-        id: ev.uid || `${ev.cal_entity_id}-${ev.summary}-${ev.start?.dateTime || ev.start?.date}`,
-        cal: ev.cal_entity_id,
-        day: pos.day,
-        start: pos.start,
-        end: pos.end,
-        allDay: pos.allDay,
-        title: ev.summary || "(untitled)",
-        where: ev.location || "",
-      });
+      const evId = ev.uid || `${ev.cal_entity_id}-${ev.summary}-${ev.start?.dateTime || ev.start?.date}`;
+      for (const pos of haEventToGridPositions(ev, weekStart)) {
+        out.push({
+          id: `${evId}-d${pos.day}`,
+          evId,
+          cal: ev.cal_entity_id,
+          day: pos.day,
+          start: pos.start,
+          end: pos.end,
+          allDay: pos.allDay,
+          title: ev.summary || "(untitled)",
+          where: ev.location || "",
+        });
+      }
     }
     return out;
   }, [liveMode, liveEventsRaw, weekStart, mock.events]);
 
-  const now = useNow();
-  const nowOffset = (now - startHour) * 2 * slotPx;
+  const eventCount = useMemo(
+    () => (liveMode ? new Set(events.map((e) => e.evId)).size : events.length),
+    [liveMode, events],
+  );
+
+  const nowOffset = (now - startHour) * slotsPerHour * slotPx;
   const showNow = now >= startHour && now <= endHour;
 
   function hourLabel(h) {
@@ -228,7 +296,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
   const metaText = liveMode
     ? loading && events.length === 0
       ? "loading…"
-      : `${events.length} events`
+      : `${eventCount} events`
     : `${mock.events.length} events · mock`;
 
   return (
@@ -258,7 +326,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
           onCreated={refresh}
         />
       )}
-      <div className="weekcal">
+      <div className="weekcal" ref={gridRef}>
         <div className="weekcal-head">
           <div className="corner" />
           {DOWS.map((d, i) => {
@@ -325,7 +393,11 @@ export function WeeklyCalendarCard({ index = 0 }) {
               key={day}
               className={`weekcal-col ${day === todayDow ? "today" : ""} ${liveMode ? "clickable" : ""}`}
               style={{
-                height: ((endHour - startHour) * slotsPerHour + 1) * slotPx,
+                /* Exactly as tall as the hour gutter beside it — one row per
+                   label in `hours`, the last of which runs to endHour + 1.
+                   That is also where in-grid events are clipped, so nothing
+                   is cut off and no ruled grid hangs past the last label. */
+                height: (endHour + 1 - startHour) * slotsPerHour * slotPx,
               }}
               onClick={(ev) => onColClick(ev, day)}
             >

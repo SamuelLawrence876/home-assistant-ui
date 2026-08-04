@@ -35,13 +35,17 @@
   color: var(--accent);
 }
 .brand-mark svg { width: 22px; height: 22px; }
-.brand-text { line-height: 1.1; }
+.brand-text { line-height: 1.1; min-width: 0; }
 .brand-text .nm {
   font-family: var(--font-display);
   font-style: normal;
   font-size: 24px;
   letter-spacing: -0.01em;
   color: var(--ink);
+  /* At 320px the wordmark otherwise runs under the connection chip. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .brand-text .sub {
   font-family: var(--font-mono);
@@ -92,7 +96,11 @@
   z-index: 1;
   transition: color 0.35s ease;
 }
-.tabs button.on { color: var(--bg-on, #fff); }
+/* Sits on the --ink indicator pill, so it takes --on-ink like every other
+   on-ink label (.btn.primary, .diff-seg button.on, the phone bottom nav).
+   --on-ink flips with the mode, never with the clock: sky-derived text slid
+   to dark-red-on-black around dusk (1.95:1 at 20:30). */
+.tabs button.on { color: var(--on-ink, #fff); }
 .tabs .indicator {
   position: absolute;
   top: 4px; bottom: 4px;

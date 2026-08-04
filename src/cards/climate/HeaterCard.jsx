@@ -7,6 +7,8 @@ import { EntityGuard } from "../../components/EntityGuard.jsx";
 /* ----------------------------------------------------------------
    Heater — Govee
    ----------------------------------------------------------------*/
+const numOr = (v, d) => (v != null && v !== "unavailable" && v !== "unknown" && !Number.isNaN(+v) ? +v : d);
+
 export function HeaterCard({ index = 0 }) {
   const { entity: liveTarget, status: heaterStatus } = useEntityStatus("input_number.govee_heater_temperature");
   const roomTempEntity = useEntity("sensor.h5075_4fb6_temperature");
@@ -18,10 +20,12 @@ export function HeaterCard({ index = 0 }) {
   const roomTemp = roomTempValid ? Number(roomTempRaw) : null;
   const humidity = humRaw && humRaw !== "unavailable" && humRaw !== "unknown" ? Number(humRaw) : null;
 
-  const [target, setTarget] = useState(Number(liveTarget?.state ?? 20));
+  const [target, setTarget] = useState(numOr(liveTarget?.state, 20));
   const [on, setOn] = useState(false);
   useEffect(() => {
-    if (liveTarget) setTarget(Number(liveTarget.state));
+    // Keep the last good setpoint if the input_number goes unavailable —
+    // otherwise the dial and every readout below turn into NaN.
+    if (liveTarget) setTarget((t) => numOr(liveTarget.state, t));
   }, [liveTarget?.state]);
 
   function commitTemp(v) {
@@ -47,11 +51,11 @@ export function HeaterCard({ index = 0 }) {
         <div className="heater-controls-col">
           <div className="eyebrow" style={{ fontSize: 9 }}>Setpoint</div>
           <div className="heater-stepper">
-            <button className="heater-step" onClick={() => commitTemp(Math.max(12, target - 1))}>−</button>
+            <button className="heater-step" aria-label="Lower heater target by one degree" onClick={() => commitTemp(Math.max(12, target - 1))}>−</button>
             <div className="heater-target-val">
               {target}<span className="u">°</span>
             </div>
-            <button className="heater-step" onClick={() => commitTemp(Math.min(30, target + 1))}>+</button>
+            <button className="heater-step" aria-label="Raise heater target by one degree" onClick={() => commitTemp(Math.min(30, target + 1))}>+</button>
           </div>
           <div className="meta" style={{ marginTop: 8 }}>
             {roomTemp != null ? `Room is ${roomTemp}° · ${humidity ?? "—"}% humidity` : "Room sensor offline"}

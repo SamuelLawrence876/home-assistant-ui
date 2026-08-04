@@ -158,13 +158,18 @@
 .btn:active { transform: scale(0.97); }
 .btn.primary {
   background: var(--ink);
-  color: var(--sky-top, #fff);
+  color: var(--on-ink, #fff);
   border-color: var(--ink);
 }
+/* --accent is tuned for hairlines and icons, not as a text background: white on
+   it fails AA in both modes (night frosted #6ec3eb = 1.96:1, day 4.14:1).
+   Pulling the fill 25% toward --ink darkens it by day and lightens it at night;
+   --on-ink moves the opposite way with the same mode flip, so the pair tracks.
+   Measured worst case across 11 clocks x 3 modes x 3 leans: 6.23:1. */
 .btn.accent {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent), var(--ink) 25%);
+  color: var(--on-ink, #fff);
+  border-color: color-mix(in oklch, var(--accent), var(--ink) 25%);
 }
 .btn.icon {
   width: 36px; height: 36px;
@@ -173,16 +178,28 @@
 }
 
 /* iOS-style toggle */
+/* The off-state track is a 15% ink wash — 1.36:1 against the card, so the only
+   thing marking the control's boundary was the knob's drop shadow (WCAG 1.4.11
+   wants 3:1 for a UI component). A hairline outline carries that instead of
+   darkening the fill, which would read as a third state. */
 .toggle {
   width: 42px; height: 24px;
   border-radius: 999px;
   background: color-mix(in oklch, var(--ink), transparent 85%);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--ink), transparent 52%);
   position: relative;
   border: 0;
   cursor: pointer;
   flex-shrink: 0;
   transition: background 0.3s ease;
+  /* button reset — .toggle renders as <button> so it is keyboard operable */
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
 }
+.toggle:disabled { cursor: not-allowed; opacity: 0.4; }
 .toggle::after {
   content: "";
   position: absolute;
