@@ -270,7 +270,7 @@
   transition: background 0.3s ease, color 0.3s ease, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .scene:hover .scene-ic { transform: rotate(-8deg) scale(1.08); }
-.scene.morning .scene-ic { background: color-mix(in oklch, var(--accent-2), transparent 78%); color: var(--accent-2); }
+.scene.focus .scene-ic   { background: color-mix(in oklch, var(--accent), transparent 78%); color: var(--accent); }
 .scene.movie .scene-ic   { background: color-mix(in oklch, var(--bad), transparent 80%); color: var(--bad); }
 .scene.goodnight .scene-ic { background: color-mix(in oklch, var(--ink-2), transparent 85%); color: var(--ink-2); }
 .scene.all_off .scene-ic { background: color-mix(in oklch, var(--ink-3), transparent 85%); color: var(--ink-3); }
@@ -302,6 +302,19 @@
   border-color: color-mix(in oklch, var(--good), transparent 55%);
 }
 .scene.active .scene-sub { color: color-mix(in oklch, var(--good), var(--ink-3) 35%); }
+/* Degraded: the script's targets aren't all reachable, so the tile says how
+   many instead of pretending. It still fires — the live half of a scene is
+   worth having — but it never again animates confidently over a no-op.
+   Placed after .active on purpose: an active tile reports "on", not "offline",
+   so .active must win the .scene-sub colour. */
+.scene.degraded {
+  border-color: color-mix(in oklch, var(--warn), transparent 62%);
+}
+.scene.degraded .scene-sub { color: var(--warn); }
+.scene.degraded .scene-ic {
+  background: color-mix(in oklch, var(--warn), transparent 84%);
+  color: var(--warn);
+}
 .scene-dot {
   position: absolute;
   top: 10px; right: 12px;
