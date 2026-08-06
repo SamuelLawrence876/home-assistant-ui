@@ -217,3 +217,26 @@
   border-radius: 2px;
   transition: width 1.2s ease;
 }
+
+/* SamBox game-stream card (System tab) */
+.sbx-warn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--warn);
+  margin: 2px 0 10px;
+}
+.sbx-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+.sbx-row .k {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}

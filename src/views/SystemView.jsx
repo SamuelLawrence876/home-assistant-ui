@@ -6,6 +6,7 @@ import { BackupCard } from "../cards/system/BackupCard.jsx";
 import { StorageCard } from "../cards/system/StorageCard.jsx";
 import { EntityHealthCard } from "../cards/system/EntityHealthCard.jsx";
 import { SystemActionsCard } from "../cards/system/SystemActionsCard.jsx";
+import { SamBoxStreamCard } from "../cards/system/SamBoxStreamCard.jsx";
 import { ErrorLogCard } from "../cards/system/ErrorLogCard.jsx";
 
 export default function SystemView() {
@@ -23,7 +24,9 @@ export default function SystemView() {
       <div className="col-8"><EntityHealthCard index={6} /></div>
       <div className="col-4"><SystemActionsCard index={7} /></div>
 
-      <div className="col-12"><ErrorLogCard index={8} /></div>
+      <div className="col-6"><SamBoxStreamCard index={8} /></div>
+
+      <div className="col-12"><ErrorLogCard index={9} /></div>
     </div>
   );
 }
