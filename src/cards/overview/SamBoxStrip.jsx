@@ -4,30 +4,40 @@ import { useEntityStatus } from "../../ha/useEntity.js";
 import { Card } from "../../components/Card.jsx";
 
 /* ----------------------------------------------------------------
-   SamBox360 — game console (Pi 5 Moonlight client) on a smart plug.
+   SamBox360 — one switch for the whole gaming rig.
 
-   This card knows exactly one thing: whether mains power at
-   `switch.sambox360_plug` is on. It used to also print a fixed
-   "Living Room TV · 4K·60·HDR · controller" line pulled from the mock,
-   which it claimed whether the console was on, off or unplugged, at any
-   resolution. There is no HA entity behind a display mode, a resolution
-   or a controller, so those claims are gone rather than faked — the
-   strip now names the entity it actually controls and stops there.
-   Wiring real console telemetry is roadmap item [26], parked pending a
-   design conversation; do not invent entities for it here.
+   One tap does both halves of "I want to play": mains power to the PC
+   (`switch.sambox360_plug`) AND the game session (`switch.sambox`, the
+   TV-side kiosk that wakes the TV over HDMI-CEC and streams the PC).
+   They used to be separate buttons on separate tabs, which Samuel
+   called silly (2026-08-08) — powering the box and starting the game
+   are the same intent. Off ends the session and cuts the plug, exactly
+   what the off tap always did plus not leaving a kiosk streaming a
+   dead source. The System tab's Game stream card is still the
+   fine-grained control (session without power-cut, smooth mode).
 
-   When the plug entity is missing or unavailable the strip says so and
-   the switch is disabled. It used to fall back to the mock's "off",
-   so a dead plug and a plug that is genuinely off looked identical.
+   Firing the session while the PC is still booting is fine by design:
+   the kiosk waits for a stream source, and the System card reports
+   "PC is off" until there is one. A session-call failure does not
+   revert the toggle — the toggle's *state* is the plug, and client.js
+   has already put the failure in the error log.
+
+   The toggle's state comes from the plug entity; "Streaming"/"Game on"
+   labels come from the real session telemetry added 2026-08-06. When
+   the plug entity is missing or unavailable the strip says so and the
+   switch is disabled — a dead plug and a plug that is genuinely off
+   must not look identical.
    ----------------------------------------------------------------*/
-const PLUG_ENTITY = "switch.sambox360_plug";
-const SESSION_ENTITY = "sensor.sambox360_status"; // optional: Pi-reported play state (stretch)
+const PLUG_ENTITY = "switch.sambox360_plug"; // mains power to the gaming PC
+const SESSION_SWITCH = "switch.sambox"; // TV-side kiosk: wake TV, stream the PC
+const HEALTH_ENTITY = "sensor.sambox_dropped_frames"; // streaming state lives in its attributes
 const DEVICE_NAME = "SamBox360";
 const BOOT_MS = 2200; // cold-boot transient while the plug restores + the Pi wakes
 
 export function SamBoxStrip({ compact = false }) {
   const { entity: plug, status: plugStatus } = useEntityStatus(PLUG_ENTITY);
-  const { entity: session } = useEntityStatus(SESSION_ENTITY);
+  const { entity: session } = useEntityStatus(SESSION_SWITCH);
+  const { entity: health } = useEntityStatus(HEALTH_ENTITY);
 
   // "known" = HA has told us the plug's real state. Anything else (still
   // connecting, entity missing, entity unavailable) is not an "off".
@@ -71,16 +81,23 @@ export function SamBoxStrip({ compact = false }) {
       setTurning(false);
       setOnLocal(plugOnRef.current); // revert to last-known state on failure
     });
+    // Empty catch: the error log already has it, and the toggle's state is
+    // the plug, so a failed session start must not revert it.
+    callService("switch", "turn_on", { entity_id: SESSION_SWITCH }).catch(() => {});
   }
   function powerOff() {
     clearTimeout(timer.current);
     setTurning(false);
     setOnLocal(false);
+    callService("switch", "turn_off", { entity_id: SESSION_SWITCH }).catch(() => {});
     callService("switch", "turn_off", { entity_id: PLUG_ENTITY }).catch(() => setOnLocal(plugOnRef.current));
   }
 
-  // Richer "Streaming" label once the Pi reports a session sensor; ignored until it exists.
-  const streaming = session?.state === "streaming" || session?.state === "playing";
+  // Real session telemetry (System tab has the numbers). The health sensor's
+  // offline fallback fabricates streaming:false, so "Streaming" additionally
+  // requires the kiosk Pi to have actually answered.
+  const sessionOn = session?.state === "on";
+  const streaming = health?.attributes?.pi === "online" && health?.attributes?.streaming === true;
 
   const displayOn = known && (on || streaming);
   const pending = plugStatus === "loading";
@@ -91,9 +108,11 @@ export function SamBoxStrip({ compact = false }) {
       ? "Turning on…"
       : streaming
         ? "Streaming"
-        : on
-          ? "On"
-          : "Off";
+        : sessionOn
+          ? "Game on"
+          : on
+            ? "On"
+            : "Off";
   const statusColor = !known
     ? "var(--ink-4)"
     : turning
@@ -116,9 +135,10 @@ export function SamBoxStrip({ compact = false }) {
           </div>
           <div className="sambox-meta">
             <div className="sambox-name">{DEVICE_NAME}</div>
-            {/* The entity this switch actually drives. Mains power is the only
-                thing the dashboard can see, so it is the only thing named. */}
-            <div className="sambox-out" title="Mains power only — the console reports no display or controller state to Home Assistant">
+            {/* The visible line names the plug — the entity whose state the
+                toggle shows. The session half rides in the tooltip and the
+                switch's accessible name. */}
+            <div className="sambox-out" title={`One tap drives both ${PLUG_ENTITY} (PC power) and ${SESSION_SWITCH} (game session)`}>
               {PLUG_ENTITY}
             </div>
           </div>
@@ -138,7 +158,7 @@ export function SamBoxStrip({ compact = false }) {
                reported, aria-checked has to say false — which a screen reader
                announces as "off", the exact conflation this card was rewritten
                to remove. Put the real state in the accessible name instead. */
-            aria-label={known ? "SamBox360 power" : `SamBox360 power — ${pending ? "not reported yet" : "unavailable"}`}
+            aria-label={known ? "SamBox360 power and game session" : `SamBox360 power and game session — ${pending ? "not reported yet" : "unavailable"}`}
             data-on={displayOn}
             data-turning={turning}
             disabled={!known}
