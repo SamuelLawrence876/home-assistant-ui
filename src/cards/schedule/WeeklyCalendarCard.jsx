@@ -4,7 +4,7 @@ import { useDashReady } from "../../hooks/useDashReady.js";
 import { useEntitiesByDomain, useConnectionStatus } from "../../ha/useEntity.js";
 import { useCalendarEvents } from "../../ha/useCalendarEvents.js";
 import { Card } from "../../components/Card.jsx";
-import { ymd } from "./dateUtils.js";
+import { ymd, dateNow } from "./dateUtils.js";
 import { NewEventDialog } from "./NewEventDialog.jsx";
 import { WeekGrid } from "./WeekGrid.jsx";
 import { CAL_PALETTE, toGridEvents } from "./weekcalLayout.js";
@@ -95,16 +95,17 @@ export function WeeklyCalendarCard({ index = 0 }) {
      calendar date does — which then re-derives `today`, the week range
      fetched from HA and the highlighted column. */
   const now = useNow();
-  const [dayKey, setDayKey] = useState(() => ymd(new Date()));
+  const [dayKey, setDayKey] = useState(() => ymd(dateNow()));
   useEffect(() => {
-    const k = ymd(new Date());
+    const k = ymd(dateNow());
     setDayKey((cur) => (cur === k ? cur : k));
   }, [now]);
-  /* Deliberately keyed on `dayKey` and nothing else: `new Date()` is not a
+  /* Deliberately keyed on `dayKey` and nothing else: dateNow() is not a
      dependency the linter can see, and re-reading the clock on any other
-     render is exactly the bug this shape exists to prevent. */
+     render is exactly the bug this shape exists to prevent. (dateNow, not
+     new Date(): the screenshot gates pin ?today= through it.) */
   const today = useMemo(() => {
-    const d = new Date();
+    const d = dateNow();
     d.setHours(0, 0, 0, 0);
     return d;
   }, [dayKey]);

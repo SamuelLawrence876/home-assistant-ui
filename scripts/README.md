@@ -51,7 +51,11 @@ text, re-bless; if it is a card in the wrong place, it is a real bug.
 ## What each script does
 
 - **`harness.mjs`** — the tab list, the two viewports, the static server, and
-  the URL that pins theme and clock. Shared so a new tab is added once.
+  the URL that pins theme, clock AND calendar date (`?today=2026-06-17`,
+  honored by `src/cards/schedule/dateUtils.js#dateNow`). Shared so a new tab
+  is added once. The date pin exists because the schedule tab renders the real
+  current week: before it, the baseline rotted a little every calendar day and
+  failed the pixel gate on unrelated deploys (first bitten 2026-08-08).
 - **`console-check.mjs`** — loads every tab, fails on `console.error` or an
   uncaught exception. Warnings print but do not fail: a mock build always warns
   that `VITE_HA_URL` is unset, and a gate that is red by design is a gate people

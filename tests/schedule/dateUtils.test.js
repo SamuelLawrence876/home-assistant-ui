@@ -5,7 +5,7 @@
    event at the wrong instant. Deliberately timezone-agnostic: the assertions
    are about shape and round-tripping, so they hold wherever the suite runs. */
 import { describe, it, expect } from "vitest";
-import { toLocalISOWithOffset, ymd } from "../../src/cards/schedule/dateUtils.js";
+import { toLocalISOWithOffset, ymd, parseTodayPin } from "../../src/cards/schedule/dateUtils.js";
 
 const WITH_OFFSET = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00[+-]\d{2}:\d{2}$/;
 
@@ -37,6 +37,32 @@ describe("toLocalISOWithOffset", () => {
     // there is no guard in the helper itself.
     // Expected: null, and the caller renders an error rather than submitting.
     expect(toLocalISOWithOffset(new Date("nonsense"))).toBe(null);
+  });
+});
+
+/* The screenshot gates pin ?today= through this. A wrong parse doesn't just
+   move a highlight — it either un-pins the baseline (silent date drift, the
+   exact rot this exists to stop) or feeds the week grid an Invalid Date. */
+describe("parseTodayPin", () => {
+  it("accepts a well-formed date and lands mid-day on that local day", () => {
+    const d = parseTodayPin("?tab=schedule&today=2026-06-17");
+    expect(ymd(d)).toBe("2026-06-17");
+    expect(d.getHours()).toBe(12);
+  });
+
+  it("returns null when the param is absent", () => {
+    expect(parseTodayPin("")).toBe(null);
+    expect(parseTodayPin("?tab=schedule&mode=day")).toBe(null);
+  });
+
+  it("rejects anything unparseable rather than patching it", () => {
+    for (const bad of ["?today=", "?today=nonsense", "?today=17-06-2026", "?today=2026-6-7", "?today=2026-06-17T12:00"]) {
+      expect(parseTodayPin(bad)).toBe(null);
+    }
+  });
+
+  it("rejects a shape-valid but impossible date — NaN must never reach the grid", () => {
+    expect(parseTodayPin("?today=2026-13-45")).toBe(null);
   });
 });
 

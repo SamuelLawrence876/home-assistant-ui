@@ -5,6 +5,8 @@
      ?mode=auto|day|night
      ?tab=overview|lights|media|schedule|climate|workshop|system
      ?clock=HH:MM (forces theme.js's clock override)
+     ?today=YYYY-MM-DD (pins the schedule tab's calendar date — screenshot
+       gates only, honored in cards/schedule/dateUtils.js#dateNow)
    Every one of these is coerced on the way in (theme.js's coerce* helpers):
    an unrecognised value falls back to the default and is never persisted.
    Tweaks (lean / mode / clock override) are also editable live via the

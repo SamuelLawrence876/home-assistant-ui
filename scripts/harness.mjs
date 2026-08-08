@@ -64,10 +64,13 @@ export async function serveDist(dist) {
   return { port: server.address().port, close: () => server.close() };
 }
 
-/* mode=day + clock=12:00 pin the theme and the sun position, so the shots do
-   not depend on what time CI happened to run. */
+/* mode=day + clock=12:00 pin the theme and the sun position, and
+   today=2026-06-17 pins the calendar date (a Wednesday, matching the authored
+   midsummer sky), so the shots depend on neither what time nor what DAY CI
+   happened to run. Without the date pin the schedule tab's week grid drifted
+   against the baseline a little every real day. */
 export function tabURL(port, tab, viewport) {
-  const q = new URLSearchParams({ tab, mode: "day", clock: "12:00" });
+  const q = new URLSearchParams({ tab, mode: "day", clock: "12:00", today: "2026-06-17" });
   if (viewport) q.set("viewport", viewport);
   return `http://127.0.0.1:${port}/?${q}`;
 }
