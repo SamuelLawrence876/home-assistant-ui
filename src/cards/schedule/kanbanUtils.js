@@ -115,8 +115,10 @@ export const isDeadList = (status) => status === "unavailable" || status === "no
 /* The board's honest states, after weekState() in WeeklyCalendarCard.jsx.
 
    `reads` is { [columnId]: "unread" | "ok" | "error" | "partial" } — whether
-   the last attempt to read that column worked. "partial" is Done only: some
-   list's completed items have never been read, so the cards on screen are a
+   the last attempt to read that column worked. "partial" is a failed read of
+   a column that has never been read whole: for Done, some list's completed
+   items; for a list's column, the list itself, so any cards on it are only
+   what this board added or moved there. Either way the cards on screen are a
    subset and their number is not the column's count. `counts` is how many
    cards each column has on screen. `lists` is { [listId]: useEntityStatus
    status } for the columns that are a Home Assistant list. "We could not read

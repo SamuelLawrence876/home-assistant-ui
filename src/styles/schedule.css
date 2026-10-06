@@ -466,7 +466,11 @@ body.mode-night {
   line-height: 1.5;
   color: var(--ink-3);
 }
-.kanban-col-note.error { color: oklch(0.65 0.2 25); }
+/* Two reds, because one can't pass on both skies. The 0.65 red is 4.87:1 on a
+   night column but 3.39:1 on a day one, under AA's 4.5:1 for 10px text — and
+   the Retry pill takes this colour too. 0.52 is ~5.8:1 on a day column. */
+.kanban-col-note.error { color: oklch(0.52 0.2 25); }
+body.mode-night .kanban-col-note.error { color: oklch(0.65 0.2 25); }
 /* Re-reads the board after a failed read; sits inline after the note it
    answers and takes its colour. min-height keeps a 24px target (WCAG 2.5.8)
    inside a 10px line. */

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useId } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useId } from "react";
 import { useConnectionStatus, useEntityStatus } from "../../ha/useEntity.js";
 import { callService, getTodoItems } from "../../ha/client.js";
 import { describeHaError } from "../../ha/errors.js";
@@ -73,29 +73,37 @@ async function addConfirmed(listId, card) {
 function useKanbanItems(entityIds, deadKey) {
   const connStatus = useConnectionStatus();
   const [columns, setColumns] = useState(() => Object.fromEntries(ALL_COL_IDS.map((id) => [id, []])));
-  /* Per column: "unread" | "ok" | "error", and Done can be "partial". Done is
-     "ok" only if every list's completed items came back. See boardState() for
-     what each one says. */
+  /* Per column: "unread" | "ok" | "error" | "partial". Done is "ok" only if
+     every list's completed items came back. See boardState() for what each
+     one says. */
   const [reads, setReads] = useState(() => Object.fromEntries(ALL_COL_IDS.map((id) => [id, "unread"])));
   const [fetchTick, setFetchTick] = useState(0);
-  /* A read is in flight — what Retry shows while it waits, and why a second
-     press doesn't start a second read. */
+  /* A read is in flight — what Retry shows while it waits. The ref is why a
+     second press doesn't start a second read: the state only turns true after
+     the re-render the first press causes, so a double-click or Enter twice
+     both saw false and each started a full read. */
   const [reading, setReading] = useState(false);
+  const readingRef = useRef(false);
+  const setInFlight = (v) => { readingRef.current = v; setReading(v); };
   const attemptRef = useRef(0);
   const retryRef = useRef(null);
   /* Lists whose completed items have been read at least once. A failed list
      keeps its old cards in Done, but one never read has none there — and then
      Done's count is a subset passed off as the whole column. */
   const doneRead = useRef(new Set());
+  /* The same for a list's own column: one never read holds only what this
+     board put there (an add, a move), so its count is "partial" too — "1"
+     for a list of 6 otherwise. */
+  const listRead = useRef(new Set());
 
   useEffect(() => {
     if (connStatus !== "ready") {
       attemptRef.current = 0; // the reconnect gets a fresh retry budget
-      setReading(false);
+      setInFlight(false);
       return;
     }
     let cancelled = false;
-    setReading(true);
+    setInFlight(true);
     (async () => {
       const results = await Promise.all(entityIds.map(async (id) => {
         const [active, completed] = await Promise.allSettled([
@@ -122,9 +130,12 @@ function useKanbanItems(entityIds, deadKey) {
       const hole = results.some((x) => x.completed.status !== "fulfilled" && !doneRead.current.has(x.id));
       for (const { id, completed } of results) if (completed.status === "fulfilled") doneRead.current.add(id);
       const r = { [DONE]: results.every((x) => x.completed.status === "fulfilled") ? "ok" : hole ? "partial" : "error" };
-      for (const { id, active } of results) r[id] = active.status === "fulfilled" ? "ok" : "error";
+      for (const { id, active } of results) {
+        if (active.status === "fulfilled") listRead.current.add(id);
+        r[id] = active.status === "fulfilled" ? "ok" : listRead.current.has(id) ? "error" : "partial";
+      }
       setReads(r);
-      setReading(false);
+      setInFlight(false);
       /* A dead list can't be read and asking again won't change that; its
          column recovers when the list comes back (deadKey, below). */
       const dead = deadKey.split(",");
@@ -146,7 +157,8 @@ function useKanbanItems(entityIds, deadKey) {
   const refresh = () => setFetchTick((t) => t + 1);
   /* The person asked: the automatic retries are earned back too. */
   const retry = () => {
-    if (reading) return;
+    if (readingRef.current) return;
+    readingRef.current = true;
     attemptRef.current = 0;
     refresh();
   };
@@ -185,21 +197,37 @@ export function KanbanBoardCard({ index = 0 }) {
   const colRefs = useRef({});
   const idBase = useId();
 
-  const focusColumn = (colId) => colRefs.current[colId]?.focus();
-  /* A Retry that works removes itself; if it was pressed from the keyboard,
-     hand focus to its column rather than to <body>. Enter/Space clicks have
-     detail 0 (as in KanbanTask); a tap is left alone. */
-  const retryFocus = useRef(null);
+  const focusColumn = (colId, opts) => colRefs.current[colId]?.focus(opts);
+  /* Retry goes away by itself — its read works (pressed or on the timer), the
+     socket drops, the list goes unavailable. If it had keyboard focus, hand
+     focus to its column rather than to <body>. Its ref callback runs before
+     the button leaves the DOM, while it still has focus; the handover itself
+     waits for the commit. No scroll: the timer can fire after the page has
+     moved on. A tap is left alone — Enter/Space clicks have detail 0 (as in
+     KanbanTask), and a pointer click clears what focusing it recorded. */
+  const retryKeyed = useRef(null);
+  const retryLost = useRef(null);
+  const retryEls = useRef({});
+  const retryRefs = useRef({});
+  const retryButtonRef = (colId) => {
+    retryRefs.current[colId] ||= (el) => {
+      const was = retryEls.current[colId];
+      retryEls.current[colId] = el;
+      if (!el && was && was === document.activeElement && retryKeyed.current === colId) retryLost.current = colId;
+    };
+    return retryRefs.current[colId];
+  };
   const onRetry = (colId) => (ev) => {
-    if (ev.detail === 0 && document.activeElement === ev.currentTarget) retryFocus.current = colId;
+    retryKeyed.current = ev.detail === 0 ? colId : null;
     retry();
   };
-  useEffect(() => {
-    const colId = retryFocus.current;
-    if (!colId || reading) return;
-    retryFocus.current = null;
-    if (!document.activeElement || document.activeElement === document.body) focusColumn(colId);
-  }, [reading]);
+  useLayoutEffect(() => {
+    const colId = retryLost.current;
+    retryLost.current = null;
+    if (colId && !retryEls.current[colId] && (!document.activeElement || document.activeElement === document.body)) {
+      focusColumn(colId, { preventScroll: true });
+    }
+  });
   const removePayload = ({ card, colId }) => ({ entity_id: card._entity || colId, item: itemRef(card) });
 
   function optimisticMove(key, fromCol, toCol) {
@@ -402,8 +430,10 @@ export function KanbanBoardCard({ index = 0 }) {
                       disabled drops keyboard focus on the floor. */}
                   {view.retry && (
                     <button
+                      ref={retryButtonRef(id)}
                       type="button"
                       className="kanban-retry"
+                      onFocus={() => { retryKeyed.current = id; }}
                       onClick={onRetry(id)}
                       aria-disabled={reading || undefined}
                       aria-label={reading ? `Retrying ${label}` : `Retry ${label}`}

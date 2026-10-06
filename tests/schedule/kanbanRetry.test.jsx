@@ -9,6 +9,7 @@
    left alone: asking again can't help, and it recovers when it comes back. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, within } from "@testing-library/react";
+import { flushSync } from "react-dom";
 
 const conn = { status: "ready", listeners: new Set() };
 const ha = {
@@ -260,5 +261,141 @@ describe("M8: a failed column has a Retry button", () => {
     await flush();
     expect(count("Next")).toBe("1");
     expect(retryIn("Next")).toBeNull();
+  });
+});
+
+/* Round 3b review findings B15, B16 and B18. */
+describe("B15: Retry pressed twice starts one read", () => {
+  it("a double-click or Enter twice, landing before React re-renders, sends one read, not two", async () => {
+    ha.failAlways.add("todo.next");
+    await mount();
+    ha.failAlways.clear();
+    const retry = retryIn("Next");
+    /* Two browser events: each press commits on its own (React flushes a
+       discrete event's render), but the "reading" re-render the first one
+       asks for hasn't happened when the second lands. The old state-only guard
+       saw reading=false twice and started two full reads. */
+    act(() => {
+      flushSync(() => { retry.click(); });
+      flushSync(() => { retry.click(); });
+    });
+    await flush();
+    expect(ha.reads).toBe(2 * ONE_READ);
+    expect(count("Next")).toBe("1");
+    expect(retryIn("Next")).toBeNull();
+  });
+
+  it("the guard lets the next press through once the read has settled", async () => {
+    ha.failAlways.add("todo.next");
+    await mount();
+    fireEvent.click(retryIn("Next"));
+    await flush();
+    expect(ha.reads).toBe(2 * ONE_READ);
+    fireEvent.click(retryIn("Next"));            // still failing: Retry is back, and works again
+    await flush();
+    expect(ha.reads).toBe(3 * ONE_READ);
+  });
+});
+
+describe("B16: keyboard focus isn't dropped when Retry goes away by itself", () => {
+  it("a keyboard Retry that fails, then an automatic retry that works: focus goes to the column", async () => {
+    ha.failAlways.add("todo.next");
+    await mount();
+    const retry = retryIn("Next");
+    act(() => retry.focus());
+    fireEvent.click(retry, { detail: 0 });       // Enter / Space
+    await flush();
+    expect(ha.reads).toBe(2 * ONE_READ);
+    expect(document.activeElement).toBe(retryIn("Next"));   // failed again: focus stays put
+    ha.failAlways.clear();
+    await advance(8000);
+    expect(retryIn("Next")).toBeNull();
+    expect(document.activeElement).toBe(col("Next"));
+  });
+
+  it("a focused Retry that was never pressed: the timer's success hands focus to the column", async () => {
+    ha.failOnce.add("todo.next");
+    await mount();
+    act(() => retryIn("Next").focus());          // Tabbed to, not pressed
+    await advance(8000);
+    expect(retryIn("Next")).toBeNull();
+    expect(document.activeElement).toBe(col("Next"));
+  });
+
+  it("the socket dropping under a focused Retry hands focus to the column, and it stays there", async () => {
+    ha.failAlways.add("todo.next");
+    await mount();
+    act(() => retryIn("Next").focus());
+    act(() => setConn("disconnected"));
+    expect(retryIn("Next")).toBeNull();
+    expect(document.activeElement).toBe(col("Next"));
+    act(() => setConn("ready"));
+    await flush();
+    expect(retryIn("Next")).toBeInTheDocument();  // still failing, so it's offered again
+    expect(document.activeElement).toBe(col("Next"));
+  });
+
+  it("doesn't take focus from wherever it went in the meantime", async () => {
+    ha.failOnce.add("todo.next");
+    await mount();
+    act(() => retryIn("Next").focus());
+    const add = screen.getByRole("button", { name: "Add a task to Backlog" });
+    act(() => add.focus());
+    await advance(8000);
+    expect(retryIn("Next")).toBeNull();
+    expect(document.activeElement).toBe(add);
+  });
+
+  it("a tapped Retry is still left alone when the timer removes it", async () => {
+    ha.failAlways.add("todo.next");
+    await mount();
+    const retry = retryIn("Next");
+    act(() => retry.focus());                    // Chromium focuses a tapped button
+    fireEvent.click(retry, { detail: 1 });
+    await flush();
+    ha.failAlways.clear();
+    await advance(8000);
+    expect(retryIn("Next")).toBeNull();
+    expect(document.activeElement).not.toBe(col("Next"));
+  });
+});
+
+describe("B18: a column that was never read doesn't pass its added cards off as the list", () => {
+  async function addTo(label, text) {
+    fireEvent.click(screen.getByRole("button", { name: `Add a task to ${label}` }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Task summary" }), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await flush();
+  }
+
+  it("shows '—', not 1, after adding to a column whose read has never worked", async () => {
+    ha.lists["todo.backlog"] = [item("a", "Card A"), item("b", "Card B")];   // the list really holds 2
+    ha.failAlways.add("todo.backlog");
+    await mount();
+    expect(count("Backlog")).toBe("—");
+    await addTo("Backlog", "Fix the gate");
+    expect(within(col("Backlog")).getByText("Fix the gate")).toBeInTheDocument();
+    expect(count("Backlog")).toBe("—");
+    expect(within(col("Backlog")).getByText("Couldn't read all of this column")).toBeInTheDocument();
+    expect(retryIn("Backlog")).toBeInTheDocument();
+    expect(screen.queryByText(/Kanban · \d+ items/)).toBeNull();
+    await advance(1000);                          // the add's own re-read fails as well
+    expect(count("Backlog")).toBe("—");
+    ha.failAlways.clear();
+    fireEvent.click(retryIn("Backlog"));
+    await flush();
+    expect(count("Backlog")).toBe("2");           // what the list holds, once it has been read
+  });
+
+  it("a column that was read before still shows its count, with the stale caveat", async () => {
+    await mount();
+    expect(count("Backlog")).toBe("1");
+    ha.failAlways.add("todo.backlog");
+    act(() => setConn("disconnected"));
+    act(() => setConn("ready"));
+    await flush();
+    await addTo("Backlog", "Fix the gate");
+    expect(count("Backlog")).toBe("2");
+    expect(within(col("Backlog")).getByText(/Couldn't refresh · may be out of date/)).toBeInTheDocument();
   });
 });
