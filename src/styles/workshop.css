@@ -615,6 +615,16 @@
 }
 .ws-vac-actbtns .btn { padding: 8px 14px; font-size: 12px; }
 .ws-vac-actbtns .btn.ghost { background: transparent; }
+/* While the vacuum can't take a command (unavailable, unknown or missing) its
+   buttons are disabled — and used to look exactly like live ones. Scoped, not a
+   global .btn:disabled: the app has never had one, and a global rule would
+   restyle every button. */
+.ws-vac-actbtns .btn:disabled,
+.ws-control-row .seg button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
 
 /* Mop intensity / mode segmented controls */
 .ws-vac-controls { display: flex; flex-direction: column; gap: 8px; }

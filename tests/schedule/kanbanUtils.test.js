@@ -209,6 +209,24 @@ describe("boardState", () => {
     expect(s.total).toBe(7);
     expect(s.meta).toBe("drag cards between columns");
   });
+
+  it("offers Retry on a column whose own read failed, only while connected, never for a dead list", () => {
+    const reads = { ...all("ok"), "todo.next": "error", __done__: "partial" };
+    const s = boardState({ connStatus: "ready", reads, counts: none });
+    expect(s.columns["todo.next"].retry).toBe(true);
+    expect(s.columns.__done__.retry).toBe(true);
+    expect(s.columns["todo.backlog"].retry).toBeFalsy();
+    // A stale column (cards from before, refresh failed) can be retried too.
+    expect(boardState({ connStatus: "ready", reads, counts: { ...none, "todo.next": 2 } }).columns["todo.next"])
+      .toMatchObject({ tone: "stale", retry: true });
+    // Offline, reading again can't run; the connection is the explanation.
+    expect(boardState({ connStatus: "disconnected", reads, counts: none }).columns["todo.next"].retry).toBe(false);
+    // A dead list recovers when HA has it back, not by asking.
+    const dead = boardState({ connStatus: "ready", reads, counts: none, lists: { "todo.next": "unavailable" } });
+    // …and Done, which reads that dead list's completed items, can't be retried into working either.
+    expect(dead.columns.__done__.retry).toBe(false);
+    expect(dead.columns["todo.next"].retry).toBeFalsy();
+  });
 });
 
 describe("buildDescription", () => {

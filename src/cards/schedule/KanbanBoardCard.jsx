@@ -31,6 +31,14 @@ const ALL_COL_IDS = KANBAN_COLS.map((c) => c.id);
    this runs out, so Undo needs no compensating call. */
 const UNDO_MS = 5000;
 
+/* After a read that failed for a list Home Assistant says is there, read again
+   — twice, then stop and leave it to the column's Retry button. The same
+   delays as useCalendarEvents: one transient failure shouldn't strand a column
+   on "Couldn't read" until something unrelated re-reads it, and a list that
+   keeps failing mustn't become a loop at the Pi. A reconnect, Retry, or a read
+   that comes back clean starts the budget over. */
+const RETRY_DELAYS_MS = [8000, 20000];
+
 let tempSeq = 0;
 
 /* One useEntityStatus per list. The lists are fixed, so the hooks run in the
@@ -70,14 +78,24 @@ function useKanbanItems(entityIds, deadKey) {
      what each one says. */
   const [reads, setReads] = useState(() => Object.fromEntries(ALL_COL_IDS.map((id) => [id, "unread"])));
   const [fetchTick, setFetchTick] = useState(0);
+  /* A read is in flight — what Retry shows while it waits, and why a second
+     press doesn't start a second read. */
+  const [reading, setReading] = useState(false);
+  const attemptRef = useRef(0);
+  const retryRef = useRef(null);
   /* Lists whose completed items have been read at least once. A failed list
      keeps its old cards in Done, but one never read has none there — and then
      Done's count is a subset passed off as the whole column. */
   const doneRead = useRef(new Set());
 
   useEffect(() => {
-    if (connStatus !== "ready") return;
+    if (connStatus !== "ready") {
+      attemptRef.current = 0; // the reconnect gets a fresh retry budget
+      setReading(false);
+      return;
+    }
     let cancelled = false;
+    setReading(true);
     (async () => {
       const results = await Promise.all(entityIds.map(async (id) => {
         const [active, completed] = await Promise.allSettled([
@@ -106,21 +124,40 @@ function useKanbanItems(entityIds, deadKey) {
       const r = { [DONE]: results.every((x) => x.completed.status === "fulfilled") ? "ok" : hole ? "partial" : "error" };
       for (const { id, active } of results) r[id] = active.status === "fulfilled" ? "ok" : "error";
       setReads(r);
+      setReading(false);
+      /* A dead list can't be read and asking again won't change that; its
+         column recovers when the list comes back (deadKey, below). */
+      const dead = deadKey.split(",");
+      const failed = results.some((x) => !dead.includes(x.id)
+        && (x.active.status !== "fulfilled" || x.completed.status !== "fulfilled"));
+      if (!failed) { attemptRef.current = 0; return; }
+      const delay = RETRY_DELAYS_MS[attemptRef.current];
+      if (delay == null) return;
+      attemptRef.current += 1;
+      retryRef.current = setTimeout(() => setFetchTick((t) => t + 1), delay);
     })();
-    return () => { cancelled = true; };
+    /* Whatever re-runs this — a write's refresh, a reconnect, unmount — makes
+       a pending retry moot: the new run decides again. */
+    return () => { cancelled = true; clearTimeout(retryRef.current); };
     /* deadKey (which lists are unavailable, as a string) is a reason to read
        again: a list coming back is the only way its column recovers by itself. */
   }, [connStatus, fetchTick, deadKey]);
 
   const refresh = () => setFetchTick((t) => t + 1);
+  /* The person asked: the automatic retries are earned back too. */
+  const retry = () => {
+    if (reading) return;
+    attemptRef.current = 0;
+    refresh();
+  };
 
-  return { connStatus, columns, setColumns, reads, refresh };
+  return { connStatus, columns, setColumns, reads, reading, refresh, retry };
 }
 
 export function KanbanBoardCard({ index = 0 }) {
   const lists = useListStatuses();
   const deadKey = KANBAN_ENTITY_IDS.filter((id) => isDeadList(lists[id])).join(",");
-  const { connStatus, columns, setColumns, reads, refresh } = useKanbanItems(KANBAN_ENTITY_IDS, deadKey);
+  const { connStatus, columns, setColumns, reads, reading, refresh, retry } = useKanbanItems(KANBAN_ENTITY_IDS, deadKey);
   const canWrite = connStatus === "ready";
   /* A write is offered only into a list HA will act on. "loading" (no state
      snapshot yet) isn't proof the list exists, so it doesn't count either. */
@@ -149,6 +186,20 @@ export function KanbanBoardCard({ index = 0 }) {
   const idBase = useId();
 
   const focusColumn = (colId) => colRefs.current[colId]?.focus();
+  /* A Retry that works removes itself; if it was pressed from the keyboard,
+     hand focus to its column rather than to <body>. Enter/Space clicks have
+     detail 0 (as in KanbanTask); a tap is left alone. */
+  const retryFocus = useRef(null);
+  const onRetry = (colId) => (ev) => {
+    if (ev.detail === 0 && document.activeElement === ev.currentTarget) retryFocus.current = colId;
+    retry();
+  };
+  useEffect(() => {
+    const colId = retryFocus.current;
+    if (!colId || reading) return;
+    retryFocus.current = null;
+    if (!document.activeElement || document.activeElement === document.body) focusColumn(colId);
+  }, [reading]);
   const removePayload = ({ card, colId }) => ({ entity_id: card._entity || colId, item: itemRef(card) });
 
   function optimisticMove(key, fromCol, toCol) {
@@ -344,7 +395,24 @@ export function KanbanBoardCard({ index = 0 }) {
                 <span className="label" id={headId}>{label}</span>
                 <span className="count">{view.count}</span>
               </div>
-              {view.note && <p className={`kanban-col-note ${view.tone}`}>{view.note}</p>}
+              {view.note && (
+                <p className={`kanban-col-note ${view.tone}`}>
+                  {view.note}
+                  {/* aria-disabled, not disabled: a focused button that turns
+                      disabled drops keyboard focus on the floor. */}
+                  {view.retry && (
+                    <button
+                      type="button"
+                      className="kanban-retry"
+                      onClick={onRetry(id)}
+                      aria-disabled={reading || undefined}
+                      aria-label={reading ? `Retrying ${label}` : `Retry ${label}`}
+                    >
+                      {reading ? "Retrying…" : "Retry"}
+                    </button>
+                  )}
+                </p>
+              )}
               {items.map((c) => {
                 const key = cardKey(c);
                 return (

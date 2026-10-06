@@ -126,9 +126,11 @@ export const isDeadList = (status) => status === "unavailable" || status === "no
    or the socket drops — that doesn't make them untrue — and the caveat is said
    instead.
 
-   Returns { meta, total, columns: { [id]: { count, note, tone } } }. `total`
-   is null unless every column read cleanly; a sum with a hole in it is a
-   plausible-looking wrong number. */
+   Returns { meta, total, columns: { [id]: { count, note, tone, retry } } }.
+   `total` is null unless every column read cleanly; a sum with a hole in it is
+   a plausible-looking wrong number. `retry` is true when reading the column
+   again could help: its own read failed and the socket is up. Not for a dead
+   list — that recovers when Home Assistant has the list back, not by asking. */
 export function boardState({ connStatus, reads, counts, lists = {} }) {
   const connecting = connStatus === "connecting" || connStatus === "authenticating";
   const offline = connStatus !== "ready";
@@ -156,12 +158,18 @@ export function boardState({ connStatus, reads, counts, lists = {} }) {
       columns[id] = anyDeadList && !(id in lists)
         ? { count: n, note: "A list is unavailable · may be out of date", tone: "stale" }
         : { count: n, note: null, tone: null };
-    } else if (reads[id] === "partial") {
-      columns[id] = { count: "—", note: n > 0 ? "Couldn't read all of this column" : "Couldn't read this column", tone: "error" };
-    } else if (reads[id] === "error") {
-      columns[id] = n > 0
-        ? { count: n, note: "Couldn't refresh · may be out of date", tone: "stale" }
-        : { count: "—", note: "Couldn't read this column", tone: "error" };
+    } else if (reads[id] === "partial" || reads[id] === "error") {
+      /* Done reads every list's completed items, so while a list is dead its
+         read fails the same way every time: a Retry there could never work.
+         It recovers by itself when the list comes back. */
+      const retry = !offline && (id in lists || !anyDeadList);
+      if (reads[id] === "partial") {
+        columns[id] = { count: "—", note: n > 0 ? "Couldn't read all of this column" : "Couldn't read this column", tone: "error", retry };
+      } else {
+        columns[id] = n > 0
+          ? { count: n, note: "Couldn't refresh · may be out of date", tone: "stale", retry }
+          : { count: "—", note: "Couldn't read this column", tone: "error", retry };
+      }
     } else {
       const note = connecting ? "Connecting…" : offline ? "Not connected" : "Loading…";
       columns[id] = { count: "—", note, tone: "wait" };
