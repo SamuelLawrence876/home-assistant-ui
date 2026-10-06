@@ -110,3 +110,17 @@ body.viewport-phone .bottom-nav button.on:focus-visible {
 .health-group-header:focus-visible {
   outline-offset: -3px;
 }
+
+/* ------------------------------------------------------------
+   Kanban card actions.
+   Move and delete sit at opacity 0 until the card is hovered
+   (schedule.css), and opacity hides an element's own outline
+   too — so tabbing onto them put focus somewhere invisible, and
+   Enter deleted a task nobody could see was selected. Reveal
+   them while keyboard focus is anywhere in the card, the "Move
+   to" row included. :has(:focus-visible) rather than
+   :focus-within so a mouse click doesn't pin them open.
+   ------------------------------------------------------------ */
+.kanban-card:has(:focus-visible) .kanban-card-actions {
+  opacity: 1;
+}

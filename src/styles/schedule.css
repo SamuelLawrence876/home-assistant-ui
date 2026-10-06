@@ -305,9 +305,35 @@ body.mode-night {
   transform: translateY(-1px);
   box-shadow: 0 4px 14px rgba(0,0,0,0.06);
 }
-.kanban-card-x {
+/* Not draggable while offline, while a delete is pending, or before an add
+   has its real uid — so don't offer the grab hand either. */
+.kanban-card[draggable="false"],
+.kanban-card[draggable="false"]:active { cursor: default; }
+
+/* Move + delete, top-right. Hidden until the card is hovered — a11y.css also
+   reveals them while keyboard focus is inside the card, because opacity hides
+   a focus ring along with everything else. */
+.kanban-card-actions {
   position: absolute;
   top: 4px; right: 4px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.kanban-card:hover .kanban-card-actions,
+.kanban-card.move-open .kanban-card-actions { opacity: 1; }
+/* No hover on a touch screen, so they would never show — while the corner
+   still took taps nobody could see. Always visible there, and the summary
+   keeps clear of them. */
+@media (hover: none) {
+  .kanban-card-actions { opacity: 1; }
+  .kanban-card .summary { padding-right: 44px; }
+}
+.kanban-card-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 20px; height: 20px;
   padding: 0; line-height: 1;
   background: transparent;
@@ -317,14 +343,96 @@ body.mode-night {
   font-family: inherit;
   cursor: pointer;
   border-radius: 999px;
-  opacity: 0;
-  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease;
 }
-.kanban-card:hover .kanban-card-x { opacity: 1; }
-.kanban-card-x:hover {
+.kanban-card-act:not(:disabled):hover {
   color: var(--ink);
   background: var(--rule);
 }
+.kanban-card-act:disabled { cursor: not-allowed; opacity: 0.4; }
+
+/* "Move to" row — in flow, so it can't be clipped by the phone layout's
+   horizontal scroller. */
+.kanban-move {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+.kanban-move-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-right: 2px;
+}
+.kanban-move-opt {
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.kanban-move-opt:not(:disabled):hover { color: var(--ink); border-color: var(--ink-3); }
+.kanban-move-opt:disabled { cursor: not-allowed; opacity: 0.4; }
+
+/* A deleted card inside its undo window. The body stays in layout, hidden,
+   so the slot keeps its exact height and nothing slides up under the
+   pointer. Undo sits at the left, well away from where × was. */
+.kanban-card.pending-delete {
+  background: transparent;
+  border-style: dashed;
+}
+.kanban-card.pending-delete:hover { transform: none; box-shadow: none; }
+.kanban-card.pending-delete .kanban-card-body { visibility: hidden; }
+.kanban-card-undo {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.kanban-undo-btn {
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--ink);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.kanban-undo-btn:hover { border-color: var(--ink-3); }
+
+/* Why a column shows no cards when that isn't the same as "empty":
+   connecting, not connected, or the read failed. */
+.kanban-col-note {
+  margin: 0 0 8px;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+.kanban-col-note.error { color: oklch(0.65 0.2 25); }
 .kanban-card .summary {
   font-size: 13px;
   letter-spacing: -0.005em;
@@ -431,7 +539,9 @@ body.mode-night {
   margin-top: 4px;
   transition: border-color 0.2s, color 0.2s;
 }
-.kanban-add:hover { color: var(--ink); border-color: var(--ink-3); }
+.kanban-add:not(:disabled):hover { color: var(--ink); border-color: var(--ink-3); }
+/* Offered only while a write can actually reach Home Assistant. */
+.kanban-add:disabled { cursor: not-allowed; opacity: 0.5; }
 
 /* Overdue card highlight */
 .kanban-card.overdue { border-color: oklch(0.60 0.18 25 / 0.45); }
@@ -483,7 +593,14 @@ body.mode-night {
   cursor: pointer;
   transition: opacity 0.2s;
 }
-.kanban-add-btn:hover { opacity: 0.85; }
+.kanban-add-btn:not(:disabled):hover { opacity: 0.85; }
+.kanban-add-btn:disabled { opacity: 0.6; cursor: progress; }
+.kanban-add-error {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: oklch(0.65 0.2 25);
+}
 .kanban-add-btn.cancel {
   background: transparent;
   color: var(--ink-3);
@@ -508,15 +625,36 @@ body.mode-night {
   align-items: center;
   transition: border-color 0.2s;
 }
-.kanban-tag-toggle:hover { border-color: var(--accent); }
+.kanban-tag-toggle:hover,
+.kanban-tag-toggle:focus-within { border-color: var(--accent); }
+/* The menu toggle fills whatever the chips leave, so most of the box still
+   opens the menu the way the whole box used to. */
+.kanban-tag-open {
+  flex: 1 1 24px;
+  align-self: stretch;
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
 .kanban-tag-toggle .placeholder {
   font-size: 11px;
   color: var(--ink-4);
   font-family: var(--font-mono);
   letter-spacing: 0.06em;
 }
-.kanban-tag-toggle .tag { cursor: default; display: inline-flex; align-items: center; gap: 3px; }
+/* Explicit size: these chips used to sit inside the toggle <button> and took
+   its UA font; in the wrapper they would inherit the 14px body text. */
+.kanban-tag-toggle .tag { cursor: default; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; }
 .kanban-tag-toggle .tag-rm {
+  padding: 0 1px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-family: inherit;
   cursor: pointer;
   opacity: 0.7;
   font-size: 13px;
