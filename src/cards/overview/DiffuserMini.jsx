@@ -4,7 +4,7 @@ import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { GH_DATA } from "../../data.js";
-import { DIFFUSER, SPRAY_OPTIONS, DEFAULT_RGB, rgbCss, nearestColorName, knownState } from "../../lib/diffuser.js";
+import { DIFFUSER, DEFAULT_RGB, rgbCss, nearestColorName, knownState, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
 
 const fb = GH_DATA.diffuser;
 
@@ -19,6 +19,12 @@ const fb = GH_DATA.diffuser;
    "On · Spraying · unavailable", because `mode !== "off"` was the whole test.
    knownState() gates both halves: unknown says so, and its controls are
    disabled rather than sending commands into the void.
+
+   A live state that isn't one of the select's modes is a third case, not
+   "off": it used to read a confident "Off · Standby" for a spray mode the
+   card didn't recognise. sprayPhase() keeps the three apart, and the
+   segments are the select's own options, so a mode meross_lan adds is a
+   button rather than a mystery.
    ----------------------------------------------------------------*/
 export function DiffuserMini({ index = 0 }) {
   const { entity: liveSpray, status: sprayStatus } = useEntityStatus(DIFFUSER.spray);
@@ -36,12 +42,19 @@ export function DiffuserMini({ index = 0 }) {
   useEffect(() => { if (liveLed) setLightOn(liveLed.state === "on"); }, [liveLed?.state]);
   useEffect(() => { if (liveLed?.attributes.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes.rgb_color?.join()]);
 
-  const misting = sprayKnown && mode !== "off" && SPRAY_OPTIONS.includes(mode);
+  const options = sprayOptions(spray);
+  const phase = sprayKnown ? sprayPhase(mode, options) : null;
+  const misting = phase === "spraying";
   const ledOn = ledKnown && lightOn;
   const led = ledOn ? rgbCss(rgb) : "var(--ink-4)";
   const statusColor = misting ? "var(--good)" : "var(--ink-4)";
+  // An unrecognised mode is shown as HA reported it — neither Off nor On.
+  const mistText = !sprayKnown ? "Mist unavailable"
+    : misting ? `Spraying · ${mode}`
+    : phase === "unrecognised" ? `Mist: ${mode}`
+    : "Standby";
   const sub = !sprayKnown && !ledKnown ? "Unavailable"
-    : `${!sprayKnown ? "Mist unavailable" : misting ? `Spraying · ${mode}` : "Standby"}`
+    : mistText
       + `${!ledKnown ? " · LED unavailable" : lightOn ? ` · ${nearestColorName(rgb).toLowerCase()}` : " · LED off"}`;
 
   // Revert from HA's truth at failure time rather than the value captured at
@@ -75,7 +88,7 @@ export function DiffuserMini({ index = 0 }) {
       style={{ "--led": led }}
       headRight={
         <span className="gs-status" style={{ "--gs-color": statusColor }}>
-          <span className="d" />{!sprayKnown ? "Unavailable" : misting ? "On" : "Off"}
+          <span className="d" />{!sprayKnown ? "Unavailable" : misting ? "On" : phase === "off" ? "Off" : "—"}
         </span>
       }
     >
@@ -90,7 +103,7 @@ export function DiffuserMini({ index = 0 }) {
 
         <div className="dmini-mist">
           <div className="diff-seg" role="group" aria-label="Mist mode">
-            {SPRAY_OPTIONS.map((m) => (
+            {options.map((m) => (
               <button key={m} className={sprayKnown && mode === m ? "on" : ""} aria-pressed={sprayKnown && mode === m}
                 disabled={!sprayKnown} onClick={() => changeMode(m)}>{m}</button>
             ))}

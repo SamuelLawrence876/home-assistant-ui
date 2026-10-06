@@ -3,7 +3,7 @@ import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
-import { useRangeCommit } from "./spotifyShared.jsx";
+import { useRangeCommit } from "../../hooks/useRangeCommit.js";
 
 /* ----------------------------------------------------------------
    Media — Spotify now playing (compact, Overview tab)

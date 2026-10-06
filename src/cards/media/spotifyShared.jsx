@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useSyncExternalStore } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import { isSpotifyConnected, clearSpotifyToken, onSpotifyTokenCleared, callbackReady, playUri } from "../../ha/spotify.js";
 
 /* ----------------------------------------------------------------
@@ -112,60 +112,6 @@ export function useSpotifyPlay() {
     setTimeout(() => setPlaying(null), 2000);
   }
   return { playing, error, play };
-}
-
-/* ----------------------------------------------------------------
-   Volume slider commit — NowPlayingHero and MediaCard both use it, so
-   the two can't drift apart again.
-
-   Commits on the native `change` event. React's onChange is the `input`
-   event, so it can't be used for this; and the pointerup/keyup wiring this
-   replaced misses assistive tech entirely — a VoiceOver swipe or TalkBack
-   adjust fires input + change and no pointer or key event, so the % moved
-   and Home Assistant never heard. `change` fires once on pointer release,
-   once per keyboard step, and once per AT adjustment. Tabbing past the
-   slider fires nothing.
-
-   Trailing debounce: a held arrow key fires `change` on every auto-repeat,
-   and each one would be a volume_set and a Spotify API call. Only the value
-   the slider settles on is sent. A pending value is flushed on unmount,
-   not dropped.
-
-   The attach effect has no dependency array on purpose: the slider sits
-   inside EntityGuard, which shows a skeleton instead while loading and can
-   remount it when the status changes, so it re-attaches after every render
-   to whichever element is there now.
-   ----------------------------------------------------------------*/
-const RANGE_COMMIT_MS = 300;
-
-export function useRangeCommit(commit) {
-  const el = useRef(null);
-  const commitRef = useRef(commit);
-  commitRef.current = commit;
-  const pending = useRef(null); // { timer, value }
-
-  useEffect(() => {
-    const node = el.current;
-    if (!node) return undefined;
-    const onChange = () => {
-      clearTimeout(pending.current?.timer);
-      const value = Number(node.value);
-      const timer = setTimeout(() => { pending.current = null; commitRef.current(value); }, RANGE_COMMIT_MS);
-      pending.current = { timer, value };
-    };
-    node.addEventListener("change", onChange);
-    return () => node.removeEventListener("change", onChange);
-  });
-
-  useEffect(() => () => {
-    const p = pending.current;
-    if (!p) return;
-    clearTimeout(p.timer);
-    pending.current = null;
-    commitRef.current(p.value);
-  }, []);
-
-  return el;
 }
 
 export function SpotifyTrackRow({ item, playing, onPlay, subtitle, label }) {

@@ -11,15 +11,19 @@ const sameRgb = (a, b) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
    so without it every card on the tab offers ten identical "button"s.
 
    `disabled` is for a light the card can't reach (unavailable, missing):
-   a swatch that still takes a tap there shows a colour nothing was sent for. */
+   a swatch that still takes a tap there shows a colour nothing was sent for.
+
+   `rgb` is null when the light's colour isn't known (not reported, or the
+   light can't be reached): then nothing is pressed, rather than whichever
+   swatch happens to match a default. */
 export function PresetSwatches({ presets, rgb, onPick, targetName, disabled = false }) {
   return presets.map((p) => {
     // A preset carrying a kelvin is applied as kelvinToRgb(p.kelvin) — p.rgb is
     // only the swatch's own tint — so match either form: kelvinToRgb is what the
     // card shows optimistically, p.rgb is what the entity reports back. Testing
     // p.rgb alone left all four temperature swatches permanently unpressed.
-    const selected =
-      sameRgb(rgb, p.rgb) || (p.kelvin ? sameRgb(rgb, kelvinToRgb(p.kelvin)) : false);
+    const selected = !!rgb &&
+      (sameRgb(rgb, p.rgb) || (p.kelvin ? sameRgb(rgb, kelvinToRgb(p.kelvin)) : false));
     return (
       <button
         key={p.id}

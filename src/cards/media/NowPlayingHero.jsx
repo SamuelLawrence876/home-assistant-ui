@@ -3,7 +3,7 @@ import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
-import { useRangeCommit } from "./spotifyShared.jsx";
+import { useRangeCommit } from "../../hooks/useRangeCommit.js";
 
 /* HA strips attributes from an unavailable player, so a missing volume_level
    is unknown, not 0% — null renders as an em-dash. */

@@ -5,20 +5,13 @@ import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
+import { useRangeCommit } from "../../hooks/useRangeCommit.js";
 import { rgbStr, kelvinToRgb } from "../../cards/lights/colorUtils.js";
 import { PresetSwatches } from "./presets.jsx";
 
 /* ----------------------------------------------------------------
    Light card — toggle + brightness + color
    ----------------------------------------------------------------*/
-// The only keys that move a range input's value. Commit on keyup so a held
-// arrow key sends one command, but filter on the key — keyup fires for every
-// key, and focus moves on keydown, so an unfiltered handler treats the Tab
-// that lands on the slider as an edit and fires a real light.turn_on.
-const VALUE_KEYS = new Set([
-  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
-]);
-
 const LIGHT_PRESETS = [
   { id: "warm", label: "Warm 2200K", rgb: [255, 170, 110], kelvin: 2200 },
   { id: "amber", label: "Amber 2700K", rgb: [255, 198, 130], kelvin: 2700 },
@@ -32,33 +25,47 @@ const LIGHT_PRESETS = [
   { id: "pink", label: "Pink", rgb: [255, 130, 200] },
 ];
 
+// Paint for a lit orb whose colour HA hasn't reported (a white-only bulb).
+// Decoration only — never handed to the swatches as the light's colour.
+const UNREPORTED_PAINT = [255, 198, 130];
+
 export function LightCard({ index = 0, entityId }) {
   const { entity: live, status } = useEntityStatus(entityId);
-  // Mock fallback so a missing or unavailable entity still renders as a
-  // normal-looking card (the EntityGuard badge flags the problem); an
-  // unavailable entity has its attributes stripped, so prefer the mock there too.
-  const e = status === "ready" ? live : GH_DATA.lights[entityId] || live;
-  const placeholder = e?.attributes?.placeholder;
-  const inert = placeholder || status !== "ready";
+  const known = status === "ready";
+  const pending = status === "loading";
+  /* The mock is for layout only — the name, whether there is a colour-
+     temperature slider and its range — so a light the card can't reach keeps
+     its shape (an unavailable entity has its attributes stripped). It is
+     never the light's state: an unavailable bathroom bulb used to read the
+     mock's "On · 78%", with a lit orb and a pressed swatch, while HA had it
+     off. On/off, brightness and colour come from HA or not at all. */
+  const layout = (known ? live : GH_DATA.lights[entityId] || live)?.attributes || {};
+  const placeholder = layout.placeholder;
+  const inert = placeholder || !known;
   // Every control on the card is named after this, so two light cards on the
   // same tab never announce as an identical pair of unlabelled sliders.
-  const name = e?.attributes?.friendly_name || entityId.split(".")[1];
-  const initialRgb = e?.attributes?.rgb_color || [255, 198, 130];
-  const supportsColorTemp = e?.attributes?.supported_color_modes?.includes("color_temp");
-  const minKelvin = e?.attributes?.min_color_temp_kelvin || 2000;
-  const maxKelvin = e?.attributes?.max_color_temp_kelvin || 6500;
-  const [on, setOn] = useState(e?.state === "on");
-  const [bright, setB] = useState(e?.attributes?.brightness || 180);
-  const [rgb, setRgb] = useState(initialRgb);
-  const [kelvin, setKelvin] = useState(e?.attributes?.color_temp_kelvin || 4000);
+  const name = layout.friendly_name || entityId.split(".")[1];
+  const supportsColorTemp = layout.supported_color_modes?.includes("color_temp");
+  const minKelvin = layout.min_color_temp_kelvin || 2000;
+  const maxKelvin = layout.max_color_temp_kelvin || 6500;
+  // null = HA hasn't reported it (an off bulb carries no brightness or
+  // colour) — an em-dash on screen, never a default.
+  const a = known ? live.attributes || {} : {};
+  const [on, setOn] = useState(known && live.state === "on");
+  const [bright, setB] = useState(a.brightness ?? null);
+  const [rgb, setRgb] = useState(a.rgb_color || null);
+  const [kelvin, setKelvin] = useState(a.color_temp_kelvin ?? null);
 
+  // Resync from HA only. `known` is in the list so a light coming back from
+  // unavailable re-reads its state even when nothing else changed meanwhile.
   useEffect(() => {
-    if (!e) return;
-    setOn(e.state === "on");
-    if (e.attributes?.brightness != null) setB(e.attributes.brightness);
-    if (e.attributes?.rgb_color) setRgb(e.attributes.rgb_color);
-    if (e.attributes?.color_temp_kelvin != null) setKelvin(e.attributes.color_temp_kelvin);
-  }, [e?.state, e?.attributes?.brightness, e?.attributes?.rgb_color?.join(","), e?.attributes?.color_temp_kelvin]);
+    if (!known) return;
+    const at = live.attributes || {};
+    setOn(live.state === "on");
+    if (at.brightness != null) setB(at.brightness);
+    if (at.rgb_color) setRgb(at.rgb_color);
+    if (at.color_temp_kelvin != null) setKelvin(at.color_temp_kelvin);
+  }, [known, live?.state, live?.attributes?.brightness, live?.attributes?.rgb_color?.join(","), live?.attributes?.color_temp_kelvin]);
 
   /* A failed call puts back what HA says *now*, not what the card showed at
      click time: the light can move under an in-flight call, and the resync
@@ -67,15 +74,15 @@ export function LightCard({ index = 0, entityId }) {
      screen for good (useOptimisticToggle's entityRef exists for the same
      reason). `prev` names the fields to restore and is the fallback for one
      HA doesn't report — an off light carries no brightness or colour. */
-  const eRef = useRef(e);
-  eRef.current = e;
+  const eRef = useRef(live);
+  eRef.current = live;
   function restore(prev) {
     const cur = eRef.current;
-    const a = cur?.attributes || {};
+    const at = cur?.attributes || {};
     if ("on" in prev) setOn(cur ? cur.state === "on" : prev.on);
-    if ("bright" in prev) setB(a.brightness ?? prev.bright);
-    if ("rgb" in prev) setRgb(a.rgb_color ?? prev.rgb);
-    if ("kelvin" in prev) setKelvin(a.color_temp_kelvin ?? prev.kelvin);
+    if ("bright" in prev) setB(at.brightness ?? prev.bright);
+    if ("rgb" in prev) setRgb(at.rgb_color ?? prev.rgb);
+    if ("kelvin" in prev) setKelvin(at.color_temp_kelvin ?? prev.kelvin);
   }
 
   function toggle() {
@@ -99,8 +106,9 @@ export function LightCard({ index = 0, entityId }) {
     }
   }
 
-  // The slider's onChange has already moved `bright` / `kelvin` by the time
-  // these run, so the fallback is the dragged value — HA's is the real target.
+  // Sent by useRangeCommit once the slider settles. Its onChange has already
+  // moved `bright` / `kelvin` by then, so the fallback is the dragged value —
+  // HA's is the real target. The guards are judged at send time, not drag time.
   function commitBrightness(v) {
     setB(v);
     if (inert || !on) return;
@@ -114,9 +122,22 @@ export function LightCard({ index = 0, entityId }) {
     callService("light", "turn_on", { entity_id: entityId, color_temp_kelvin: v })
       .catch(() => restore({ kelvin: v, rgb: kelvinToRgb(v) }));
   }
+  const brightRef = useRangeCommit(commitBrightness);
+  const kelvinRef = useRangeCommit(commitKelvin);
 
-  const glow = on
-    ? `0 0 24px ${rgbStr([rgb[0], rgb[1], rgb[2]])}33, 0 0 80px ${rgbStr([rgb[0], rgb[1], rgb[2]])}1f`
+  // What the light is doing, as far as anyone knows. Local state survives a
+  // dropout, but nothing on screen may claim it while HA can't vouch for it.
+  const lit = known && on;
+  const shownBright = known ? bright : null;
+  const shownKelvin = known ? kelvin : null;
+  const pct = shownBright != null ? Math.round((shownBright / 255) * 100) : null;
+  const paint = rgb || (kelvin != null ? kelvinToRgb(kelvin) : UNREPORTED_PAINT);
+  const meta = placeholder ? "Not yet added"
+    : !known ? (pending ? "—" : "Unavailable")
+    : on ? (pct != null ? `On · ${pct}%` : "On") : "Off";
+
+  const glow = lit
+    ? `0 0 24px ${rgbStr(paint)}33, 0 0 80px ${rgbStr(paint)}1f`
     : "none";
 
   return (
@@ -124,7 +145,7 @@ export function LightCard({ index = 0, entityId }) {
       index={index}
       eyebrow={`Light · ${entityId}`}
       title={name}
-      meta={placeholder ? "Not yet added" : on ? `On · ${Math.round((bright / 255) * 100)}%` : "Off"}
+      meta={meta}
       headRight={
         placeholder ? (
           <span
@@ -143,7 +164,13 @@ export function LightCard({ index = 0, entityId }) {
             future
           </span>
         ) : (
-          <ToggleSwitch on={on} onToggle={toggle} label={name} disabled={inert} />
+          <ToggleSwitch
+            on={lit}
+            onToggle={toggle}
+            disabled={inert}
+            // role="switch" has no "unknown", so the real state goes in the name.
+            label={known ? name : `${name} — ${pending ? "not reported yet" : "unavailable"}`}
+          />
         )
       }
     >
@@ -163,11 +190,11 @@ export function LightCard({ index = 0, entityId }) {
             width: 72,
             height: 72,
             borderRadius: "50%",
-            background: on
-              ? `radial-gradient(circle at 32% 32%, white 0%, ${rgbStr(rgb)} 55%, ${rgbStr([
-                  Math.max(0, rgb[0] - 60),
-                  Math.max(0, rgb[1] - 60),
-                  Math.max(0, rgb[2] - 60),
+            background: lit
+              ? `radial-gradient(circle at 32% 32%, white 0%, ${rgbStr(paint)} 55%, ${rgbStr([
+                  Math.max(0, paint[0] - 60),
+                  Math.max(0, paint[1] - 60),
+                  Math.max(0, paint[2] - 60),
                 ])} 100%)`
               : "color-mix(in oklch, var(--ink), transparent 88%)",
             boxShadow: glow,
@@ -179,22 +206,23 @@ export function LightCard({ index = 0, entityId }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
             <span className="eyebrow" style={{ fontSize: 9 }}>Brightness</span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
-              {Math.round((bright / 255) * 100)}%
+              {pct != null ? `${pct}%` : "—"}
             </span>
           </div>
           <input
+            ref={brightRef}
             type="range"
             min="0"
             max="255"
             step="1"
-            value={bright}
+            value={shownBright ?? 0}
             disabled={inert || !on}
             onChange={(ev) => setB(Number(ev.target.value))}
-            onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
-            onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitBrightness(Number(ev.target.value)); }}
             aria-label={`${name} brightness`}
+            // The value is HA's 0–255; announce the % the readout shows.
+            aria-valuetext={pct != null ? `${pct}%` : "unknown"}
             className="gh-slider"
-            style={{ width: "100%", accentColor: on ? rgbStr(rgb) : "var(--ink-4)" }}
+            style={{ width: "100%", accentColor: lit ? rgbStr(paint) : "var(--ink-4)" }}
           />
         </div>
       </div>
@@ -204,24 +232,24 @@ export function LightCard({ index = 0, entityId }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
             <span className="eyebrow" style={{ fontSize: 9 }}>Color temperature</span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
-              {kelvin}K
+              {shownKelvin != null ? `${shownKelvin}K` : "—"}
             </span>
           </div>
           <input
+            ref={kelvinRef}
             type="range"
             min={minKelvin}
             max={maxKelvin}
             step="100"
-            value={kelvin}
+            value={shownKelvin ?? minKelvin}
             disabled={inert || !on}
             onChange={(ev) => { setKelvin(Number(ev.target.value)); setRgb(kelvinToRgb(Number(ev.target.value))); }}
-            onPointerUp={(ev) => commitKelvin(Number(ev.target.value))}
-            onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitKelvin(Number(ev.target.value)); }}
             aria-label={`${name} color temperature`}
+            aria-valuetext={shownKelvin != null ? `${shownKelvin}K` : "unknown"}
             className="gh-slider"
             style={{
               width: "100%",
-              background: on
+              background: lit
                 ? `linear-gradient(to right, rgb(255,147,41), rgb(255,198,130), rgb(255,235,200), rgb(220,235,255))`
                 : "var(--glass-bg-2)",
               borderRadius: 6,
@@ -234,7 +262,7 @@ export function LightCard({ index = 0, entityId }) {
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <PresetSwatches presets={LIGHT_PRESETS} rgb={rgb} onPick={pickColor} targetName={name} disabled={inert} />
+            <PresetSwatches presets={LIGHT_PRESETS} rgb={known ? rgb : null} onPick={pickColor} targetName={name} disabled={inert} />
           </div>
         </div>
       )}

@@ -7,7 +7,11 @@
       it can correct itself if the strip didn't take the value". It couldn't:
       the resync effect only re-ran when a reported value *changed*, so a poll
       that came back with the strip's unchanged value — the exact case the
-      verify exists for — left the optimistic value on screen for good. */
+      verify exists for — left the optimistic value on screen for good.
+
+   Also: both sliders commit on the native change event (useRangeCommit), so
+   an assistive-tech adjustment reaches the strip; and parseGoveeProps drops
+   a finite-but-impossible reading ("On · 150%") instead of showing it. */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 
@@ -37,9 +41,13 @@ const onAt = (brightness, extra = [{ color: { r: 255, g: 198, b: 130 } }]) =>
 const meta = (container) => container.querySelector(".meta")?.textContent;
 const brightnessSlider = () => screen.getByRole("slider", { name: "Desk strip brightness" });
 
+/* Moving a slider, the way every input method ends: the value is set, then
+   input + change fire. A pointer release and a keyboard step fire the same
+   change; VoiceOver / TalkBack fire nothing else. useRangeCommit sends it
+   300ms later, so callers advance fake timers past that. */
 function drag(slider, value) {
+  fireEvent.input(slider, { target: { value: String(value) } });
   fireEvent.change(slider, { target: { value: String(value) } });
-  fireEvent.pointerUp(slider, { target: { value: String(value) } });
 }
 
 beforeEach(() => {
@@ -130,6 +138,81 @@ describe("parseGoveeProps", () => {
     expect(parseGoveeProps({ properties: "nope" })).toEqual({});
     expect(parseGoveeProps(undefined)).toEqual({});
   });
+
+  it("drops finite readings the strip could not be at, rather than show or clamp them", () => {
+    expect(
+      parseGoveeProps({
+        properties: [{ brightness: 150 }, { color: { r: 999, g: -5, b: 1e9 } }, { colorTemInKelvin: 1e9 }],
+      }),
+    ).toEqual({});
+    expect(parseGoveeProps({ properties: [{ brightness: -1 }, { colorTem: 500 }] })).toEqual({});
+  });
+
+  it("keeps the edges of each range", () => {
+    expect(parseGoveeProps({ properties: [{ brightness: 0 }, { color: { r: 0, g: 255, b: 0 } }, { colorTemInKelvin: 2000 }] }))
+      .toEqual({ brightness: 0, color: [0, 255, 0], kelvin: 2000 });
+    expect(parseGoveeProps({ properties: [{ brightness: 100 }, { colorTemInKelvin: 9000 }] }))
+      .toEqual({ brightness: 100, kelvin: 9000 });
+  });
+});
+
+describe("DeskStripCard — out-of-range readings and screen-reader values", () => {
+  it("an impossible payload reads On with em-dashes, not 'On · 150%' and '1000000000K'", () => {
+    fixture.current = strip([
+      { powerState: "on" }, { brightness: 150 }, { color: { r: 999, g: -5, b: 1e9 } }, { colorTemInKelvin: 1e9 },
+    ]);
+    const { container } = render(<DeskStripCard />);
+    expect(meta(container)).toBe("On");
+    expect(container.textContent).not.toMatch(/150|1000000000/);
+    expect(brightnessSlider().getAttribute("aria-valuetext")).toBe("unknown");
+  });
+
+  it("says 'unknown' to a screen reader where the readout says —, and the % where it shows one", () => {
+    fixture.current = onAt(50, [{ color: { r: 255, g: 0, b: 0 } }, { colorTemInKelvin: 0 }]); // RGB mode
+    render(<DeskStripCard />);
+    expect(brightnessSlider().getAttribute("aria-valuetext")).toBe("50%");
+    expect(screen.getByRole("slider", { name: "Desk strip color temperature" }).getAttribute("aria-valuetext")).toBe("unknown");
+  });
+
+  it("stops showing the last readings once the sensor drops out", () => {
+    fixture.current = onAt(50, [{ colorTemInKelvin: 6500 }]);
+    const { container, rerender } = render(<DeskStripCard />);
+    expect(screen.getByText("6500K")).toBeInTheDocument();
+    fixture.current = { entity: { state: "unavailable", attributes: {} }, status: "unavailable" };
+    rerender(<DeskStripCard />);
+    expect(meta(container)).toBe("Unavailable");
+    expect(container.textContent).not.toMatch(/50%|6500K/);
+  });
+});
+
+describe("DeskStripCard — sliders commit from assistive tech", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const settle = (ms) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+
+  it("an AT brightness adjustment (input + change, no pointer or key) reaches the strip", async () => {
+    fixture.current = onAt(80);
+    render(<DeskStripCard />);
+    drag(brightnessSlider(), 20);
+    await settle(400);
+    expect(calls).toEqual(['rest_command.govee_desk_strip_brightness {"value":20}']);
+  });
+
+  it("an AT colour-temperature adjustment reaches the strip", async () => {
+    fixture.current = onAt(80, [{ colorTemInKelvin: 4000 }]);
+    render(<DeskStripCard />);
+    drag(screen.getByRole("slider", { name: "Desk strip color temperature" }), 6000);
+    await settle(400);
+    expect(calls).toEqual(['rest_command.govee_desk_strip_color_temp {"value":6000}']);
+  });
+
+  it("tabbing onto a slider sends nothing", async () => {
+    fixture.current = onAt(80);
+    render(<DeskStripCard />);
+    fireEvent.keyUp(brightnessSlider(), { key: "Tab" });
+    await settle(1000);
+    expect(calls).toEqual([]);
+  });
 });
 
 describe("DeskStripCard verify step", () => {
@@ -141,7 +224,7 @@ describe("DeskStripCard verify step", () => {
     fixture.current = onAt(80);
     render(<DeskStripCard />);
     drag(brightnessSlider(), 40);
-    await settle(100);
+    await settle(400);
     expect(calls).toContain('rest_command.govee_desk_strip_brightness {"value":40}');
     expect(screen.getByText("40%")).toBeInTheDocument(); // optimistic
 

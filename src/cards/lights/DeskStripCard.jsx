@@ -4,6 +4,7 @@ import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
+import { useRangeCommit } from "../../hooks/useRangeCommit.js";
 import { rgbStr, kelvinToRgb } from "../../cards/lights/colorUtils.js";
 import { PresetSwatches } from "./presets.jsx";
 import { parseGoveeProps } from "./goveeUtils.js";
@@ -32,13 +33,6 @@ const RESYNC_FREEZE = 8000;
 // supersede each other; brightness and power are independent.
 const CMD_KIND = { color: "color", color_temp: "color", brightness: "brightness", turn: "turn" };
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-// The only keys that move a range input's value. Commit on keyup so a held
-// arrow key sends one command, but filter on the key — keyup fires for every
-// key, and focus moves on keydown, so an unfiltered handler treats the Tab
-// that lands on the slider as an edit and fires a real command at the strip.
-const VALUE_KEYS = new Set([
-  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
-]);
 
 const GOVEE_PRESETS = [
   { id: "warm", label: "Warm 2200K", rgb: [255, 170, 110], kelvin: 2200 },
@@ -179,11 +173,17 @@ export function DeskStripCard({ index = 0 }) {
     if (!on) return;
     govee("color_temp", { value: v }).catch(() => {});
   }
+  // Both sliders send through useRangeCommit: the native change event, which
+  // pointer release, a keyboard step and an assistive-tech adjust all fire.
+  const brightRef = useRangeCommit(commitBrightness);
+  const kelvinRef = useRangeCommit(commitKelvin);
 
   // What the strip is doing, as far as anyone knows. Local `on` survives a
   // dropout, but nothing on screen may claim it while the sensor is down.
   const lit = known && on;
   const pending = status === "loading";
+  const shownBright = known ? bright : null;
+  const shownKelvin = known ? kelvin : null;
   const meta = !known
     ? pending ? "—" : "Unavailable"
     : on ? (bright != null ? `On · ${bright}%` : "On") : "Off";
@@ -239,20 +239,22 @@ export function DeskStripCard({ index = 0 }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
             <span className="eyebrow" style={{ fontSize: 9 }}>Brightness</span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
-              {bright != null ? `${bright}%` : "—"}
+              {shownBright != null ? `${shownBright}%` : "—"}
             </span>
           </div>
           <input
+            ref={brightRef}
             type="range"
             min="0"
             max="100"
             step="1"
-            value={bright ?? 0}
+            value={shownBright ?? 0}
             disabled={!lit}
             onChange={(ev) => setB(Number(ev.target.value))}
-            onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
-            onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitBrightness(Number(ev.target.value)); }}
             aria-label="Desk strip brightness"
+            // A range input always holds some number; when the strip hasn't
+            // reported one, say so rather than announce the parked thumb.
+            aria-valuetext={shownBright != null ? `${shownBright}%` : "unknown"}
             className="gh-slider"
             style={{ width: "100%", accentColor: lit ? rgbStr(rgb) : "var(--ink-4)" }}
           />
@@ -263,20 +265,20 @@ export function DeskStripCard({ index = 0 }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
           <span className="eyebrow" style={{ fontSize: 9 }}>Color temperature</span>
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
-            {kelvin != null ? `${kelvin}K` : "—"}
+            {shownKelvin != null ? `${shownKelvin}K` : "—"}
           </span>
         </div>
         <input
+          ref={kelvinRef}
           type="range"
           min={2000}
           max={9000}
           step="100"
-          value={kelvin ?? 2000}
+          value={shownKelvin ?? 2000}
           disabled={!lit}
           onChange={(ev) => { setKelvin(Number(ev.target.value)); setRgb(kelvinToRgb(Number(ev.target.value))); }}
-          onPointerUp={(ev) => commitKelvin(Number(ev.target.value))}
-          onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitKelvin(Number(ev.target.value)); }}
           aria-label="Desk strip color temperature"
+          aria-valuetext={shownKelvin != null ? `${shownKelvin}K` : "unknown"}
           className="gh-slider"
           style={{
             width: "100%",

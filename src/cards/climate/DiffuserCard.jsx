@@ -5,16 +5,10 @@ import { Card } from "../../components/Card.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { GH_DATA } from "../../data.js";
 import { numOr } from "../../lib/format.js";
-import { DIFFUSER, SPRAY_OPTIONS, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName, knownState } from "../../lib/diffuser.js";
+import { useRangeCommit } from "../../hooks/useRangeCommit.js";
+import { DIFFUSER, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName, knownState, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
 
 const fb = GH_DATA.diffuser;
-
-// The only keys that move a range input's value — commit on their keyup, the
-// same as LightCard. Unfiltered, the Tab that lands on the slider would count
-// as an edit and send a light.turn_on.
-const VALUE_KEYS = new Set([
-  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
-]);
 
 /* Mist particles rising off the device head — static deterministic set so the
    verify harness can freeze the animation. */
@@ -65,6 +59,8 @@ function Swatches({ rgb, onPick, disabled }) {
    misting — "Misting · unavailable" with animated mist. knownState() is the
    gate: once HA has answered, unavailable/unknown/missing is unknown, the
    controls are disabled, and nothing is sent to a device that can't hear it.
+   A live mode that isn't one of the select's options is a third case
+   (sprayPhase), shown as reported — never as "Mist is off".
    ----------------------------------------------------------------*/
 export function DiffuserCard({ index = 0 }) {
   const { entity: liveSpray, status: sprayStatus } = useEntityStatus(DIFFUSER.spray);
@@ -96,7 +92,10 @@ export function DiffuserCard({ index = 0 }) {
   const ledRef = useRef(liveLed);
   ledRef.current = liveLed;
 
-  const misting = sprayKnown && mode !== "off" && SPRAY_OPTIONS.includes(mode);
+  const options = sprayOptions(spray);
+  const phase = sprayKnown ? sprayPhase(mode, options) : null;
+  const misting = phase === "spraying";
+  const unrecognised = phase === "unrecognised";
   const ledOn = ledKnown && lightOn;
   const led = ledOn ? rgbCss(rgb) : "var(--ink-4)";
   const humidity = numOr(hum?.state, null);
@@ -115,14 +114,18 @@ export function DiffuserCard({ index = 0 }) {
     callService("light", next ? "turn_on" : "turn_off", { entity_id: DIFFUSER.light })
       .catch(() => setLightOn(ledRef.current ? ledRef.current.state === "on" : !next));
   }
-  // Committed on release (pointer-up, or a value key's keyup), never per step
-  // of a drag: each call is a round trip to the device, and the echoed
-  // in-between brightness values used to drag the thumb back under the finger.
+  // Sent by useRangeCommit — on the native change event (pointer release, a
+  // keyboard step, an assistive-tech adjust), debounced — never per step of a
+  // drag: each call is a round trip to the device, and the echoed in-between
+  // brightness values used to drag the thumb back under the finger. Judged at
+  // send time: light.turn_on would switch back on an LED turned off meanwhile.
   function commitBright(v) {
     setBright(v);
+    if (!ledOn) return;
     callService("light", "turn_on", { entity_id: DIFFUSER.light, brightness_pct: v })
       .catch(() => setBright((cur) => brightPct(ledRef.current, cur)));
   }
+  const brightRef = useRangeCommit(commitBright);
   function pickColor(c) {
     const prev = rgb;
     setRgb(c);
@@ -135,7 +138,7 @@ export function DiffuserCard({ index = 0 }) {
       index={index}
       eyebrow="Diffuser · Meross"
       title="Essential oil diffuser"
-      meta={!sprayKnown ? "Unavailable" : misting ? `Misting · ${mode}` : "Standby"}
+      meta={!sprayKnown ? "Unavailable" : misting ? `Misting · ${mode}` : unrecognised ? `Mist: ${mode}` : "Standby"}
       style={{ "--led": led }}
     >
       <div className="diff-a-body">
@@ -143,7 +146,7 @@ export function DiffuserCard({ index = 0 }) {
         <div className="diff-stage">
           <span className={`diff-stage-state ${misting ? "" : "off"}`}>
             <span className="dot" />
-            {!sprayKnown ? "Unavailable" : misting ? "Mist on" : "Mist off"}
+            {!sprayKnown ? "Unavailable" : misting ? "Mist on" : unrecognised ? "Mist unknown" : "Mist off"}
           </span>
           {misting && (
             <div className="diff-mist" aria-hidden>
@@ -160,6 +163,7 @@ export function DiffuserCard({ index = 0 }) {
           <div className="lede">
             {!sprayKnown ? <>Diffuser is <b>unavailable</b>.</>
               : misting ? <>Spraying on <b>{mode}</b>.</>
+              : unrecognised ? <>Mist reports <b>{mode}</b>.</>
               : <>Mist is off.</>}{" "}
             {!ledKnown ? <>LED is <b>unavailable</b>.</>
               : !lightOn ? <>LED is <b>off</b>.</>
@@ -170,7 +174,7 @@ export function DiffuserCard({ index = 0 }) {
           <div className="diff-field">
             <span className="flabel">Mist</span>
             <div className="diff-seg" role="group" aria-label="Mist mode">
-              {SPRAY_OPTIONS.map((m) => (
+              {options.map((m) => (
                 <button key={m} className={sprayKnown && mode === m ? "on" : ""} aria-pressed={sprayKnown && mode === m}
                   disabled={!sprayKnown} onClick={() => changeMode(m)}>{m}</button>
               ))}
@@ -195,13 +199,13 @@ export function DiffuserCard({ index = 0 }) {
             >
               <div className="diff-bright">
                 <input
+                  ref={brightRef}
                   type="range" min="1" max="100" value={bright} className="diff-range"
                   aria-label="Diffuser LED brightness"
+                  aria-valuetext={ledKnown ? `${bright}%` : "unknown"}
                   disabled={!ledOn}
                   style={{ "--bp": `${bright}%`, "--led": led }}
                   onChange={(e) => setBright(+e.target.value)}
-                  onPointerUp={(e) => commitBright(+e.target.value)}
-                  onKeyUp={(e) => { if (VALUE_KEYS.has(e.key)) commitBright(+e.target.value); }}
                 />
                 {/* An unavailable light reports no brightness; don't print the default as if it had. */}
                 <span className="val">{ledKnown ? `${bright}%` : "—"}</span>
