@@ -11,6 +11,14 @@ vi.mock("../../src/ha/useEntity.js", () => ({
   useEntitiesByDomain: () => [],
   useConnectionStatus: () => "disconnected",
 }));
+// The restart notice watches the socket itself. Mock mode: no connection,
+// nothing reported.
+vi.mock("../../src/ha/socket.js", () => ({
+  getConnectionStatus: () => "disconnected",
+  getEntity: () => undefined,
+  onConnectionChange: (cb) => (cb("disconnected"), () => {}),
+  onStatesChanged: () => () => {},
+}));
 vi.mock("../../src/ha/client.js", () => ({
   callService: () => Promise.reject(new Error("Not connected")),
   getTodoItems: () => Promise.reject(new Error("Not connected")),
@@ -36,6 +44,8 @@ describe("System cards in mock mode", () => {
     // This header is a deliberate change to the mock-mode screenshot.
     expect(container.querySelector("h2").textContent).toBe("Can't tell yet");
     expect(container.querySelector(".meta")).toBeNull();
+    // Its live region is in the DOM, empty and visually hidden: no pixels.
+    expect(container.querySelector("p.visually-hidden[role=status]").textContent).toBe("");
     noNaN(container);
   });
 

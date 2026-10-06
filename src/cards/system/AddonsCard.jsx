@@ -3,7 +3,7 @@ import { useConnectionStatus, useEntitiesByDomain } from "../../ha/useEntity.js"
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { useArmedConfirm } from "./useArmedConfirm.js";
-import { useReconnectNotice } from "./useReconnectNotice.js";
+import { installRunning, prepareNotice, useReconnectNotice } from "./useReconnectNotice.js";
 
 /* Updates whose install takes the house down with it: Core restarts Home
    Assistant (dashboard and automations drop for minutes), OS reboots the Pi,
@@ -12,22 +12,38 @@ import { useReconnectNotice } from "./useReconnectNotice.js";
    one-tap way around — and none of them ride along with "Install all", so a
    reboot can't land in the middle of an add-on update.
 
-   Their install call expects the disconnect (client.js#callService): HA
-   drops the WebSocket before it answers, which used to log and toast a
-   failure for an install that had worked. `after` is what the row says once
-   the call has gone out, until the dashboard is back. */
+   Core and OS end with Home Assistant starting again, so their install call
+   expects the disconnect (client.js#callService) — HA drops the WebSocket
+   before it answers, which used to log and toast a failure for an install
+   that had worked — and their notice checks HA's start time afterwards, so a
+   call that never reached HA isn't taken for one that worked. The Supervisor
+   restarts only itself: the dashboard stays connected, so its call is an
+   ordinary one, and its notice waits for HA to report the entity again
+   (useReconnectNotice.js). `notice` is what the row says meanwhile. */
 const SYSTEM_UPDATES = {
   "update.home_assistant_core_update": {
     does: "Restarts Home Assistant",
-    after: "Restarting Home Assistant… the dashboard will reconnect",
+    notice: {
+      kind: "restart", logAs: "update.install",
+      text: "Restarting Home Assistant… the dashboard will reconnect",
+      checkText: "Reconnected — checking Home Assistant restarted…",
+      failText: "Home Assistant didn't restart — try again",
+      unsureText: "Reconnected, but couldn't confirm Home Assistant restarted",
+    },
   },
   "update.home_assistant_operating_system_update": {
     does: "Reboots the Pi",
-    after: "Rebooting the Pi… the dashboard will reconnect",
+    notice: {
+      kind: "restart", logAs: "update.install",
+      text: "Rebooting the Pi… the dashboard will reconnect",
+      checkText: "Reconnected — checking the Pi rebooted…",
+      failText: "The Pi didn't reboot — try again",
+      unsureText: "Reconnected, but couldn't confirm the Pi rebooted",
+    },
   },
   "update.home_assistant_supervisor_update": {
     does: "Restarts the Supervisor",
-    after: "Restarting the Supervisor…",
+    notice: { kind: "report", text: "Update sent — waiting for the Supervisor to report back" },
   },
 };
 
@@ -68,15 +84,13 @@ const NOTE_STYLE = {
   padding: "8px 0",
 };
 
+const OFFLINE = "Not connected to Home Assistant";
+
 function headline(pending, unreadable, total) {
   if (pending) return `${pending} update${pending > 1 ? "s" : ""} available`;
   if (unreadable) return `${unreadable} can't be checked`;
   return total ? "All up to date" : "Can't tell yet";
 }
-
-/* An install HA says is already running — started from another device, or
-   one whose call outlived this page. Older HA sent a percentage here. */
-const inProgress = (attrs) => attrs.in_progress === true || typeof attrs.in_progress === "number";
 
 /* ----------------------------------------------------------------
    Updates — driven by live `update.*` entities (core, add-ons, HACS, firmware, …)
@@ -90,25 +104,32 @@ export function AddonsCard({ index = 0 }) {
   // and never from the states cached before the socket dropped.
   const live = useConnectionStatus() === "ready";
   const allCurrent = live && updates.length > 0 && current === updates.length;
+  // Socket down: everything below is what HA said before it went, so it is
+  // worded as that and nothing in it can be installed — the heading already
+  // says it can't tell, and the body used to say "are at the latest version".
+  const lastKnown = !live && updates.length > 0;
   const bulk = pending.filter((u) => !SYSTEM_UPDATES[u.entity_id]);
   const held = pending.length - bulk.length;
   const [installingId, setInstallingId] = useState(null);
   const [installingAll, setInstallingAll] = useState(false);
   const { armed, request, disarm } = useArmedConfirm();
-  // The system row whose install has gone out, until the dashboard is back.
-  const [restarting, setRestarting] = useReconnectNotice();
+  // A system row's install that has gone out, and what became of it.
+  const notice = useReconnectNotice("updates");
+  const bulkInert = installingAll || installingId != null || !live;
 
   function install(u) {
     setInstallingId(u.entity_id);
     const system = SYSTEM_UPDATES[u.entity_id];
-    const call = system
-      ? callService("update", "install", installData(u), undefined, { expectDisconnect: true })
-      : callService("update", "install", installData(u));
+    const begin = system
+      ? prepareNotice("updates", u.entity_id, { ...system.notice, entityId: u.entity_id, label: nameOf(u) })
+      : null;
+    const call =
+      system?.notice.kind === "restart"
+        ? callService("update", "install", installData(u), undefined, { expectDisconnect: true })
+        : callService("update", "install", installData(u));
     // callService records and toasts a failure itself; nothing to add here.
     return call
-      .then(() => {
-        if (system) setRestarting(u.entity_id);
-      })
+      .then((res) => begin?.(res))
       .catch(() => {})
       .finally(() => setInstallingId(null));
   }
@@ -120,6 +141,7 @@ export function AddonsCard({ index = 0 }) {
     install(u);
   }
   async function installAll() {
+    if (bulkInert) return;
     // One at a time: the card's one-install-in-flight rule (`busy` below), so
     // the row showing "…" is the one actually installing.
     disarm();
@@ -128,6 +150,9 @@ export function AddonsCard({ index = 0 }) {
     setInstallingAll(false);
   }
 
+  /* The buttons below are aria-disabled, never disabled, while they can't be
+     used: the one you just pressed is the focused one, and a focused button
+     that turns disabled drops keyboard focus to the page. */
   return (
     <Card
       index={index}
@@ -139,17 +164,18 @@ export function AddonsCard({ index = 0 }) {
           /* Kept short and on one line: "Install all but system" wrapped to
              a three-line pill at 360px. The tooltip carries the why. */
           <button
-            className="btn primary"
-            disabled={installingAll || installingId != null}
+            className="btn primary updates-btn"
+            aria-disabled={bulkInert || undefined}
             onClick={installAll}
             style={{ whiteSpace: "nowrap" }}
-            title={held ? "Installs everything except Core, OS and Supervisor — they restart or reboot, so each installs from its own row" : undefined}
+            title={!live ? OFFLINE : held ? "Installs everything except Core, OS and Supervisor — they restart or reboot, so each installs from its own row" : undefined}
           >
             {installingAll ? "Installing all…" : held ? "Install the rest" : "Install all"}
           </button>
         )
       }
     >
+      {lastKnown && <div style={NOTE_STYLE}>Not connected — showing what Home Assistant last reported.</div>}
       {pending.length > 0 && (
         <div className="domains" style={{ marginTop: 4 }}>
           {pending.map((u) => {
@@ -158,11 +184,12 @@ export function AddonsCard({ index = 0 }) {
             const next = attrs.latest_version || "—";
             const consequence = consequenceOf(u);
             const confirming = armed === u.entity_id;
-            const gone = restarting === u.entity_id;
-            const running = installingId === u.entity_id || inProgress(attrs) || gone;
+            const said = notice?.key === u.entity_id ? notice : null;
+            const running = installingId === u.entity_id || installRunning(attrs) || Boolean(said?.pending);
             // Every row waits while any of ours is running: one install in
             // flight, so a system row's backup never races another install.
             const busy = running || installingAll || installingId != null;
+            const inert = busy || !live;
             return (
               <div key={u.entity_id} className="domain" style={{ gridTemplateColumns: "1fr auto auto", gap: 14 }}>
                 <div>
@@ -173,15 +200,15 @@ export function AddonsCard({ index = 0 }) {
                     style={{
                       fontFamily: "var(--font-mono)",
                       fontSize: 10,
-                      color: confirming ? "var(--bad)" : "var(--ink-3)",
+                      color: confirming || said?.outcome === "failed" ? "var(--bad)" : "var(--ink-3)",
                       letterSpacing: "0.04em",
                       marginTop: 2,
                     }}
                   >
                     {confirming ? (
                       `${consequence} — confirm to install`
-                    ) : gone ? (
-                      SYSTEM_UPDATES[u.entity_id].after
+                    ) : said ? (
+                      said.message
                     ) : (
                       <>
                         <span style={{ color: "var(--ink-4)" }}>{installed}</span>
@@ -192,10 +219,11 @@ export function AddonsCard({ index = 0 }) {
                   </div>
                 </div>
                 <button
-                  className="btn"
-                  disabled={busy}
-                  onClick={() => pressInstall(u)}
-                  title={consequence}
+                  className="btn updates-btn"
+                  aria-disabled={inert || undefined}
+                  aria-label={running ? `Installing ${nameOf(u)}` : undefined}
+                  onClick={() => !inert && pressInstall(u)}
+                  title={!live ? OFFLINE : consequence}
                 >
                   {running ? "…" : confirming ? "Confirm" : "Install"}
                 </button>
@@ -206,17 +234,24 @@ export function AddonsCard({ index = 0 }) {
       )}
       {/* Named, not folded into "current" or dropped from the list. */}
       {unreadable.length > 0 && (
-        <div style={NOTE_STYLE}>{`Can't be checked: ${unreadable.map(nameOf).join(", ")}`}</div>
+        <div style={NOTE_STYLE}>
+          {`${lastKnown ? "Couldn't" : "Can't"} be checked: ${unreadable.map(nameOf).join(", ")}`}
+        </div>
       )}
       {pending.length === 0 && (unreadable.length === 0 || current > 0) && (
         <div style={NOTE_STYLE}>
           {!updates.length
             ? "Waiting for update entities…"
             : unreadable.length
-              ? `The other ${current} ${current === 1 ? "is" : "are"} at the latest version.`
-              : `All ${updates.length} tracked components are at the latest version.`}
+              ? `The other ${current} ${current === 1 ? (lastKnown ? "was" : "is") : lastKnown ? "were" : "are"} at the latest version.`
+              : `All ${updates.length} tracked components ${lastKnown ? "were" : "are"} at the latest version.`}
         </div>
       )}
+      {/* The row's sentence, announced: always in the DOM, because a live
+          region that appears together with its text is often not read. */}
+      <p className="visually-hidden" role="status">
+        {notice ? `${notice.label}: ${notice.message}` : ""}
+      </p>
     </Card>
   );
 }

@@ -71,15 +71,20 @@ function sentBeforeDrop(e, wasReady) {
 
 /* `options.expectDisconnect`: for the calls whose job is to take Home
    Assistant down — homeassistant.restart, hassio.host_reboot, and the Core /
-   OS / Supervisor update.install. HA drops the WebSocket before it answers,
-   so the call is rejected with "connection lost" when it almost certainly
+   OS update.install (not the Supervisor's, which leaves HA and the
+   dashboard's connection up). HA drops the WebSocket before it answers, so
+   the call is rejected with "connection lost" when it almost certainly
    worked; it used to land in the error log and toast "failed". With the
    option, that one rejection resolves to `{ connectionLost: true }` instead
-   — sent, and Home Assistant went away — and is neither logged nor
-   broadcast (socket.js logs the disconnect itself). Every other failure,
-   including a call that never left because the socket was already down, is
-   logged and thrown exactly as without it. Never a default: on any other
-   call a dropped connection is a real failure. */
+   and is neither logged nor broadcast (socket.js logs the disconnect
+   itself). That means "maybe sent", never "done": the dashboard's own
+   connection dropping mid-send looks exactly the same from here, for a
+   command Home Assistant never received. The caller has to check afterwards
+   that the restart happened — cards/system/useReconnectNotice.js compares
+   HA's start time. Every other failure, including a call that never left
+   because the socket was already down, is logged and thrown exactly as
+   without it. Never a default: on any other call a dropped connection is a
+   real failure. */
 export const callService = async (domain, service, data = {}, target = undefined, options = {}) => {
   const wasReady = Boolean(options?.expectDisconnect) && getConnectionStatus() === "ready";
   try {

@@ -6,23 +6,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, within } from "@testing-library/react";
 
-const fixtures = { updates: [] };
 const callService = vi.fn();
-const conn = vi.hoisted(() => ({ status: "ready", listeners: new Set() }));
 
+// The connection, the update entities and Home Assistant's start time all
+// come from one fake, so the card and the restart notice see the same house.
+vi.mock("../../src/ha/socket.js", async () => (await import("./fakeHa.js")).socketMock);
 vi.mock("../../src/ha/useEntity.js", async () => {
-  const { useState, useEffect } = await import("react");
-  return {
-    useEntitiesByDomain: () => fixtures.updates,
-    useConnectionStatus: () => {
-      const [s, set] = useState(conn.status);
-      useEffect(() => {
-        conn.listeners.add(set);
-        return () => conn.listeners.delete(set);
-      }, []);
-      return s;
-    },
-  };
+  const fake = await import("./fakeHa.js");
+  return { useEntitiesByDomain: fake.useEntitiesByDomain, useConnectionStatus: fake.useConnectionStatus };
 });
 vi.mock("../../src/ha/client.js", () => ({
   callService: (...args) => callService(...args),
@@ -30,6 +21,20 @@ vi.mock("../../src/ha/client.js", () => ({
 
 import { AddonsCard, installData } from "../../src/cards/system/AddonsCard.jsx";
 import { ARM_LOCK_MS } from "../../src/cards/system/useArmedConfirm.js";
+import { RESTART_GRACE_MS, REPORT_CAP_MS, clearNotices } from "../../src/cards/system/useReconnectNotice.js";
+import { ha, setStatus, report, uptime, resetHa, dropMidCall } from "./fakeHa.js";
+import { getEntries, clearErrors } from "../../src/lib/errorLog.js";
+
+const T0 = "2026-10-01T08:00:00+00:00";
+const T1 = "2026-10-06T12:00:30+00:00";
+
+/* What HA reports for the update domain, before the card renders. */
+const fixtures = {
+  set updates(list) {
+    for (const id of Object.keys(ha.entities)) if (id.startsWith("update.")) delete ha.entities[id];
+    for (const u of list) ha.entities[u.entity_id] = u;
+  },
+};
 
 // supported_features: INSTALL 1, SPECIFIC_VERSION 2, PROGRESS 4, BACKUP 8, RELEASE_NOTES 16
 const update = (entity_id, title, supported_features, extra = {}) => ({
@@ -54,11 +59,18 @@ function deferred() {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.setSystemTime(Date.parse("2026-10-06T12:00:00Z"));
   callService.mockReset();
   callService.mockResolvedValue(undefined);
-  conn.status = "ready";
+  clearNotices();
+  resetHa();
+  clearErrors();
+  ha.entities["sensor.uptime"] = uptime(T0);
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  clearNotices();
+  vi.useRealTimers();
+});
 
 describe("installData", () => {
   it("asks for a backup only on a system row that declares the BACKUP feature", () => {
@@ -145,7 +157,7 @@ describe("AddonsCard", () => {
     await flush();
     await flush();
     expect(callService.mock.calls.map((c) => c[2].entity_id)).toEqual([TAILSCALE.entity_id, ESPHOME.entity_id]);
-    expect(installIn("Home Assistant Core").disabled).toBe(false);
+    expect(installIn("Home Assistant Core").getAttribute("aria-disabled")).toBeNull();
     expect(installIn("Home Assistant Core").textContent).toBe("Install");
     fireEvent.click(installIn("Home Assistant Core"));
     await flush();
@@ -192,8 +204,12 @@ describe("AddonsCard", () => {
     fixtures.updates = [{ ...TAILSCALE, attributes: { ...TAILSCALE.attributes, in_progress: true } }];
     render(<AddonsCard />);
     const btn = installIn("Tailscale");
-    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("aria-disabled")).toBe("true");
     expect(btn.textContent).toBe("…");
+    // B14: "…" is not a name.
+    expect(btn.getAttribute("aria-label")).toBe("Installing Tailscale");
+    fireEvent.click(btn);
+    expect(callService).not.toHaveBeenCalled();
   });
 });
 
@@ -248,7 +264,7 @@ describe("AddonsCard when update status can't be read", () => {
   });
 
   it("doesn't call cached states 'current' while the socket is down", () => {
-    conn.status = "disconnected";
+    ha.status = "disconnected";
     fixtures.updates = [off(CORE), off(TAILSCALE)];
     const { container } = render(<AddonsCard />);
     expect(head(container)).toBe("Can't tell yet");
@@ -256,43 +272,140 @@ describe("AddonsCard when update status can't be read", () => {
   });
 });
 
+/* B11. With the socket down the heading said "Can't tell yet" while the body
+   still said "All 7 tracked components are at the latest version." — or
+   listed cached rows with live Install buttons. The body is what HA last
+   reported, and says so. */
+describe("AddonsCard while the socket is down", () => {
+  const off = (u) => ({ ...u, state: "off" });
+
+  it("words cached 'current' as last reported, never as now", () => {
+    ha.status = "disconnected";
+    fixtures.updates = [off(CORE), off(TAILSCALE)];
+    const { container } = render(<AddonsCard />);
+    expect(screen.getByText("Not connected — showing what Home Assistant last reported.")).toBeTruthy();
+    expect(screen.getByText("All 2 tracked components were at the latest version.")).toBeTruthy();
+    expect(container.textContent).not.toMatch(/are at the latest version/);
+  });
+
+  it("goes back to the present once connected again", () => {
+    ha.status = "disconnected";
+    fixtures.updates = [off(CORE), off(TAILSCALE)];
+    render(<AddonsCard />);
+    setStatus("ready");
+    expect(screen.queryByText(/Not connected/)).toBeNull();
+    expect(screen.getByText("All 2 tracked components are at the latest version.")).toBeTruthy();
+  });
+
+  it("keeps cached rows but offers no Install on them, nor Install the rest", () => {
+    ha.status = "disconnected";
+    fixtures.updates = [CORE, TAILSCALE, ESPHOME];
+    render(<AddonsCard />);
+    expect(screen.getByText("Not connected — showing what Home Assistant last reported.")).toBeTruthy();
+    for (const title of ["Home Assistant Core", "Tailscale", "ESPHome"]) {
+      expect(installIn(title).getAttribute("aria-disabled")).toBe("true");
+      expect(installIn(title).title).toBe("Not connected to Home Assistant");
+      fireEvent.click(installIn(title));
+    }
+    const rest = screen.getByRole("button", { name: "Install the rest" });
+    expect(rest.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(rest);
+    expect(callService).not.toHaveBeenCalled();
+    expect(screen.queryByText("Confirm")).toBeNull();
+  });
+
+  it("a drop while a row's button is focused leaves it focused", () => {
+    fixtures.updates = [TAILSCALE];
+    render(<AddonsCard />);
+    installIn("Tailscale").focus();
+    setStatus("disconnected");
+    expect(document.activeElement).toBe(installIn("Tailscale"));
+    expect(installIn("Tailscale").disabled).toBe(false);
+  });
+});
+
 /* I30. A Core / OS install ends with HA dropping the WebSocket before it
    answers. The call expects that (client.js), and the row says what is
-   happening until the dashboard is back instead of offering Install again. */
+   happening until HA is back — with a start time that moved, because a
+   reconnect alone proves nothing (B10). */
 describe("AddonsCard after a system install has gone out", () => {
-  const setStatus = (s) => {
-    conn.status = s;
-    act(() => conn.listeners.forEach((set) => set(s)));
-  };
-
-  it("Core: says it is restarting, holds the row, and lets go once HA is back", async () => {
-    fixtures.updates = [CORE];
-    callService.mockResolvedValueOnce({ connectionLost: true });
-    render(<AddonsCard />);
-    fireEvent.click(installIn("Home Assistant Core"));
+  async function confirm(title) {
+    fireEvent.click(installIn(title));
     act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
-    fireEvent.click(installIn("Home Assistant Core"));
+    fireEvent.click(installIn(title));
     await flush();
     await flush();
-    expect(screen.getByText("Restarting Home Assistant… the dashboard will reconnect")).toBeTruthy();
-    expect(installIn("Home Assistant Core").disabled).toBe(true);
+  }
 
-    setStatus("disconnected");
+  it("Core: says it is restarting, holds the row, and lets go once HA is back, restarted", async () => {
+    fixtures.updates = [CORE];
+    callService.mockImplementationOnce(async () => dropMidCall());
+    render(<AddonsCard />);
+    await confirm("Home Assistant Core");
     expect(screen.getByText("Restarting Home Assistant… the dashboard will reconnect")).toBeTruthy();
+    expect(installIn("Home Assistant Core").getAttribute("aria-disabled")).toBe("true");
+
     setStatus("ready");
-    // Back, and the update still says "on" (it failed): the row is a row again.
+    // The cache, before HA sends its start time again: nothing decided yet.
+    expect(screen.getByText("Reconnected — checking Home Assistant restarted…")).toBeTruthy();
+    expect(installIn("Home Assistant Core").getAttribute("aria-disabled")).toBe("true");
+    report(uptime(T1), CORE);
+    // Back, restarted, and the update still says "on" (it failed): the row is a row again.
     expect(screen.queryByText(/Restarting Home Assistant/)).toBeNull();
     expect(installIn("Home Assistant Core").textContent).toBe("Install");
+    expect(getEntries()).toEqual([]);
+  });
+
+  it("Core: a reconnect to the same Home Assistant says it didn't restart, and logs it", async () => {
+    fixtures.updates = [CORE];
+    callService.mockImplementationOnce(async () => dropMidCall());
+    render(<AddonsCard />);
+    await confirm("Home Assistant Core");
+    setStatus("ready");
+    report(uptime(T0), CORE);
+    act(() => vi.advanceTimersByTime(RESTART_GRACE_MS));
+    expect(screen.getByText("Home Assistant didn't restart — try again")).toBeTruthy();
+    // ...and it can be tried again.
+    expect(installIn("Home Assistant Core").getAttribute("aria-disabled")).toBeNull();
+    expect(installIn("Home Assistant Core").textContent).toBe("Install");
+    expect(getEntries()[0]).toMatchObject({
+      message: "update.install: Home Assistant didn't restart (the command may not have reached it)",
+    });
+  });
+
+  /* B14. The row's sentence reaches a screen reader, the busy button has a
+     name, and the pressed button keeps keyboard focus. */
+  it("announces the row's sentence, names the busy button and keeps focus on it", async () => {
+    fixtures.updates = [CORE];
+    callService.mockImplementationOnce(async () => dropMidCall());
+    render(<AddonsCard />);
+    expect(screen.getByRole("status").textContent).toBe("");
+    installIn("Home Assistant Core").focus();
+    await confirm("Home Assistant Core");
+    expect(screen.getByRole("status").textContent).toBe(
+      "Home Assistant Core: Restarting Home Assistant… the dashboard will reconnect",
+    );
+    const btn = installIn("Home Assistant Core");
+    expect(btn.getAttribute("aria-label")).toBe("Installing Home Assistant Core");
+    expect(btn.disabled).toBe(false);
+    expect(document.activeElement).toBe(btn);
+  });
+
+  /* B13. The System view unmounts on every tab change. */
+  it("keeps the row's notice across a tab switch while HA is down", async () => {
+    fixtures.updates = [OS];
+    const first = render(<AddonsCard />);
+    await confirm("Home Assistant Operating System");
+    setStatus("disconnected");
+    first.unmount();
+    render(<AddonsCard />);
+    expect(screen.getByText("Rebooting the Pi… the dashboard will reconnect")).toBeTruthy();
   });
 
   it("OS expects the disconnect and says the Pi is rebooting", async () => {
     fixtures.updates = [OS];
     render(<AddonsCard />);
-    fireEvent.click(installIn("Home Assistant Operating System"));
-    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
-    fireEvent.click(installIn("Home Assistant Operating System"));
-    await flush();
-    await flush();
+    await confirm("Home Assistant Operating System");
     expect(callService).toHaveBeenCalledWith("update", "install", { entity_id: OS.entity_id }, undefined, {
       expectDisconnect: true,
     });
@@ -303,12 +416,57 @@ describe("AddonsCard after a system install has gone out", () => {
     fixtures.updates = [CORE];
     callService.mockRejectedValueOnce(new Error("Not connected"));
     render(<AddonsCard />);
-    fireEvent.click(installIn("Home Assistant Core"));
-    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
-    fireEvent.click(installIn("Home Assistant Core"));
-    await flush();
-    await flush();
+    await confirm("Home Assistant Core");
     expect(screen.queryByText(/Restarting/)).toBeNull();
     expect(installIn("Home Assistant Core").textContent).toBe("Install");
+  });
+});
+
+/* B12. The Supervisor restarts only itself: the dashboard never drops, so a
+   notice only a drop could clear sat on "Restarting the Supervisor…" with a
+   dead button for ten minutes, whatever HA reported meanwhile. */
+describe("AddonsCard: the Supervisor row", () => {
+  const SUP = update("update.home_assistant_supervisor_update", "Home Assistant Supervisor", 1 | 16, {
+    installed_version: "2026.09.3",
+    latest_version: "2026.10.0",
+  });
+  const SENT = "Update sent — waiting for the Supervisor to report back";
+  async function confirmSup() {
+    fireEvent.click(installIn("Home Assistant Supervisor"));
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
+    fireEvent.click(installIn("Home Assistant Supervisor"));
+    await flush();
+    await flush();
+  }
+
+  it("is an ordinary call: a dropped connection there is a failure, not 'sent'", async () => {
+    fixtures.updates = [SUP];
+    render(<AddonsCard />);
+    await confirmSup();
+    expect(callService.mock.calls).toEqual([["update", "install", { entity_id: SUP.entity_id }]]);
+  });
+
+  it("waits for HA to report the entity again, then shows what it says", async () => {
+    fixtures.updates = [{ ...SUP, last_updated: "2026-10-06T11:59:00+00:00" }];
+    render(<AddonsCard />);
+    await confirmSup();
+    expect(screen.getByText(SENT)).toBeTruthy();
+    expect(screen.queryByText(/Restarting/)).toBeNull();
+    expect(installIn("Home Assistant Supervisor").getAttribute("aria-disabled")).toBe("true");
+
+    // Reported again: still "on", in_progress false (rolled back, or a newer version).
+    report({ ...SUP, last_updated: "2026-10-06T12:01:00+00:00", attributes: { ...SUP.attributes, in_progress: false } });
+    expect(screen.queryByText(SENT)).toBeNull();
+    expect(installIn("Home Assistant Supervisor").textContent).toBe("Install");
+    expect(installIn("Home Assistant Supervisor").getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("lets go after a short cap if HA never reports", async () => {
+    fixtures.updates = [SUP];
+    render(<AddonsCard />);
+    await confirmSup();
+    act(() => vi.advanceTimersByTime(REPORT_CAP_MS));
+    expect(screen.queryByText(SENT)).toBeNull();
+    expect(installIn("Home Assistant Supervisor").textContent).toBe("Install");
   });
 });
