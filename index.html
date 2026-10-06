@@ -19,10 +19,13 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Glasshouse" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <!-- iOS ignores the manifest icons and does not accept an SVG here; until a
-         180x180 PNG exists it falls back to a screenshot of the page. See
-         USER_ACTIONS.md / roadmap [37b]. -->
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <!-- iOS ignores the manifest icons and won't take an SVG here — given one, it
+         saves a screenshot of the page as the home-screen icon. The PNG is
+         public/icon.svg rendered at 180x180 with the corners squared off, because
+         iOS applies its own mask and paints any transparency black. The 192/512
+         PNGs in manifest.webmanifest come from the same SVG. Re-render all three
+         if icon.svg changes. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Glasshouse · Home Assistant</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

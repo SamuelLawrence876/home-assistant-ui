@@ -14,6 +14,13 @@ const has = (v) => v != null && v !== "" && v !== "unavailable" && v !== "unknow
 const numOr = (v, d) => (has(v) && !Number.isNaN(+v) ? +v : d);
 const txtOr = (v, d = "—") => (has(v) ? v : d);
 
+/* ha-bambulab's print_status values (the printer's own gcode_state, lowercased).
+   Anything not listed is shown capitalised as-is. */
+const STATUS_TITLE = {
+  running: "Printing", pause: "Paused", prepare: "Preparing", slicing: "Slicing", init: "Starting",
+  finish: "Finished", failed: "Failed", idle: "Idle", offline: "Offline",
+};
+
 function PrinterPreview({ progress = 0, color = "#d97757" }) {
   const H = 220, W = 240;
   const layers = 36;
@@ -117,9 +124,9 @@ export function PrinterCard({ index = 0 }) {
   const stage = txtOr(liveStage?.state);
   const remaining = numOr(liveRemaining?.state, null);
   const nozzle = numOr(liveNozzle?.state, null);
-  const nozzleTarget = numOr(liveNozzleTarget?.state, 0);
+  const nozzleTarget = numOr(liveNozzleTarget?.state, null);
   const bed = numOr(liveBed?.state, null);
-  const bedTarget = numOr(liveBedTarget?.state, 0);
+  const bedTarget = numOr(liveBedTarget?.state, null);
   const chamber = numOr(liveChamber?.state, null);
   const ams = numOr(liveAms?.state, null);
   const tray = txtOr(liveTray?.state);
@@ -132,18 +139,32 @@ export function PrinterCard({ index = 0 }) {
   const coolingFan = txtOr(liveCoolingFan?.state);
   const startTime = liveStart?.state;
   const endTime = liveEnd?.state;
-  const printStatus = txtOr(livePrintStatus?.state, "unknown");
+  const printStatus = txtOr(livePrintStatus?.state, null);
   const doorOpen = liveDoor?.state === "on";
   const hasHmsError = liveHmsErrors?.state === "on";
   const hasPrintError = livePrintError?.state === "on";
   const online = liveOnline?.state === "on";
+  const knownOffline = liveOnline?.state === "off";
   const cameraOn = liveCamera?.state === "on";
   const printWeight = liveWeight?.state;
   // Subscribed and read, but nothing renders it yet. Underscored so the linter's
   // allowance covers it rather than warning on every run; drop both this and the
   // liveLength subscription above if the filament-length readout isn't wanted.
   const _printLength = liveLength?.state;
-  const printing = printStatus === "running" || (remaining > 0 && stage !== "idle");
+  /* print_status is the printer's own word for what it is doing, so it decides. The
+     remaining-time heuristic is only for when it's missing — remaining_time holds its
+     last value while a print is paused, so on its own it reads a print waiting on a
+     filament swap as running. Nothing read → an em dash, never a guessed "Idle". */
+  const paused = printStatus ? printStatus === "pause" : stage.startsWith("paused");
+  const printing = printStatus ? printStatus === "running" : !paused && remaining > 0 && stage !== "idle";
+  const title = printStatus
+    ? STATUS_TITLE[printStatus] ?? printStatus.charAt(0).toUpperCase() + printStatus.slice(1)
+    : printing ? "Printing" : paused ? "Paused" : knownOffline ? "Offline" : "—";
+  // The dot defaults to --good in CSS, and .live makes it the pulsing red.
+  const pill = printing ? { cls: "live", label: "live" }
+    : paused ? { cls: "", label: "paused", dot: "var(--warn)" }
+    : online ? { cls: "ok", label: "online" }
+    : { cls: "", label: knownOffline ? "offline" : "—", dot: "var(--ink-4)" };
   const amsTrayNames = [liveTray1, liveTray2, liveTray3, liveTray4].map(
     (t) => has(t?.state) && t.state !== "Empty" ? t.state : null
   );
@@ -189,12 +210,12 @@ export function PrinterCard({ index = 0 }) {
       index={index}
       className="ws-printer"
       eyebrow="3D Printer · Bambu X1C"
-      title={printing ? "Printing" : printStatus === "unknown" ? "Idle" : printStatus.charAt(0).toUpperCase() + printStatus.slice(1)}
+      title={title}
       meta={`Stage · ${stage}`}
       headRight={
-        <span className={`ws-status-pill ${printing ? "live" : online ? "ok" : ""}`}>
-          <span className="dot" style={!printing && online ? { background: "var(--good)" } : !online ? { background: "var(--ink-4)" } : undefined} />
-          {printing ? "live" : online ? "online" : "offline"}
+        <span className={`ws-status-pill ${pill.cls}`}>
+          <span className="dot" style={pill.dot ? { background: pill.dot } : undefined} />
+          {pill.label}
         </span>
       }
     >
@@ -277,12 +298,12 @@ export function PrinterCard({ index = 0 }) {
             <div className="ws-therm">
               <span className="k">Nozzle</span>
               <span className="v">{nozzle ?? "—"}<i>°</i></span>
-              <span className="tgt">{nozzleTarget > 0 ? `→ ${nozzleTarget}°` : "idle"}</span>
+              <span className="tgt">{nozzleTarget == null ? "—" : nozzleTarget > 0 ? `→ ${nozzleTarget}°` : "idle"}</span>
             </div>
             <div className="ws-therm">
               <span className="k">Bed</span>
               <span className="v">{bed ?? "—"}<i>°</i></span>
-              <span className="tgt">{bedTarget > 0 ? `→ ${bedTarget}°` : "idle"}</span>
+              <span className="tgt">{bedTarget == null ? "—" : bedTarget > 0 ? `→ ${bedTarget}°` : "idle"}</span>
             </div>
             <div className="ws-therm">
               <span className="k">Chamber</span>

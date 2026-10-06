@@ -8,14 +8,22 @@ name: CI
 #
 # Re-bless the screenshot baseline
 # -------------------------------
-# Locally, one line:
-#     node scripts/visual-check.mjs --bless      # then commit visual-baseline/
-#
-# For the Linux images this workflow compares against (a baseline shot on
-# Windows or macOS will not match a CI runner — different fonts):
+# The committed baseline has to be shot here, on the runner. One shot on
+# Windows or macOS will not match (different fonts), and pixel-diff.mjs then
+# skips the comparison and passes — NOT BLESSED, with a green tick:
 #     gh workflow run ci.yml -f bless=true
 #     gh run download <run-id> -n visual-baseline -D visual-baseline
 #     git add visual-baseline && git commit -m "chore: re-bless visual baseline"
+# `node scripts/visual-check.mjs --bless` locally is for looking at diffs only;
+# committing what it writes disarms this gate.
+#
+# Runner image
+# ------------
+# Every job is pinned to ubuntu-24.04, not ubuntu-latest, because the fonts
+# the screenshots are drawn with come from the image. GitHub moves
+# ubuntu-latest to 26.04 from 2026-10-19, which would turn every tile red for a
+# reason no code change can fix. Moving the pin is a deliberate act: change
+# runs-on in every job here AND in deploy.yml, then re-bless on the new runner.
 #
 # Full explanation in scripts/README.md.
 
@@ -43,7 +51,7 @@ concurrency:
 jobs:
   checks:
     name: Lint + test + build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: screenshot fonts come from the image; moving it means re-blessing (see header)
     timeout-minutes: 10
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.bless }}
     steps:
@@ -74,7 +82,7 @@ jobs:
   visual:
     name: Console + screenshot gates
     needs: checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: screenshot fonts come from the image; moving it means re-blessing (see header)
     timeout-minutes: 25
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.bless }}
     steps:
@@ -116,7 +124,7 @@ jobs:
 
   bless:
     name: Re-bless visual baseline
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: screenshot fonts come from the image; moving it means re-blessing (see header)
     timeout-minutes: 25
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.bless }}
     steps:
