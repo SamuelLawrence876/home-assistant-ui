@@ -33,6 +33,13 @@ import {
 } from "home-assistant-js-websocket";
 import { clearSpotifyToken } from "./spotify.js";
 import { describeHaError, toHaError } from "./errors.js";
+import {
+  announceLoginRedirect,
+  clearLoginRedirectStamp,
+  hasAuthCallback,
+  mayRedirectToLogin,
+  stripAuthCallback,
+} from "./loginRedirect.js";
 import { logError, clearErrors } from "../lib/errorLog.js";
 
 const HA_URL = import.meta.env.VITE_HA_URL || "";
@@ -113,39 +120,9 @@ const loadTokens = async () => {
   }
 };
 
-/* ---- Login redirects, rate-limited ----------------------------------
-   An invalid session sends the browser back to HA's login page, as HA's own
-   frontend does. What must not happen is a loop: tokens that fail the moment
-   they are issued (or an auth provider that signs straight back in) would
-   bounce between the two origins forever. So at most one *automatic*
-   redirect per minute per tab; past that the chip says "Signed out" and
-   offers a button. sessionStorage, because it survives the round trip to
-   HA and back within a tab and is gone when the tab is. */
-const LOGIN_REDIRECT_KEY = "gh_ha_login_redirect_at";
-const LOGIN_REDIRECT_WINDOW_MS = 60_000;
+/* Rate-limited login redirects and OAuth callback-param cleanup live in
+   loginRedirect.js; the one place a redirect can be vetoed is here. */
 const SIGNED_OUT = Symbol("signed-out");
-
-function mayRedirectToLogin() {
-  const now = Date.now();
-  let last = NaN;
-  try {
-    last = Number(sessionStorage.getItem(LOGIN_REDIRECT_KEY));
-  } catch {}
-  // Read back as hostile input: only a real, past timestamp can block.
-  if (Number.isFinite(last) && last > 0 && last <= now && now - last < LOGIN_REDIRECT_WINDOW_MS) {
-    return false;
-  }
-  try {
-    sessionStorage.setItem(LOGIN_REDIRECT_KEY, String(now));
-  } catch {}
-  return true;
-}
-
-function clearLoginRedirectStamp() {
-  try {
-    sessionStorage.removeItem(LOGIN_REDIRECT_KEY);
-  } catch {}
-}
 
 /* getAuth calls loadTokens as its last step before redirecting, and only
    redirects when there is nothing usable — so this is the one place a
@@ -155,32 +132,9 @@ const loadTokensOrGate = async () => {
   const data = await loadTokens();
   if (data && data.hassUrl === HA_BASE) return data;
   if (!mayRedirectToLogin()) throw SIGNED_OUT;
+  announceLoginRedirect();
   return data;
 };
-
-/* Remove the last occurrence of a repeated query param, keeping the earlier ones. */
-function dropLastParam(params, name) {
-  const all = params.getAll(name);
-  if (all.length === 0) return;
-  params.delete(name);
-  all.slice(0, -1).forEach((v) => params.append(name, v));
-}
-
-const hasAuthCallback = () => new URLSearchParams(window.location.search).has("auth_callback");
-
-/* Clean HA OAuth callback params only. A Spotify callback that lands while we
-   have no HA tokens gets carried through HA's login round trip (the library
-   builds its redirect URI from the current query string), so the URL can hold
-   two code/state pairs — and `delete` removes every occurrence. HA appends its
-   own last, so drop only the last of each and leave Spotify's alone. */
-function stripAuthCallback() {
-  if (!hasAuthCallback()) return;
-  const url = new URL(window.location.href);
-  url.searchParams.delete("auth_callback");
-  dropLastParam(url.searchParams, "code");
-  dropLastParam(url.searchParams, "state");
-  window.history.replaceState(null, "", url.toString());
-}
 
 /* getAuth, with the callback handled so it can only ever be tried once.
    getAuth exchanges ?code= *before* it looks at stored tokens, and an HA
@@ -197,7 +151,9 @@ async function authenticate() {
     logError({
       source: "connection",
       message: "Home Assistant sign-in failed",
-      detail: describeHaError(err),
+      // A 400/403 here is HA turning down the code, not a session expiring:
+      // there is no session yet.
+      detail: err === ERR_INVALID_AUTH ? "Home Assistant rejected the sign-in code" : describeHaError(err),
     });
   } finally {
     stripAuthCallback();
@@ -260,6 +216,76 @@ function dropSession() {
   stripAuthCallback();
 }
 
+/* ERR_INVALID_AUTH from createConnection only means the socket refused the
+   access token it was handed — not that the session is dead. When that token
+   has expired, the library starts a refresh before the socket opens and, if
+   the refresh fails for any reason at all (a Funnel 502, a timeout), swallows
+   the failure and sends the stale token anyway. Dropping the tokens on that
+   put a wall tablet back on HA's password page after a refresh blip
+   (LESSONS.md pattern 5). Only /auth/token answering 400/403 — which the
+   library, and only the library, turns into ERR_INVALID_AUTH — says the
+   refresh token itself is gone. So ask it, once, before forgetting anything. */
+const REFRESH_TIMEOUT_MS = 15_000;
+
+async function checkSession(a) {
+  /* Bounded: unlike createConnection — which HA ends by closing a socket that
+     never authenticates — this fetch has nothing to stop it, and setupRunning
+     would hold every retry off until a reload. A timeout is "couldn't tell". */
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("Token refresh timed out")), REFRESH_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([a.refreshAccessToken(), timeout]);
+    return { alive: true };
+  } catch (err) {
+    // Stored tokens with no refresh token can never be renewed, whatever HA says.
+    return { dead: err === ERR_INVALID_AUTH || !a.data?.refresh_token, err };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* createConnection, with an invalid-auth refusal checked before it is
+   believed. Resolves to a Connection, or to connectOnce's outcome string. */
+async function openConnection() {
+  /* A token already known to be expired is renewed first, never sent. Left to
+     the library, a failing /auth/token means the stale token goes out anyway on
+     every retry — and HA logs each one as a failed login (and counts it toward
+     an IP ban, if one is set), for as long as the refresh keeps failing. */
+  if (auth.expired) {
+    const session = await checkSession(auth);
+    if (session.dead) {
+      logError({ source: "connection", message: "Home Assistant session expired" });
+      return "relogin";
+    }
+    if (!session.alive) return connectFailed("Could not renew the Home Assistant session", session.err);
+  }
+  try {
+    return await createConnection({ auth });
+  } catch (err) {
+    if (err !== ERR_INVALID_AUTH) return connectFailed("WebSocket connection failed", err);
+  }
+  const session = await checkSession(auth);
+  if (session.dead) {
+    logError({ source: "connection", message: "Home Assistant session expired" });
+    return "relogin";
+  }
+  // Couldn't tell: keep the tokens and try again later, as for a Pi that's down.
+  if (!session.alive) return connectFailed("Could not renew the Home Assistant session", session.err);
+  // Renewed, so it was the stale token that was refused. Try the fresh one
+  // now — once. HA refusing a token it has only just issued isn't a dead
+  // refresh token either, so that backs off too rather than looping here.
+  try {
+    return await createConnection({ auth });
+  } catch (err) {
+    return connectFailed(
+      "WebSocket connection failed",
+      err === ERR_INVALID_AUTH ? "Home Assistant refused a token it had just issued" : err,
+    );
+  }
+}
+
 async function connectOnce() {
   if (retryAttempt === 0) setStatus("connecting");
   try {
@@ -270,16 +296,8 @@ async function connectOnce() {
   }
 
   if (retryAttempt === 0) setStatus("authenticating");
-  let conn;
-  try {
-    conn = await createConnection({ auth });
-  } catch (err) {
-    if (err === ERR_INVALID_AUTH) {
-      logError({ source: "connection", message: "Home Assistant session expired" });
-      return "relogin";
-    }
-    return connectFailed("WebSocket connection failed", err);
-  }
+  const conn = await openConnection();
+  if (typeof conn === "string") return conn;
 
   connection = conn;
   retryAttempt = 0;
@@ -294,20 +312,22 @@ async function connectOnce() {
   });
   /* The library fires this for ERR_INVALID_AUTH only, and then stops
      reconnecting for good — the chip used to read "Pi offline" forever for
-     what was really an expired or revoked session. */
+     what was really an expired or revoked session. It is no more proof of a
+     dead session than the same error on first connect (see checkSession), so
+     start over and let openConnection ask /auth/token before anything is
+     forgotten; it logs whichever way that goes. */
   conn.addEventListener("reconnect-error", (_conn, err) => {
-    logError({
-      source: "connection",
-      message: "Home Assistant WebSocket reconnect failed",
-      detail: describeHaError(err),
-    });
     setStatus("disconnected");
     try { conn.close(); } catch {}
     if (connection === conn) connection = null;
     if (err === ERR_INVALID_AUTH) {
-      dropSession();
-      setup({ afterRelogin: true });
+      setup();
     } else {
+      logError({
+        source: "connection",
+        message: "Home Assistant WebSocket reconnect failed",
+        detail: describeHaError(err),
+      });
       scheduleRetry();
     }
   });

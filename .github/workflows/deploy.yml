@@ -49,15 +49,26 @@ env:
   AWS_REGION: us-east-1
   # Must match config.stackName in the backend repo's infrastructure/lib/config.ts.
   STACK_NAME: home-assistant
-  # Every file at the root of dist/ that keeps a stable name (no content hash).
-  # These go up with a short cache and are invalidated on every deploy; the
-  # rest of dist/ is content-hashed and goes up immutable. One list, so the
-  # syncs, the upload and the invalidation can't disagree — and "Check root
-  # files" fails the deploy if dist/ grows a root file that isn't on it.
-  # index.html is last on purpose: it is uploaded after everything it names.
+  # Every file in dist/ that keeps a stable name (no content hash), as a path
+  # relative to dist/. These go up with a short cache and are invalidated on
+  # every deploy; the rest of dist/ is content-hashed and goes up immutable.
+  # One list, so the syncs, the upload and the invalidation can't disagree —
+  # and "Check root files" fails the deploy if dist/ grows a stable-named file
+  # that isn't on it, at the root or in any folder but assets/.
+  #
+  # The upload goes in this order, and the last two are the point:
+  # index.html after everything it names, and sw.js after index.html, because
+  # the service worker's precache names index.html (and the manifest and the
+  # icons). A client that fetched the new sw.js while the old index.html was
+  # still being served would precache the old shell under the new revision,
+  # and once the prune step deleted the old chunks it pointed at, that client
+  # would get a blank page until the tab was closed. The order shrinks that
+  # window to CloudFront's edge cache of index.html (MinTTL, about a second);
+  # it doesn't close it outright. Closing it means holding sw.js back until
+  # the invalidation has completed — a follow-up, not done here.
   ROOT_FILES: >-
     icon.svg apple-touch-icon.png icon-192.png icon-512.png
-    manifest.webmanifest sw.js index.html
+    manifest.webmanifest index.html sw.js
 
 concurrency:
   group: deploy-prod
@@ -135,20 +146,23 @@ jobs:
       # A stable-named file missing from ROOT_FILES would be uploaded as
       # immutable for a year (an app icon nobody can ever replace); one listed
       # but not built would fail half-way through the upload. Catch both here,
-      # before the first AWS call. workbox-<hash>.js is hashed, so it's exempt.
+      # before the first AWS call. Every file outside dist/assets/ is checked,
+      # in subfolders and dotfiles too: the immutable sync takes all of them,
+      # so a future public/fonts/ would otherwise slip past a root-only glob.
+      # workbox-<hash>.js (root only, where the PWA plugin writes it) is
+      # hashed, so it's exempt.
       - name: Check root files
         run: |
           for f in $ROOT_FILES; do
             [ -f "dist/$f" ] || { echo "::error::ROOT_FILES names $f but dist/$f was not built"; exit 1; }
           done
-          for path in dist/*; do
-            [ -f "$path" ] || continue
+          while IFS= read -r path; do
             name=${path#dist/}
             case " $ROOT_FILES " in *" $name "*) continue ;; esac
-            case "$name" in workbox-*.js) continue ;; esac
+            case "$name" in */*) ;; workbox-*.js) continue ;; esac
             echo "::error::dist/$name has a stable name but is not in ROOT_FILES — it would ship immutable. Add it to ROOT_FILES and give it a cache rule."
             exit 1
-          done
+          done < <(find dist -type f ! -path 'dist/assets/*')
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4

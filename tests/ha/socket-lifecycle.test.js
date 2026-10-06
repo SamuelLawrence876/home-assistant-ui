@@ -9,6 +9,8 @@
    straight to stderr), so a redirect to HA's login is detected by the
    rate-limit stamp socket.js writes at exactly the point getAuth redirects. */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { createElement } from "react";
+import { render } from "@testing-library/react";
 
 const HA = "https://ha.example.invalid";
 const lib = vi.hoisted(() => ({ createConnection: null, onEntities: null }));
@@ -80,6 +82,10 @@ async function loadPage() {
 const flush = async () => {
   for (let i = 0; i < 30; i++) await Promise.resolve();
 };
+/* What /auth/token answers. The default in beforeEach is a 400: the refresh
+   token is dead. */
+const tokenEndpoint = (status, body = {}) =>
+  fetch.mockImplementation(async () => ({ ok: status === 200, status, json: async () => body }));
 const redirected = () => {
   const at = Number(sessionStorage.getItem(REDIRECT_KEY));
   return at >= testStart && at <= Date.now();
@@ -189,6 +195,9 @@ describe("expired session (data-layer#2)", () => {
     const { socket, errorLog } = await loadPage();
     await flush();
 
+    // Dropped only once /auth/token itself said the refresh token is dead.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(fetch.mock.calls[0][0])).toBe(`${HA}/auth/token`);
     expect(localStorage.getItem("ha_tokens")).toBeNull();
     expect(redirected()).toBe(true);
     expect(sessionStorage.getItem(REDIRECT_KEY)).not.toBeNull();
@@ -238,7 +247,8 @@ describe("expired session (data-layer#2)", () => {
   it("mid-session, a reconnect rejected for invalid auth goes to re-login, not a dead socket", async () => {
     storeTokens();
     const conn = fakeConnection();
-    lib.createConnection.mockResolvedValue(conn);
+    // A session that really is dead goes on being refused.
+    lib.createConnection.mockResolvedValueOnce(conn).mockRejectedValue(ERR_INVALID_AUTH);
     const { socket } = await loadPage();
     await vi.waitFor(() => expect(socket.getConnectionStatus()).toBe("ready"));
 
@@ -249,7 +259,183 @@ describe("expired session (data-layer#2)", () => {
     expect(conn.close).toHaveBeenCalled();
     expect(localStorage.getItem("ha_tokens")).toBeNull();
     expect(redirected()).toBe(true);
+    expect(lib.createConnection).toHaveBeenCalledTimes(2);
+  });
+});
+
+/* The library refreshes an expired access token before the socket opens, and
+   if that refresh fails for any reason it swallows the failure and sends the
+   stale token anyway — so ERR_INVALID_AUTH can follow a 502 from /auth/token
+   that says nothing about the session (R29). */
+describe("invalid auth that isn't a dead session (R29)", () => {
+  const expiredTokens = () => storeTokens({ access_token: "stale-access", expires: Date.now() - 60_000 });
+  const stored = () => JSON.parse(localStorage.getItem("ha_tokens"));
+
+  it("keeps the tokens and backs off when the refresh endpoint 502s, then connects once HA answers", async () => {
+    vi.useFakeTimers();
+    expiredTokens();
+    tokenEndpoint(502);
+    lib.createConnection.mockResolvedValue(fakeConnection());
+    const { socket, errorLog } = await loadPage();
+    await flush();
+
+    expect(stored().refresh_token).toBe("stored-refresh");
+    expect(redirected()).toBe(false);
+    expect(socket.isSessionExpired()).toBe(false);
+    expect(socket.getConnectionStatus()).toBe("disconnected");
+    expect(connectionLog(errorLog)).toEqual([["Could not renew the Home Assistant session", "Unable to fetch tokens"]]);
+    // The known-stale token never reached the socket: no failed login in HA's log.
+    expect(lib.createConnection).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000); // still 502: still nothing sent
+    await flush();
+    expect(lib.createConnection).not.toHaveBeenCalled();
+
+    tokenEndpoint(200, { access_token: "fresh-access", expires_in: 1800, token_type: "Bearer" });
+    await vi.advanceTimersByTimeAsync(2000);
+    await flush();
     expect(lib.createConnection).toHaveBeenCalledTimes(1);
+    expect(lib.createConnection.mock.calls[0][0].auth.accessToken).toBe("fresh-access");
+    expect(socket.getConnectionStatus()).toBe("ready");
+  });
+
+  it("treats a refresh that never answers (network error) the same way", async () => {
+    vi.useFakeTimers();
+    expiredTokens();
+    fetch.mockImplementation(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    lib.createConnection.mockRejectedValue(ERR_INVALID_AUTH);
+    const { socket } = await loadPage();
+    await flush();
+    expect(stored().refresh_token).toBe("stored-refresh");
+    expect(redirected()).toBe(false);
+    expect(socket.isSessionExpired()).toBe(false);
+    expect(lib.createConnection).not.toHaveBeenCalled();
+  });
+
+  it("gives up on a refresh that hangs, and backs off instead of waiting for a reload", async () => {
+    vi.useFakeTimers();
+    expiredTokens();
+    fetch.mockImplementation(() => new Promise(() => {})); // /auth/token accepts, never answers
+    lib.createConnection.mockResolvedValue(fakeConnection());
+    const { socket, errorLog } = await loadPage();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await flush();
+    expect(socket.getConnectionStatus()).toBe("disconnected");
+    expect(connectionLog(errorLog)).toEqual([["Could not renew the Home Assistant session", "Token refresh timed out"]]);
+    expect(stored().refresh_token).toBe("stored-refresh");
+    expect(redirected()).toBe(false);
+  });
+
+  it("when the refresh works, tries the fresh token straight away", async () => {
+    vi.useFakeTimers();
+    expiredTokens();
+    tokenEndpoint(200, { access_token: "fresh-access", expires_in: 1800, token_type: "Bearer" });
+    lib.createConnection.mockResolvedValue(fakeConnection());
+    const { socket, errorLog } = await loadPage();
+    await flush();
+
+    // Renewed before connecting, so only the fresh token is ever sent.
+    expect(lib.createConnection).toHaveBeenCalledTimes(1);
+    expect(lib.createConnection.mock.calls[0][0].auth.accessToken).toBe("fresh-access");
+    expect(socket.getConnectionStatus()).toBe("ready");
+    expect(stored()).toMatchObject({ access_token: "fresh-access", refresh_token: "stored-refresh" });
+    expect(redirected()).toBe(false);
+    expect(connectionLog(errorLog)).toEqual([]);
+  });
+
+  it("does not loop when HA refuses even a token it has just issued", async () => {
+    vi.useFakeTimers();
+    expiredTokens();
+    tokenEndpoint(200, { access_token: "fresh-access", expires_in: 1800, token_type: "Bearer" });
+    lib.createConnection.mockRejectedValue(ERR_INVALID_AUTH);
+    const { socket, errorLog } = await loadPage();
+    await flush();
+
+    expect(lib.createConnection).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem("ha_tokens")).not.toBeNull();
+    expect(redirected()).toBe(false);
+    expect(connectionLog(errorLog)).toEqual([
+      ["WebSocket connection failed", "Home Assistant refused a token it had just issued"],
+    ]);
+    // Backing off like any other failure: two more attempts a second later, not a spin.
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+    expect(lib.createConnection).toHaveBeenCalledTimes(4);
+    expect(socket.isSessionExpired()).toBe(false);
+  });
+
+  it("mid-session, the same race keeps the tokens and reconnects instead of sending the tablet to login", async () => {
+    vi.useFakeTimers();
+    storeTokens();
+    const conn = fakeConnection();
+    lib.createConnection
+      .mockResolvedValueOnce(conn)
+      .mockRejectedValueOnce(ERR_INVALID_AUTH)
+      .mockResolvedValue(fakeConnection());
+    const { socket } = await loadPage();
+    await flush();
+    expect(socket.getConnectionStatus()).toBe("ready");
+
+    tokenEndpoint(502);
+    conn.fire("disconnected");
+    conn.fire("reconnect-error", ERR_INVALID_AUTH);
+    await flush();
+    expect(conn.close).toHaveBeenCalled();
+    expect(stored().refresh_token).toBe("stored-refresh");
+    expect(redirected()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+    expect(lib.createConnection).toHaveBeenCalledTimes(3);
+    expect(socket.getConnectionStatus()).toBe("ready");
+  });
+});
+
+/* App strips ?tab= on mount, so a trip to HA's login used to come back on
+   Overview. socket.js announces the trip; ErrorBoundary — which knows the open
+   tab — stashes it where App's first render looks (R10, R30). */
+describe("a login round trip keeps the open tab (R10, R30)", () => {
+  async function boundaryOn(tab) {
+    const { ErrorBoundary, takePendingTab } = await import("../../src/components/ErrorBoundary.jsx");
+    render(createElement(ErrorBoundary, { tab }, null));
+    return takePendingTab;
+  }
+
+  it("mid-session: the dead session's redirect hands the open tab to App's next mount, once", async () => {
+    const takePendingTab = await boundaryOn("media");
+    storeTokens();
+    const conn = fakeConnection();
+    lib.createConnection.mockResolvedValueOnce(conn).mockRejectedValue(ERR_INVALID_AUTH);
+    const { socket } = await loadPage();
+    await vi.waitFor(() => expect(socket.getConnectionStatus()).toBe("ready"));
+    expect(takePendingTab()).toBeNull(); // connecting isn't leaving
+
+    conn.fire("disconnected");
+    conn.fire("reconnect-error", ERR_INVALID_AUTH);
+    await vi.waitFor(() => expect(redirected()).toBe(true));
+    expect(takePendingTab()).toBe("media");
+    expect(takePendingTab()).toBeNull();
+  });
+
+  it("after a failed first-login exchange, the second trip to login keeps the tab too", async () => {
+    const takePendingTab = await boundaryOn("lights");
+    const state = btoa(JSON.stringify({ hassUrl: HA, clientId: "http://localhost:3000/" }));
+    window.history.replaceState(null, "", `/?auth_callback=1&code=X&state=${state}`);
+    tokenEndpoint(502);
+    const { errorLog } = await loadPage();
+    await vi.waitFor(() => expect(redirected()).toBe(true));
+    expect(takePendingTab()).toBe("lights");
+    expect(connectionLog(errorLog)).toEqual([["Home Assistant sign-in failed", "Unable to fetch tokens"]]);
+  });
+
+  it("stashes nothing when the rate limit stops the redirect at 'Signed out'", async () => {
+    const takePendingTab = await boundaryOn("climate");
+    sessionStorage.setItem(REDIRECT_KEY, String(Date.now() - 10_000));
+    const { socket } = await loadPage();
+    await vi.waitFor(() => expect(socket.isSessionExpired()).toBe(true));
+    expect(takePendingTab()).toBeNull();
   });
 });
 
@@ -289,10 +475,14 @@ describe("OAuth callback (data-layer#3)", () => {
   it("with no stored tokens, a failed exchange right after a login redirect stops at 'Signed out'", async () => {
     sessionStorage.setItem(REDIRECT_KEY, String(Date.now() - 20_000));
     window.history.replaceState(null, "", `/?auth_callback=1&code=SPENT&state=${state()}`);
-    const { socket } = await loadPage();
+    const { socket, errorLog } = await loadPage();
     await vi.waitFor(() => expect(socket.isSessionExpired()).toBe(true));
     expect(window.location.search).toBe("");
     expect(redirected()).toBe(false);
+    // There was no session to expire: HA turned the code down (R32).
+    expect(connectionLog(errorLog)).toEqual([
+      ["Home Assistant sign-in failed", "Home Assistant rejected the sign-in code"],
+    ]);
   });
 
   it("sign out never reloads onto a callback URL, and goes straight to login", async () => {
@@ -366,10 +556,13 @@ describe("readable errors (data-layer#7)", () => {
   });
 
   it("a dead refresh token reaches REST callers as 'session expired', not the number 2", async () => {
-    storeTokens({ expires: Date.now() - 1000 });
+    storeTokens();
     lib.createConnection.mockResolvedValue(fakeConnection());
     const { socket } = await loadPage();
     await vi.waitFor(() => expect(socket.getConnectionStatus()).toBe("ready"));
+    // The access token expires while the page is open; the refresh token is dead.
+    const later = Date.now() + 2 * 3600_000;
+    vi.spyOn(Date, "now").mockReturnValue(later);
     await expect(socket.getFreshAccessToken()).rejects.toMatchObject({
       message: "Home Assistant session expired",
       code: 2,
