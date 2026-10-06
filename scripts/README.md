@@ -70,9 +70,10 @@ text, re-bless; if it is a card in the wrong place, it is a real bug.
 
 ## Why the mock build
 
-`visual-check.mjs` builds its own bundle with `VITE_HA_URL=""`, so the app runs
-on the `GH_DATA` fallback instead of live house state — otherwise the diff would
-fail whenever a light was on. Env files are read from an empty temp directory so
+`visual-check.mjs` builds its own bundle with `VITE_HA_URL=""`, so the app never
+connects: almost every card shows its "not reported yet" state ("—", a skeleton),
+and the few with a mock (`FanCard`, light layout) draw that — never live house
+state, or the diff would fail whenever a light was on. Env files are read from an empty temp directory so
 a developer's `.env.local` cannot leak the real URL back in, and the output is
 scanned for that URL afterwards as a second check.
 
