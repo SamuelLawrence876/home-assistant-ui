@@ -60,7 +60,7 @@ describe("DeskStripCard before the sensor has reported", () => {
     const { container } = render(<DeskStripCard />);
     expect(meta(container)).toBe("—");
     expect(screen.queryByText("Off")).toBeNull();
-    const sw = screen.getByRole("switch", { name: "Desk strip — not reported yet" });
+    const sw = screen.getByRole("switch", { name: "Desk strip — state unknown" });
     expect(sw).toBeDisabled();
     expect(container.querySelector(".entity-loading")).not.toBeNull();
   });

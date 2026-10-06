@@ -86,7 +86,7 @@ export function AirPurifierCard({ index = 0 }) {
       headRight={
         // role="switch" has no "unknown", so the real state goes in the name.
         <ToggleSwitch on={on && known} onToggle={doToggle} disabled={!known}
-          label={known ? "Air purifier" : `Air purifier — ${unavailable ? "unavailable" : "not reported yet"}`} />
+          label={known ? "Air purifier" : `Air purifier — ${unavailable ? "unavailable" : "state unknown"}`} />
       }
     >
       <EntityGuard status={fanStatus} entityId="fan.core_300s_series">

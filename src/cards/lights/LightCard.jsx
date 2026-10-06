@@ -174,7 +174,7 @@ export function LightCard({ index = 0, entityId }) {
             onToggle={toggle}
             disabled={inert}
             // role="switch" has no "unknown", so the real state goes in the name.
-            label={known ? name : `${name} — ${pending ? "not reported yet" : "unavailable"}`}
+            label={known ? name : `${name} — ${pending ? "state unknown" : "unavailable"}`}
           />
         )
       }

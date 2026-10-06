@@ -251,7 +251,7 @@ describe("LightCard — the mock is layout, never state", () => {
   it("loading (HA down, or mock mode): an em-dash in the header and a switch that isn't on", () => {
     const { container } = render(<LightCard entityId="light.bathroom" />);
     expect(meta(container)).toBe("—");
-    const sw = screen.getByRole("switch", { name: "Bathroom — not reported yet" });
+    const sw = screen.getByRole("switch", { name: "Bathroom — state unknown" });
     expect(sw.getAttribute("aria-checked")).toBe("false");
     expect(sw).toBeDisabled();
   });

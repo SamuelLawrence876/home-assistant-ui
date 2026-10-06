@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useId } from "react";
 import { formatRelativeIso } from "../../lib/format.js";
 import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
 import { callService, imageUrl } from "../../ha/client.js";
@@ -161,6 +161,7 @@ export function VacuumCard({ index = 0 }) {
   /* A button entity's state is when it was last pressed ("unknown" until the
      first press), so only missing or unavailable means Full can't land. */
   const fullDead = !liveFull || liveFull.state === "unavailable";
+  const fullHintId = useId();
   const dndDead = unavailable || !has(liveDnd?.state);
   const settleRef = useRef(null);
   const vacRef = useRef(liveVac);
@@ -188,6 +189,8 @@ export function VacuumCard({ index = 0 }) {
   const actionMode = lockedMode || (cleaning ? "cleaning" : paused ? "paused" : "idle");
   const actionsLocked = unavailable || lockedMode != null;
   const act = (fn) => { setLockedMode(actionMode); fn(); };
+  // Only while Full is on screen (the idle set) and dead for its own reason.
+  const fullHint = actionMode === "idle" && fullDead && !unavailable;
 
   /* Shows the command's outcome straight away, then goes back to what HA says
      if the call fails — or if it resolves and the vacuum never reports a new
@@ -299,13 +302,20 @@ export function VacuumCard({ index = 0 }) {
                 className="btn"
                 onClick={() => act(fullClean)}
                 disabled={actionsLocked || fullDead}
-                title={fullDead && !unavailable ? "The full-clean button isn't available in Home Assistant" : undefined}
+                aria-describedby={fullHint ? fullHintId : undefined}
               >
                 Full
               </button>
             </>
           )}
           <button className="btn ghost" onClick={locate} disabled={unavailable} title="Beep so I can find it">Locate</button>
+          {/* Why Full is dead, on screen. It used to be a title on the disabled
+              button — which can't take focus and shows no tooltip on touch, so
+              on a phone Full just looked broken. Not shown when the whole
+              vacuum is out: the card's own badge already says why. */}
+          {fullHint && (
+            <p className="ws-vac-hint" id={fullHintId}>Full clean isn't available in Home Assistant</p>
+          )}
         </div>
       </div>
 

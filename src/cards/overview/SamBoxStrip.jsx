@@ -210,7 +210,7 @@ export function SamBoxStrip({ compact = false }) {
                to remove. Put the real state in the accessible name instead. */
             aria-label={
               !known
-                ? `SamBox360 power and game session — ${pending ? "not reported yet" : "unavailable"}`
+                ? `SamBox360 power and game session — ${pending ? "state unknown" : "unavailable"}`
                 : powerOnly
                   ? "SamBox360 power — game session unavailable"
                   : "SamBox360 power and game session"
@@ -220,7 +220,7 @@ export function SamBoxStrip({ compact = false }) {
             disabled={!known}
             title={
               !known
-                ? `${PLUG_ENTITY} ${pending ? "has not reported yet" : "is unavailable"}`
+                ? `${PLUG_ENTITY} ${pending ? "state unknown" : "is unavailable"}`
                 : powerOnly
                   ? `${SESSION_SWITCH} is unavailable — this switch only powers the PC`
                   : undefined

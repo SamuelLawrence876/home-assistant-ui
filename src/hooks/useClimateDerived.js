@@ -57,12 +57,28 @@ export function useClimateDerived() {
     : humStale ? (humidity != null ? "Humidity offline · last known" : "Humidity offline")
     : null;
 
+  /* The 24h trace: two series on ONE time axis, slot i the same hour in both.
+     Temperature, the headline, sets the frame — the last 23 recorder hours
+     plus its live reading as "now", or, when it is the stale one, the last 24
+     recorder hours with its newest mean standing as now (the NOW tag and the
+     meta both say last known). Humidity is laid on those same slots, newest
+     recorder hour against newest; a slot it has no value for is null and the
+     chart skips it. The two used to be sliced each by its own stale flag, so a
+     temperature-only dropout left humidity one point longer and its trace ran
+     past the NOW line into the gutter. Recorder hours carry no timestamps by
+     the time they get here, so "newest against newest" is the alignment. */
   const tempHist = rawTemp.length > 0
     ? (tempStale ? [...rawTemp.slice(-24)] : [...rawTemp.slice(-23), temp])
     : temp == null ? [] : [temp];
-  const humHist = rawHum.length > 0
-    ? (humStale || humidity == null ? [...rawHum.slice(-24)] : [...rawHum.slice(-23), humidity])
-    : humidity == null ? [] : [humidity];
+  const nowSlot = !tempStale && tempHist.length > 0;
+  const recSlots = tempHist.length - (nowSlot ? 1 : 0);
+  // slice(-0) is the whole array, so an empty frame has to be special-cased.
+  const humRec = recSlots > 0 ? rawHum.slice(-recSlots) : [];
+  const humHist = [
+    ...Array(recSlots - humRec.length).fill(null),
+    ...humRec,
+    ...(nowSlot ? [humStale ? null : humidity] : []),
+  ];
 
   // True min/max from recorder (not from hourly means) for accurate HIGH/LOW
   // labels, falling back to the hourly means. With no recorder history at all

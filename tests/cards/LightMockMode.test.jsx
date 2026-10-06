@@ -38,12 +38,12 @@ describe("light cards in mock mode", () => {
     expect(container.querySelectorAll(".entity-loading")).toHaveLength(4);
     expect(container.textContent).not.toMatch(/NaN|undefined|Invalid Date/);
     // The desk strip used to read a confident "Off" here, with a live switch.
-    expect(screen.getByRole("switch", { name: "Desk strip — not reported yet" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Desk strip — state unknown" })).toBeDisabled();
     // And the bulbs read the mock's "On · 71%" / "On · 78%" beside switches
     // drawn on — in the header, outside the skeleton. Every header is "—".
     expect([...container.querySelectorAll(".meta")].map((m) => m.textContent)).toEqual(["—", "—", "—", "—"]);
     for (const name of ["Living room", "Bedroom bulb", "Bathroom"]) {
-      expect(screen.getByRole("switch", { name: `${name} — not reported yet` })).toBeInTheDocument();
+      expect(screen.getByRole("switch", { name: `${name} — state unknown` })).toBeInTheDocument();
     }
     for (const sw of screen.getAllByRole("switch")) {
       expect(sw).toBeDisabled();

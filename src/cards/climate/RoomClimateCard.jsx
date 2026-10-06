@@ -65,8 +65,11 @@ export function RoomClimateCard({ index = 0, compact }) {
   const tLo = tMin - tPadded;
   const tHi = tMax + tPadded;
 
-  const hMin = Math.min(...humHist);
-  const hMax = Math.max(...humHist);
+  // humHist shares tempHist's slots and is null where humidity has no value
+  // for that hour — Math.min would read a null as 0, so only real ones count.
+  const humVals = humHist.filter((v) => v != null);
+  const hMin = humVals.length ? Math.min(...humVals) : 0;
+  const hMax = humVals.length ? Math.max(...humVals) : 100;
   const hRange = Math.max(2, hMax - hMin);
   const hLo = hMin - hRange * 0.18;
   const hHi = hMax + hRange * 0.18;
@@ -76,7 +79,8 @@ export function RoomClimateCard({ index = 0, compact }) {
   const yHum  = (v) => PAD_T + (1 - (v - hLo) / (hHi - hLo)) * innerH;
 
   const tempPts = tempHist.map((v, i) => ({ x: xAt(i), y: yTemp(v) }));
-  const humPts  = humHist.map((v, i)  => ({ x: xAt(i), y: yHum(v) }));
+  // Same x for the same slot as temperature; a null slot is skipped, not drawn at 0.
+  const humPts  = humHist.flatMap((v, i) => (v == null ? [] : [{ x: xAt(i), y: yHum(v) }]));
   const tempLine = smoothPath(tempPts);
   const humLine  = smoothPath(humPts);
   const baseY = PAD_T + innerH;
