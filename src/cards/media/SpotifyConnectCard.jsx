@@ -3,14 +3,40 @@ import { isSpotifyConfigured, startSpotifyAuth } from "../../ha/spotify.js";
 import { Card } from "../../components/Card.jsx";
 import { useSpotifyConnect, _linkBtnStyle } from "../../cards/media/spotifyShared.jsx";
 
+/* The Spotify Connect add-on's device name for the Pi. */
+const PI_SPEAKER = "Home Assistant";
+
+/* What this card can honestly say about the Pi speaker.
+
+   ENTITY is the HA Spotify integration's *account* player: its state follows
+   whichever device the linked account is playing on, and a guest casting to
+   the Pi from their own account never shows up in it at all. So the only
+   thing it can confirm is "the linked account is using the Pi" (source is the
+   Pi). Anything else leaves the speaker's state unknown — never "Available".
+   The add-on runs independently of the integration, so an unavailable
+   integration doesn't make the speaker unavailable either: also unknown. */
+function speakerStatus(status, m) {
+  if (status === "loading") return { meta: "—", line: "—" };
+  if (status !== "ready") return { meta: "—", line: "Status unknown · Spotify integration unavailable" };
+  const a = m.attributes || {};
+  const active = m.state === "playing" || m.state === "paused";
+  if (a.source === PI_SPEAKER && m.state === "playing") {
+    return { meta: "In use", line: `Playing · ${a.media_title || "—"}`, onPi: true, playing: true };
+  }
+  if (a.source === PI_SPEAKER && m.state === "paused") return { meta: "Paused", line: "Paused", onPi: true };
+  if (active && a.source) return { meta: "—", line: `Linked account on ${a.source}` };
+  return { meta: "—", line: "Not in use by the linked account" };
+}
+
 export function SpotifyConnectCard({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
-  const { entity: m } = useEntityStatus(ENTITY);
+  const { entity: m, status } = useEntityStatus(ENTITY);
   const a = m?.attributes || {};
   const sources = Array.isArray(a.source_list) ? a.source_list : [];
   const activeSource = a.source || null;
-  const playing = m?.state === "playing";
-  const paused = m?.state === "paused";
+  const speaker = speakerStatus(status, m);
+  const playing = Boolean(speaker.playing);
+  const onPi = Boolean(speaker.onPi);
   const [spotifyConnected, setSpotifyConnected] = useSpotifyConnect();
   const configured = isSpotifyConfigured();
 
@@ -19,7 +45,7 @@ export function SpotifyConnectCard({ index = 0 }) {
       index={index}
       eyebrow="Spotify Connect · Pi speaker"
       title="Guest playback"
-      meta={playing ? "In use" : "Available"}
+      meta={speaker.meta}
     >
       <div
         style={{
@@ -37,7 +63,7 @@ export function SpotifyConnectCard({ index = 0 }) {
             width: 40,
             height: 40,
             borderRadius: 10,
-            background: playing || paused
+            background: onPi
               ? "linear-gradient(135deg, #1db954, #1ed760)"
               : "color-mix(in oklch, var(--ink), transparent 88%)",
             display: "flex",
@@ -62,11 +88,7 @@ export function SpotifyConnectCard({ index = 0 }) {
               marginTop: 2,
             }}
           >
-            {playing
-              ? `Playing · ${a.media_title || "unknown"}`
-              : paused
-                ? "Paused"
-                : "Ready for connections"}
+            {speaker.line}
           </div>
         </div>
         <div
@@ -74,7 +96,7 @@ export function SpotifyConnectCard({ index = 0 }) {
             width: 10,
             height: 10,
             borderRadius: "50%",
-            background: playing || paused ? "#1db954" : "var(--ink-3)",
+            background: onPi ? "#1db954" : "var(--ink-3)",
             boxShadow: playing ? "0 0 8px #1db954" : "none",
             flexShrink: 0,
             transition: "background 0.3s, box-shadow 0.3s",

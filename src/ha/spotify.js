@@ -46,11 +46,27 @@ function saveToken(t) {
   writeKey(TOKEN_KEY, JSON.stringify(t));
 }
 
+/* Every path that drops the token comes through clearSpotifyToken — Disconnect,
+   socket.js signOut(), a rejected refresh, a second 401 — so this is the one
+   place that can tell the UI. cards/media/spotifyShared.jsx subscribes, which
+   re-gates every Spotify card at once rather than only a card whose own call
+   happened to notice. */
+const clearListeners = new Set();
+
+export function onSpotifyTokenCleared(fn) {
+  clearListeners.add(fn);
+  return () => clearListeners.delete(fn);
+}
+
 /* Drops every Spotify credential this app owns — used by the Disconnect button
    and by socket.js signOut(). Spotify publishes no token-revocation endpoint,
-   so removing the local copy is all we can do. */
+   so removing the local copy is all we can do. A listener that throws must not
+   stop the clear (signOut relies on it), so each one is fenced. */
 export function clearSpotifyToken() {
   SPOTIFY_KEYS.forEach(dropKey);
+  clearListeners.forEach((fn) => {
+    try { fn(); } catch (e) { console.warn("[spotify] token-cleared listener failed", e); }
+  });
 }
 
 export function isSpotifyConfigured() {
@@ -312,18 +328,6 @@ export async function getPlaylists(limit = 20) {
 
 export async function getCurrentPlayback() {
   return spotifyApi("/me/player");
-}
-
-export async function getRecentlyPlayed(limit = 10) {
-  const data = await spotifyApi(`/me/player/recently-played?limit=${limit}`);
-  return (data?.items || []).map((i) => ({
-    name: i.track.name,
-    artist: i.track.artists?.map((a) => a.name).join(", ") || "",
-    album: i.track.album?.name || "",
-    image: i.track.album?.images?.[0]?.url || null,
-    uri: i.track.uri,
-    contextUri: i.context?.uri || null,
-  }));
 }
 
 export async function getDevices() {

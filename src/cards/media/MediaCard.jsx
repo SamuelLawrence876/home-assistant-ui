@@ -3,32 +3,35 @@ import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { useRangeCommit } from "./spotifyShared.jsx";
 
 /* ----------------------------------------------------------------
    Media — Spotify now playing (compact, Overview tab)
    ----------------------------------------------------------------*/
 
-/* The only keys that move a range input. Focus moves on keydown, so the keyup for
-   Tab is delivered to the slider you just landed on — committing on every keyup
-   means merely tabbing past the volume control writes a volume_set to HA. */
-const RANGE_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+/* HA strips attributes from an unavailable player, so a missing volume_level
+   is unknown, not 0% — null renders as an em-dash. */
+const volPct = (v) => (Number.isFinite(v) ? Math.round(v * 100) : null);
 
 export function MediaCard({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
   const { entity: m, status } = useEntityStatus(ENTITY);
+  /* Only a "ready" player gets controls or a Playing/Paused/Idle claim. HA
+     silently skips a service call to an unavailable entity (it resolves, no
+     error), so an optimistic Play there would stick on Pause for good. */
+  const live = status === "ready";
   const a = m?.attributes || {};
   const duration = Number(a.media_duration) || 0;
-  const playing = m?.state === "playing";
-  const paused = m?.state === "paused";
-  const idle = !playing && !paused;
+  const playing = live && m.state === "playing";
+  const paused = live && m.state === "paused";
+  const idle = live && !playing && !paused;
   const [isPlaying, setIsPlaying] = useState(playing);
   const [pos, setPos] = useState(Number(a.media_position) || 0);
-  const [vol, setVol] = useState(Math.round((a.volume_level || 0) * 100));
+  const [vol, setVol] = useState(() => volPct(a.volume_level));
   useEffect(() => {
-    if (!m) return;
-    setIsPlaying(m.state === "playing");
-    if (m.attributes?.media_position != null) setPos(Number(m.attributes.media_position));
-    if (m.attributes?.volume_level != null) setVol(Math.round(m.attributes.volume_level * 100));
+    setIsPlaying(m?.state === "playing");
+    if (m?.attributes?.media_position != null) setPos(Number(m.attributes.media_position));
+    setVol(volPct(m?.attributes?.volume_level));
   }, [m?.state, m?.attributes?.media_position, m?.attributes?.volume_level]);
   useEffect(() => {
     if (!isPlaying || !duration) return;
@@ -44,22 +47,29 @@ export function MediaCard({ index = 0 }) {
   mRef.current = m;
 
   function playPause() {
+    if (!live) return;
     const next = !isPlaying;
     setIsPlaying(next);
     callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY })
       .catch(() => setIsPlaying(mRef.current?.state === "playing"));
   }
   function commitVolume(v) {
+    if (!live) return;
     setVol(v);
-    callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 }).catch(() => {});
+    callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 })
+      .catch(() => setVol(volPct(mRef.current?.attributes?.volume_level)));
   }
+  const volRef = useRangeCommit(commitVolume);
+  const volUnknown = vol == null;
 
   const haUrl = import.meta.env.VITE_HA_URL || "";
-  const art = a.entity_picture && !idle ? `${haUrl}${a.entity_picture}` : null;
-  const dimmed = idle ? 0.4 : 1;
+  const art = live && a.entity_picture && !idle ? `${haUrl}${a.entity_picture}` : null;
+  const dimmed = !live || idle ? 0.4 : 1;
+  // "loading" also covers a dropped socket and mock mode — em-dash, not "connecting…".
+  const meta = !live ? (status === "loading" ? "—" : "Unavailable") : idle ? "Idle" : isPlaying ? "Playing" : "Paused";
 
   return (
-    <Card index={index} eyebrow="Spotify · Now playing" meta={idle ? "Idle" : isPlaying ? "Playing" : "Paused"}>
+    <Card index={index} eyebrow="Spotify · Now playing" meta={meta}>
       <EntityGuard status={status} entityId={ENTITY}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div
@@ -82,10 +92,10 @@ export function MediaCard({ index = 0 }) {
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {idle ? "Nothing playing" : a.media_title}
+            {!live ? "—" : idle ? "Nothing playing" : a.media_title || "—"}
           </div>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {idle ? "Spotify Connect" : a.media_artist}
+            {!live || idle ? "Spotify Connect" : a.media_artist || "—"}
           </div>
         </div>
       </div>
@@ -95,20 +105,21 @@ export function MediaCard({ index = 0 }) {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, opacity: dimmed }}>
-        <button className="btn icon" onClick={playPause} aria-label={isPlaying ? "Pause" : "Play"} style={{ width: 32, height: 32 }}>
+        <button className="btn icon" onClick={playPause} disabled={!live} aria-label={isPlaying ? "Pause" : "Play"} style={{ width: 32, height: 32 }}>
           {isPlaying ? "⏸" : "▶"}
         </button>
         <input
-          type="range" min="0" max="100" value={vol}
+          ref={volRef}
+          type="range" min="0" max="100" value={vol ?? 0}
           aria-label="Volume"
+          aria-valuetext={volUnknown ? "Unknown" : `${vol}%`}
+          disabled={!live || volUnknown}
           onChange={(e) => setVol(Number(e.target.value))}
-          onPointerUp={(e) => commitVolume(Number(e.target.value))}
-          onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) commitVolume(Number(e.target.value)); }}
           className="gh-slider"
           style={{ flex: 1, accentColor: "#1db954" }}
         />
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--ink-3)", minWidth: 28, textAlign: "right" }}>
-          {vol}%
+          {volUnknown ? "—" : `${vol}%`}
         </span>
       </div>
       </EntityGuard>

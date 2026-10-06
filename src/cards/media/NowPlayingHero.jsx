@@ -3,27 +3,43 @@ import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { useRangeCommit } from "./spotifyShared.jsx";
 
-/* The only keys that move a range input. Focus moves on keydown, so the keyup for
-   Tab is delivered to the slider you just landed on — committing on every keyup
-   means merely tabbing past the volume control writes a volume_set to HA. */
-const RANGE_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+/* HA strips attributes from an unavailable player, so a missing volume_level
+   is unknown, not 0% — null renders as an em-dash. */
+const volPct = (v) => (Number.isFinite(v) ? Math.round(v * 100) : null);
+
+/* Where HA says the track is now. media_position is stamped at
+   media_position_updated_at, and HA's Spotify integration only polls, so
+   while playing the stamp can be well behind. Read in a failure handler,
+   never during render. */
+function haPosition(ent) {
+  const p = Number(ent?.attributes?.media_position);
+  if (!Number.isFinite(p)) return 0;
+  if (ent.state !== "playing") return p;
+  const at = Date.parse(ent.attributes.media_position_updated_at);
+  return Number.isFinite(at) ? p + Math.max(0, (Date.now() - at) / 1000) : p;
+}
 
 export function NowPlayingHero({ index = 0 }) {
   const ENTITY = "media_player.spotify_samuel_lawrence";
   const { entity: m, status: npStatus } = useEntityStatus(ENTITY);
+  /* Only a "ready" player is worth a control or a claim. HA silently skips a
+     service call to an unavailable entity — it resolves, no error — so an
+     optimistic Play would flip to Pause and stay there with nothing to revert
+     it. Not ready: controls are disabled and the header says what we know. */
+  const live = npStatus === "ready";
   const a = m?.attributes || {};
   const duration = Number(a.media_duration) > 0 ? Number(a.media_duration) : 0;
   const hasDuration = duration > 0;
   const [pos, setPos] = useState(a.media_position || 0);
   const [playing, setPlaying] = useState(m?.state === "playing");
-  const [vol, setVol] = useState(Math.round((a.volume_level || 0) * 100));
-  const idle = m && m.state !== "playing" && m.state !== "paused";
+  const [vol, setVol] = useState(() => volPct(a.volume_level));
+  const idle = live && m.state !== "playing" && m.state !== "paused";
   useEffect(() => {
-    if (!m) return;
-    setPlaying(m.state === "playing");
-    if (m.attributes?.media_position != null) setPos(m.attributes.media_position);
-    if (m.attributes?.volume_level != null) setVol(Math.round(m.attributes.volume_level * 100));
+    setPlaying(m?.state === "playing");
+    if (m?.attributes?.media_position != null) setPos(m.attributes.media_position);
+    setVol(volPct(m?.attributes?.volume_level));
   }, [m?.state, m?.attributes?.media_position, m?.attributes?.volume_level]);
   // Revert from HA's truth at failure time, not the boolean captured at click
   // time — the resync effect only fires on a changed state, so a stale revert sticks.
@@ -31,20 +47,26 @@ export function NowPlayingHero({ index = 0 }) {
   mRef.current = m;
 
   function playPause() {
+    if (!live) return;
     const next = !playing;
     setPlaying(next);
     callService("media_player", next ? "media_play" : "media_pause", { entity_id: ENTITY })
       .catch(() => setPlaying(mRef.current?.state === "playing"));
   }
   function seek(toSec) {
-    if (!hasDuration) return;
+    if (!live || !hasDuration) return;
     setPos(toSec);
-    callService("media_player", "media_seek", { entity_id: ENTITY, seek_position: toSec }).catch(() => {});
+    callService("media_player", "media_seek", { entity_id: ENTITY, seek_position: toSec })
+      .catch(() => setPos(Math.min(haPosition(mRef.current), duration)));
   }
   function commitVolume(v) {
+    if (!live) return;
     setVol(v);
-    callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 }).catch(() => {});
+    callService("media_player", "volume_set", { entity_id: ENTITY, volume_level: v / 100 })
+      .catch(() => setVol(volPct(mRef.current?.attributes?.volume_level)));
   }
+  const volRef = useRangeCommit(commitVolume);
+  const volUnknown = vol == null;
   useEffect(() => {
     if (!playing || !hasDuration) return;
     // Clamp, don't wrap: modulo restarts the bar (and the countdown) from zero
@@ -58,13 +80,20 @@ export function NowPlayingHero({ index = 0 }) {
     return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
   };
 
+  /* "loading" also covers a dropped socket and mock mode, so it gets the
+     em-dash, not "connecting…". Not ready, the title names the card instead
+     of claiming a listening state; the eyebrow drops its "Now playing" so the
+     two don't read the same words twice. */
+  const unknownMeta = npStatus === "loading" ? "—" : "Unavailable";
+  const artistLine = [a.media_artist, a.media_album_name].filter(Boolean).join(" · ");
+
   return (
     <Card
       index={index}
       className="weather-hero"
-      eyebrow={`Now playing · ${a.source || "Spotify"}`}
-      title={idle ? "Nothing playing" : "Currently listening"}
-      meta={idle ? "Idle" : playing ? "Playing" : "Paused"}
+      eyebrow={live ? `Now playing · ${a.source || "Spotify"}` : "Spotify"}
+      title={!live ? "Now playing" : idle ? "Nothing playing" : "Currently listening"}
+      meta={!live ? unknownMeta : idle ? "Idle" : playing ? "Playing" : "Paused"}
     >
       <EntityGuard status={npStatus} entityId={ENTITY}>
       <div
@@ -78,12 +107,12 @@ export function NowPlayingHero({ index = 0 }) {
             height: 180,
             borderRadius: 22,
             backgroundImage:
-              a.entity_picture && !idle
+              live && a.entity_picture && !idle
                 ? `url(${import.meta.env.VITE_HA_URL}${a.entity_picture})`
                 : undefined,
             backgroundSize: "cover",
             backgroundPosition: "center",
-            opacity: idle ? 0.4 : 1,
+            opacity: !live || idle ? 0.4 : 1,
             transition: "opacity 0.3s ease",
           }}
         />
@@ -98,7 +127,7 @@ export function NowPlayingHero({ index = 0 }) {
               color: "var(--ink)",
             }}
           >
-            {a.media_title}
+            {a.media_title || "—"}
           </div>
           <div
             style={{
@@ -110,7 +139,7 @@ export function NowPlayingHero({ index = 0 }) {
               marginTop: 8,
             }}
           >
-            {a.media_artist} · {a.media_album_name}
+            {artistLine || "—"}
           </div>
 
           <div
@@ -148,16 +177,31 @@ export function NowPlayingHero({ index = 0 }) {
             className="nowplaying-controls"
             style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18 }}
           >
-            <button className="btn icon" aria-label="Back 15 seconds" onClick={() => seek(Math.max(0, pos - 15))}>⏮</button>
+            <button
+              className="btn icon"
+              aria-label="Back 15 seconds"
+              disabled={!live || !hasDuration}
+              onClick={() => seek(Math.max(0, pos - 15))}
+            >
+              ⏮
+            </button>
             <button
               className="btn icon primary"
               onClick={playPause}
               aria-label={playing ? "Pause" : "Play"}
+              disabled={!live}
               style={{ width: 48, height: 48 }}
             >
               {playing ? "⏸" : "▶"}
             </button>
-            <button className="btn icon" aria-label="Forward 15 seconds" onClick={() => seek(Math.min(duration - 1, pos + 15))}>⏭</button>
+            <button
+              className="btn icon"
+              aria-label="Forward 15 seconds"
+              disabled={!live || !hasDuration}
+              onClick={() => seek(Math.min(duration - 1, pos + 15))}
+            >
+              ⏭
+            </button>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 12, flex: 1, minWidth: 120 }}>
               <span
                 style={{
@@ -171,19 +215,20 @@ export function NowPlayingHero({ index = 0 }) {
                 Vol
               </span>
               <input
+                ref={volRef}
                 type="range"
                 min="0"
                 max="100"
-                value={vol}
+                value={vol ?? 0}
                 aria-label="Volume"
+                aria-valuetext={volUnknown ? "Unknown" : `${vol}%`}
+                disabled={!live || volUnknown}
                 onChange={(e) => setVol(Number(e.target.value))}
-                onPointerUp={(e) => commitVolume(Number(e.target.value))}
-                onKeyUp={(e) => { if (RANGE_KEYS.has(e.key)) commitVolume(Number(e.target.value)); }}
                 className="gh-slider"
                 style={{ flex: 1, maxWidth: 200, accentColor: "var(--accent)" }}
               />
               <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)", minWidth: 30, textAlign: "right" }}>
-                {vol}%
+                {volUnknown ? "—" : `${vol}%`}
               </span>
             </div>
           </div>

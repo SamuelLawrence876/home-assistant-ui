@@ -1,5 +1,5 @@
-import { useState, useEffect, useSyncExternalStore } from "react";
-import { isSpotifyConnected, clearSpotifyToken, callbackReady, playUri } from "../../ha/spotify.js";
+import { useState, useEffect, useRef, useSyncExternalStore } from "react";
+import { isSpotifyConnected, clearSpotifyToken, onSpotifyTokenCleared, callbackReady, playUri } from "../../ha/spotify.js";
 
 /* ----------------------------------------------------------------
    Spotify auth — one module-level store, not per-component state.
@@ -7,12 +7,13 @@ import { isSpotifyConnected, clearSpotifyToken, callbackReady, playUri } from ".
    The token lives in localStorage and ha/spotify.js drops it from several
    places (Disconnect, a failed refresh, a 401 mid-session). A useState copy
    per card means only the card that noticed re-gates; Search / Playlists /
-   Queue / Recent carry on rendering against a token that is already gone.
-   Every consumer subscribes here instead, and the snapshot is re-read from
-   the token itself rather than mirrored, so it can't drift from the truth.
+   Queue carry on rendering against a token that is already gone. Every
+   consumer subscribes here instead, and the snapshot is re-read from the
+   token itself rather than mirrored, so it can't drift from the truth.
 
-   This properly belongs beside the token in ha/spotify.js; it sits here
-   because cards/ owns this file.
+   The trigger is spotify.js itself: clearSpotifyToken() notifies, so a token
+   dropped inside *any* call re-gates every card — not just calls that
+   remembered to re-check afterwards (only play() ever did).
    ----------------------------------------------------------------*/
 const authListeners = new Set();
 let authSnapshot = isSpotifyConnected();
@@ -38,6 +39,8 @@ export function setSpotifyConnected(next) {
 
 // Another tab connecting or disconnecting writes the same key.
 window.addEventListener("storage", syncSpotifyAuth);
+// This tab dropping it, from wherever.
+onSpotifyTokenCleared(syncSpotifyAuth);
 
 export function useSpotifyConnect() {
   const connected = useSyncExternalStore(subscribeSpotifyAuth, () => authSnapshot);
@@ -101,15 +104,68 @@ export function useSpotifyPlay() {
     setError(null);
     try { await playUri(uri); }
     catch (e) {
-      // A 401 or a failed refresh inside spotify.js has already binned the
-      // token — re-read it so every card re-gates, not just this one.
-      syncSpotifyAuth();
+      // No re-gating needed here: if spotify.js binned the token, its
+      // clearSpotifyToken() has already told every card.
       if (e.message?.includes("expired")) setError("Session expired");
       else setError("Open Spotify on a device first");
     }
     setTimeout(() => setPlaying(null), 2000);
   }
   return { playing, error, play };
+}
+
+/* ----------------------------------------------------------------
+   Volume slider commit — NowPlayingHero and MediaCard both use it, so
+   the two can't drift apart again.
+
+   Commits on the native `change` event. React's onChange is the `input`
+   event, so it can't be used for this; and the pointerup/keyup wiring this
+   replaced misses assistive tech entirely — a VoiceOver swipe or TalkBack
+   adjust fires input + change and no pointer or key event, so the % moved
+   and Home Assistant never heard. `change` fires once on pointer release,
+   once per keyboard step, and once per AT adjustment. Tabbing past the
+   slider fires nothing.
+
+   Trailing debounce: a held arrow key fires `change` on every auto-repeat,
+   and each one would be a volume_set and a Spotify API call. Only the value
+   the slider settles on is sent. A pending value is flushed on unmount,
+   not dropped.
+
+   The attach effect has no dependency array on purpose: the slider sits
+   inside EntityGuard, which shows a skeleton instead while loading and can
+   remount it when the status changes, so it re-attaches after every render
+   to whichever element is there now.
+   ----------------------------------------------------------------*/
+const RANGE_COMMIT_MS = 300;
+
+export function useRangeCommit(commit) {
+  const el = useRef(null);
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  const pending = useRef(null); // { timer, value }
+
+  useEffect(() => {
+    const node = el.current;
+    if (!node) return undefined;
+    const onChange = () => {
+      clearTimeout(pending.current?.timer);
+      const value = Number(node.value);
+      const timer = setTimeout(() => { pending.current = null; commitRef.current(value); }, RANGE_COMMIT_MS);
+      pending.current = { timer, value };
+    };
+    node.addEventListener("change", onChange);
+    return () => node.removeEventListener("change", onChange);
+  });
+
+  useEffect(() => () => {
+    const p = pending.current;
+    if (!p) return;
+    clearTimeout(p.timer);
+    pending.current = null;
+    commitRef.current(p.value);
+  }, []);
+
+  return el;
 }
 
 export function SpotifyTrackRow({ item, playing, onPlay, subtitle, label }) {
