@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { GH_DATA } from "../../data.js";
 import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
@@ -60,37 +60,59 @@ export function LightCard({ index = 0, entityId }) {
     if (e.attributes?.color_temp_kelvin != null) setKelvin(e.attributes.color_temp_kelvin);
   }, [e?.state, e?.attributes?.brightness, e?.attributes?.rgb_color?.join(","), e?.attributes?.color_temp_kelvin]);
 
+  /* A failed call puts back what HA says *now*, not what the card showed at
+     click time: the light can move under an in-flight call, and the resync
+     effect above only fires when a value changes — so a call that failed and
+     left HA where it was used to leave the optimistic colour / brightness on
+     screen for good (useOptimisticToggle's entityRef exists for the same
+     reason). `prev` names the fields to restore and is the fallback for one
+     HA doesn't report — an off light carries no brightness or colour. */
+  const eRef = useRef(e);
+  eRef.current = e;
+  function restore(prev) {
+    const cur = eRef.current;
+    const a = cur?.attributes || {};
+    if ("on" in prev) setOn(cur ? cur.state === "on" : prev.on);
+    if ("bright" in prev) setB(a.brightness ?? prev.bright);
+    if ("rgb" in prev) setRgb(a.rgb_color ?? prev.rgb);
+    if ("kelvin" in prev) setKelvin(a.color_temp_kelvin ?? prev.kelvin);
+  }
+
   function toggle() {
     if (inert) return;
     const next = !on;
     setOn(next);
-    callService("light", next ? "turn_on" : "turn_off", { entity_id: entityId }).catch(() => setOn(on));
+    callService("light", next ? "turn_on" : "turn_off", { entity_id: entityId }).catch(() => restore({ on }));
   }
 
   function pickColor(p) {
     if (inert) return;
+    const undo = () => restore({ on, rgb, kelvin });
     if (!on) setOn(true);
     if (p.kelvin) {
       setKelvin(p.kelvin);
       setRgb(kelvinToRgb(p.kelvin));
-      callService("light", "turn_on", { entity_id: entityId, color_temp_kelvin: p.kelvin }).catch(() => {});
+      callService("light", "turn_on", { entity_id: entityId, color_temp_kelvin: p.kelvin }).catch(undo);
     } else {
       setRgb(p.rgb);
-      callService("light", "turn_on", { entity_id: entityId, rgb_color: p.rgb }).catch(() => {});
+      callService("light", "turn_on", { entity_id: entityId, rgb_color: p.rgb }).catch(undo);
     }
   }
 
+  // The slider's onChange has already moved `bright` / `kelvin` by the time
+  // these run, so the fallback is the dragged value — HA's is the real target.
   function commitBrightness(v) {
     setB(v);
     if (inert || !on) return;
-    callService("light", "turn_on", { entity_id: entityId, brightness: v }).catch(() => {});
+    callService("light", "turn_on", { entity_id: entityId, brightness: v }).catch(() => restore({ bright: v }));
   }
 
   function commitKelvin(v) {
     setKelvin(v);
     setRgb(kelvinToRgb(v));
     if (inert || !on) return;
-    callService("light", "turn_on", { entity_id: entityId, color_temp_kelvin: v }).catch(() => {});
+    callService("light", "turn_on", { entity_id: entityId, color_temp_kelvin: v })
+      .catch(() => restore({ kelvin: v, rgb: kelvinToRgb(v) }));
   }
 
   const glow = on
@@ -166,7 +188,7 @@ export function LightCard({ index = 0, entityId }) {
             max="255"
             step="1"
             value={bright}
-            disabled={placeholder || !on}
+            disabled={inert || !on}
             onChange={(ev) => setB(Number(ev.target.value))}
             onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
             onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitBrightness(Number(ev.target.value)); }}
@@ -191,7 +213,7 @@ export function LightCard({ index = 0, entityId }) {
             max={maxKelvin}
             step="100"
             value={kelvin}
-            disabled={!on}
+            disabled={inert || !on}
             onChange={(ev) => { setKelvin(Number(ev.target.value)); setRgb(kelvinToRgb(Number(ev.target.value))); }}
             onPointerUp={(ev) => commitKelvin(Number(ev.target.value))}
             onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitKelvin(Number(ev.target.value)); }}
@@ -212,7 +234,7 @@ export function LightCard({ index = 0, entityId }) {
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <PresetSwatches presets={LIGHT_PRESETS} rgb={rgb} onPick={pickColor} targetName={name} />
+            <PresetSwatches presets={LIGHT_PRESETS} rgb={rgb} onPick={pickColor} targetName={name} disabled={inert} />
           </div>
         </div>
       )}

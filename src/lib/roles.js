@@ -44,6 +44,14 @@ const TAB_ACCESS = {
   [ROLE_PENDING]: ["overview"],
 };
 
+/* Own keys only. A plain-object lookup also answers for every
+ * Object.prototype key, so `TAB_ACCESS["constructor"]` is the Object
+ * constructor and `USER_ROLE_MAP["__proto__"]` is Object.prototype — neither
+ * is nullish, so `?? guest` never fires and the fail-closed default is
+ * skipped. Same shape as the ?lean=constructor bug coerceLean in theme.js
+ * guards against. */
+const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
 /* user: result of auth/current_user, or null.
  * connected: whether the HA WS is live.
  * Rules:
@@ -56,11 +64,11 @@ export function deriveRole(user, connected) {
   if (!connected) return ROLES.FAMILY;
   if (!user) return ROLE_PENDING;
   if (user.is_owner || user.is_admin) return ROLES.FAMILY;
-  return USER_ROLE_MAP[user.id] ?? ROLES.GUEST;
+  return own(USER_ROLE_MAP, user.id) ? USER_ROLE_MAP[user.id] : ROLES.GUEST;
 }
 
 export function allowedTabs(role) {
-  return TAB_ACCESS[role] ?? TAB_ACCESS[ROLES.GUEST];
+  return own(TAB_ACCESS, role) ? TAB_ACCESS[role] : TAB_ACCESS[ROLES.GUEST];
 }
 
 export function canSeeTab(role, tabId) {

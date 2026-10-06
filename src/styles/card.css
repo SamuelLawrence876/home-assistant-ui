@@ -235,3 +235,15 @@
 .col-7  { grid-column: span 7; }
 .col-8  { grid-column: span 8; }
 .col-12 { grid-column: span 12; }
+
+/* Presence badge — "Unknown" (no tracker has reported, or the person entity
+   is down). Has to read differently from Away, which is a real answer: no
+   fill, a dashed outline. The border eats 1px a side, so padding gives it
+   back and the pill stays the size of its Home/Away siblings in overview.css
+   (two classes here, so this wins without depending on import order). */
+.presence-badge.unknown {
+  background: transparent;
+  color: var(--ink-3);
+  border: 1px dashed color-mix(in oklch, var(--ink-3), transparent 40%);
+  padding: 3px 9px;
+}

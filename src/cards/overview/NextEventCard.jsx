@@ -6,6 +6,24 @@ import { Card } from "../../components/Card.jsx";
 
 const HOUR_MS = 3600_000;
 
+const plural = (n) => `${n} ${n === 1 ? "event" : "events"}`;
+const validDate = (d) => (d && !Number.isNaN(d.getTime()) ? d : null);
+
+/* All-day events arrive as a bare "YYYY-MM-DD". `new Date("2026-10-06")` reads
+   that as UTC midnight — 01:00 in BST — so today's all-day event fell to the
+   already-started filter an hour into the day, and the card then said "Nothing
+   scheduled this week". A calendar date is a local date. Anything not in
+   that shape goes through Date, and is dropped (null) if it can't be read. */
+function parseLocalDate(s) {
+  const m = typeof s === "string" ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(s) : null;
+  if (!m) return typeof s === "string" ? validDate(new Date(s)) : null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]) - 1, Number(m[3])];
+  const date = new Date(y, mo, d);
+  // A date that rolled over (2026-02-31 → 3 March) is not the date HA sent.
+  return date.getFullYear() === y && date.getMonth() === mo && date.getDate() === d ? date : null;
+}
+const nextDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+
 /* Empty and unreachable are different answers. useCalendarEvents' own contract
    says an empty list with an error set means "we don't know", not "nothing is
    scheduled" — and when the socket isn't ready it returns early, so `loading`
@@ -20,9 +38,9 @@ function nextState({ connStatus, dashReady, liveMode, loading, error, count }) {
   const offline = connStatus !== "ready";
 
   if (count > 0) {
-    if (offline) return { meta: `${count} events · not connected`, body: null };
-    if (error) return { meta: `${count} events · may be out of date`, body: null };
-    return { meta: `${count} events`, body: null };
+    if (offline) return { meta: `${plural(count)} · not connected`, body: null };
+    if (error) return { meta: `${plural(count)} · may be out of date`, body: null };
+    return { meta: plural(count), body: null };
   }
   if (connecting) return { meta: "connecting…", body: "Connecting to Home Assistant…" };
   if (offline) return { meta: "not connected", body: "Calendar unavailable — not connected to Home Assistant." };
@@ -68,20 +86,33 @@ export function NextEventCard({ index = 0 }) {
 
   const { events, loading, error } = useCalendarEvents(calendarIds, startISO, endISO);
 
-  const upcoming = useMemo(() => {
-    if (!events.length) return [];
-    return events
+  /* `shown` is the date the row is labelled with. An all-day event is kept
+     while any of it is still to come — HA's end date is exclusive, so a
+     holiday that began yesterday is still on today, and reads "Today". A timed
+     event that has already started is left out on purpose (a test pins it).
+     An unreadable start is dropped, never rendered as "Invalid Date". */
+  const { upcoming, total } = useMemo(() => {
+    if (!events.length) return { upcoming: [], total: 0 };
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const all = events
       .map((ev) => {
-        const startRaw = ev.start?.dateTime || ev.start?.date;
-        const allDay = !ev.start?.dateTime;
-        const start = startRaw ? new Date(startRaw) : null;
-        if (!start || start < now) return null;
         const calName = calendarEntities.find((e) => e.entity_id === ev.cal_entity_id)?.attributes?.friendly_name || "";
-        return { summary: ev.summary, start, allDay, calName };
+        if (ev.start?.dateTime) {
+          const start = validDate(new Date(ev.start.dateTime));
+          if (!start || start < now) return null;
+          return { summary: ev.summary, shown: start, allDay: false, calName };
+        }
+        const start = parseLocalDate(ev.start?.date);
+        if (!start) return null;
+        const endRaw = parseLocalDate(ev.end?.date);
+        const end = endRaw && endRaw > start ? endRaw : nextDay(start);
+        if (end <= today) return null;
+        return { summary: ev.summary, shown: start < today ? today : start, allDay: true, calName };
       })
       .filter(Boolean)
-      .sort((a, b) => a.start - b.start)
-      .slice(0, 3);
+      .sort((a, b) => a.shown - b.shown);
+    // The meta line counts the week, not the three rows that fit.
+    return { upcoming: all.slice(0, 3), total: all.length };
   }, [events, nowMs]);
 
   function fmtDate(d, allDay) {
@@ -100,7 +131,7 @@ export function NextEventCard({ index = 0 }) {
     liveMode: calendarIds.length > 0,
     loading,
     error,
-    count: upcoming.length,
+    count: total,
   });
 
   return (
@@ -118,7 +149,7 @@ export function NextEventCard({ index = 0 }) {
                   {ev.summary}
                 </div>
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)", marginTop: 1 }}>
-                  {fmtDate(ev.start, ev.allDay)}
+                  {fmtDate(ev.shown, ev.allDay)}
                 </div>
               </div>
             </div>
