@@ -77,12 +77,20 @@ export function NewEventDialog({ onClose, calendars, defaultCalendarId, initial,
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
+    /* A cleared date or time field parses to an Invalid Date, and every
+       comparison against NaN is false — so the end-after-start check waved it
+       through and "NaN-NaN-NaN" went to HA. Refuse it here, in words. */
+    const unreadable = () => {
+      setError("Couldn't read that date or time. Check them and try again.");
+      setSubmitting(false);
+    };
     try {
       const data = { summary: title.trim() };
       if (location.trim()) data.location = location.trim();
       if (allDay) {
-        data.start_date = date;
         const d = new Date(`${date}T00:00:00`);
+        if (Number.isNaN(d.getTime())) return unreadable();
+        data.start_date = date;
         d.setDate(d.getDate() + 1);
         data.end_date = ymd(d);
       } else {
@@ -92,13 +100,16 @@ export function NewEventDialog({ onClose, calendars, defaultCalendarId, initial,
         sd.setHours(sh, sm, 0, 0);
         const ed = new Date(`${date}T00:00:00`);
         ed.setHours(eh, em, 0, 0);
+        const startISO = toLocalISOWithOffset(sd);
+        const endISO = toLocalISOWithOffset(ed);
+        if (!startISO || !endISO) return unreadable();
         if (ed <= sd) {
           setError("End time must be after start time.");
           setSubmitting(false);
           return;
         }
-        data.start_date_time = toLocalISOWithOffset(sd);
-        data.end_date_time = toLocalISOWithOffset(ed);
+        data.start_date_time = startISO;
+        data.end_date_time = endISO;
       }
       await callService("calendar", "create_event", data, { entity_id: calendarId });
       setTitle("");

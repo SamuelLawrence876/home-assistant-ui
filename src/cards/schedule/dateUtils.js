@@ -1,7 +1,12 @@
 /* "2026-05-22T14:30:00+01:00" style — HA accepts ISO with offset and
    stores the absolute instant correctly. Avoid bare local strings since
-   HA's interpretation depends on the calendar's TZ. */
+   HA's interpretation depends on the calendar's TZ.
+
+   An Invalid Date returns null rather than "NaN-NaN-NaNTNaN:NaN:00+NaN:NaN":
+   this string goes straight into calendar.create_event, so the caller has to
+   be made to notice and say so instead of posting it. */
 export function toLocalISOWithOffset(d) {
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return null;
   const pad = (n) => String(n).padStart(2, "0");
   const offMin = -d.getTimezoneOffset();
   const sign = offMin >= 0 ? "+" : "-";

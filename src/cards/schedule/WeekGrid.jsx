@@ -101,7 +101,10 @@ export function WeekGrid({
   for (let h = startHour; h <= endHour; h++) hours.push(h);
 
   const nowOffset = (now - startHour) * slotsPerHour * slotPx;
-  const showNow = now >= startHour && now <= endHour;
+  /* The last row runs endHour → endHour + 1 (the columns below are drawn that
+     tall), so the line belongs there too. `<= endHour` hid it for the final
+     hour of every evening, which is when a wall dashboard gets looked at. */
+  const showNow = now >= startHour && now < endHour + 1;
 
   /* Click anywhere in a day column → snap to nearest 30-min slot and hand the
      caller a pre-fill for the new-event dialog. */
