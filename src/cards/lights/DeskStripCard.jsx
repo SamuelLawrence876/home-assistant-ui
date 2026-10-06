@@ -17,7 +17,10 @@ import { parseGoveeProps } from "./goveeUtils.js";
    Govee poll failed) the card has no strip state to show — and a
    confident "Off" beside a live switch is the dead-plug-looks-off
    conflation SamBoxStrip was rewritten to remove. So: em-dash or
-   "Unavailable", every control disabled, nothing sent.
+   "Unavailable", every control disabled, nothing sent. Likewise when the
+   sensor is fine but Govee says the strip itself is offline (unplugged,
+   off Wi-Fi): its powerState is then only the last thing it said, and a
+   command goes nowhere — "Offline", same treatment.
    ----------------------------------------------------------------*/
 const ENTITY = "sensor.desk_strip_state";
 
@@ -49,14 +52,18 @@ const GOVEE_PRESETS = [
 
 export function DeskStripCard({ index = 0 }) {
   const { entity: live, status } = useEntityStatus(ENTITY);
-  const known = status === "ready";
   const hw = useMemo(() => parseGoveeProps(live?.attributes), [live?.attributes?.properties]);
+  // Only an explicit `online: false` counts; a payload without the field is
+  // read as before.
+  const offline = status === "ready" && hw.online === false;
+  const known = status === "ready" && !offline;
 
   const [on, setOn] = useState(false);
   // null = the strip hasn't reported it and nobody has set it here, so the
-  // readout is an em-dash rather than a made-up 100% / 2700K.
+  // readout is an em-dash (and no swatch is pressed) rather than a made-up
+  // 100% / 2700K / Amber.
   const [bright, setB] = useState(null);
-  const [rgb, setRgb] = useState([255, 198, 130]);
+  const [rgb, setRgb] = useState(null);
   const [kelvin, setKelvin] = useState(null);
   const userActedAt = useRef(0);
   const lastCmdTime = useRef(0);
@@ -184,12 +191,16 @@ export function DeskStripCard({ index = 0 }) {
   const pending = status === "loading";
   const shownBright = known ? bright : null;
   const shownKelvin = known ? kelvin : null;
+  // Orb paint for a lit strip that reported no colour. Decoration only —
+  // never handed to the swatches as the strip's colour.
+  const paint = rgb || [255, 198, 130];
+  const why = pending ? "not reported yet" : offline ? "offline" : "unavailable";
   const meta = !known
-    ? pending ? "—" : "Unavailable"
+    ? pending ? "—" : offline ? "Offline" : "Unavailable"
     : on ? (bright != null ? `On · ${bright}%` : "On") : "Off";
 
   const glow = lit
-    ? `0 0 24px ${rgbStr(rgb)}33, 0 0 80px ${rgbStr(rgb)}1f`
+    ? `0 0 24px ${rgbStr(paint)}33, 0 0 80px ${rgbStr(paint)}1f`
     : "none";
 
   return (
@@ -204,7 +215,7 @@ export function DeskStripCard({ index = 0 }) {
           onToggle={toggle}
           disabled={!known}
           // role="switch" has no "unknown", so the real state goes in the name.
-          label={known ? "Desk strip" : `Desk strip — ${pending ? "not reported yet" : "unavailable"}`}
+          label={known ? "Desk strip" : `Desk strip — ${why}`}
         />
       }
     >
@@ -224,10 +235,10 @@ export function DeskStripCard({ index = 0 }) {
             height: 72,
             borderRadius: "50%",
             background: lit
-              ? `radial-gradient(circle at 32% 32%, white 0%, ${rgbStr(rgb)} 55%, ${rgbStr([
-                  Math.max(0, rgb[0] - 60),
-                  Math.max(0, rgb[1] - 60),
-                  Math.max(0, rgb[2] - 60),
+              ? `radial-gradient(circle at 32% 32%, white 0%, ${rgbStr(paint)} 55%, ${rgbStr([
+                  Math.max(0, paint[0] - 60),
+                  Math.max(0, paint[1] - 60),
+                  Math.max(0, paint[2] - 60),
                 ])} 100%)`
               : "color-mix(in oklch, var(--ink), transparent 88%)",
             boxShadow: glow,
@@ -256,7 +267,7 @@ export function DeskStripCard({ index = 0 }) {
             // reported one, say so rather than announce the parked thumb.
             aria-valuetext={shownBright != null ? `${shownBright}%` : "unknown"}
             className="gh-slider"
-            style={{ width: "100%", accentColor: lit ? rgbStr(rgb) : "var(--ink-4)" }}
+            style={{ width: "100%", accentColor: lit ? rgbStr(paint) : "var(--ink-4)" }}
           />
         </div>
       </div>
@@ -293,7 +304,7 @@ export function DeskStripCard({ index = 0 }) {
       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <PresetSwatches presets={GOVEE_PRESETS} rgb={rgb} onPick={pickColor} targetName="Desk strip" disabled={!known} />
+          <PresetSwatches presets={GOVEE_PRESETS} rgb={known ? rgb : null} onPick={pickColor} targetName="Desk strip" disabled={!known} />
         </div>
       </div>
       </EntityGuard>

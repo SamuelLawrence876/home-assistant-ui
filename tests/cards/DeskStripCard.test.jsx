@@ -130,7 +130,16 @@ describe("parseGoveeProps", () => {
       parseGoveeProps({
         properties: [{ online: true }, { powerState: "on" }, { brightness: 82 }, { color: { r: 1, g: 2, b: 3 } }, { colorTem: 4000 }],
       }),
-    ).toEqual({ power: "on", brightness: 82, color: [1, 2, 3], kelvin: 4000 });
+    ).toEqual({ online: true, power: "on", brightness: 82, color: [1, 2, 3], kelvin: 4000 });
+  });
+
+  it("reads online as Govee sends it, boolean or string, and nothing else", () => {
+    const online = (v) => parseGoveeProps({ properties: [{ online: v }] }).online;
+    expect(online(false)).toBe(false);
+    expect(online("false")).toBe(false);
+    expect(online(true)).toBe(true);
+    expect(online("true")).toBe(true);
+    for (const junk of [0, 1, "no", null, undefined, {}]) expect(online(junk)).toBeUndefined();
   });
 
   it("drops anything it cannot read instead of defaulting it", () => {
@@ -268,5 +277,83 @@ describe("DeskStripCard verify step", () => {
     rerender(<DeskStripCard />);
     await settle(4000);
     expect(screen.getByText("40%")).toBeInTheDocument();
+  });
+});
+
+/* The sensor reporting is not the strip reporting. When the Govee cloud says
+   the strip itself is offline (unplugged, off Wi-Fi), its powerState is just
+   the last thing it said and a command goes nowhere — it used to read
+   "On · 80%" beside a live switch, sliders and swatches. */
+describe("DeskStripCard — Govee says the strip is offline", () => {
+  const offlineStrip = (online = false) =>
+    strip([{ online }, { powerState: "on" }, { brightness: 80 }, { color: { r: 255, g: 0, b: 0 } }]);
+  const swatches = () => screen.getAllByRole("button", { name: /^Set Desk strip to / });
+
+  it("reads Offline with every control disabled, no stale state, and nothing sent", () => {
+    fixture.current = offlineStrip();
+    const { container } = render(<DeskStripCard />);
+    expect(meta(container)).toBe("Offline");
+    const sw = screen.getByRole("switch", { name: "Desk strip — offline" });
+    expect(sw).toBeDisabled();
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(brightnessSlider()).toBeDisabled();
+    expect(screen.getByRole("slider", { name: "Desk strip color temperature" })).toBeDisabled();
+    for (const b of swatches()) {
+      expect(b).toBeDisabled();
+      expect(b.getAttribute("aria-pressed")).toBe("false"); // not the last-reported Red
+    }
+    expect(container.textContent).not.toMatch(/80%|On ·/);
+    fireEvent.click(sw);
+    fireEvent.click(screen.getByRole("button", { name: "Set Desk strip to Blue" }));
+    expect(calls).toEqual([]);
+  });
+
+  it("takes Govee's string \"false\" the same way", () => {
+    fixture.current = offlineStrip("false");
+    const { container } = render(<DeskStripCard />);
+    expect(meta(container)).toBe("Offline");
+    expect(screen.getByRole("switch")).toBeDisabled();
+  });
+
+  it("re-reads the strip when it comes back online", () => {
+    fixture.current = onAt(50);
+    const { container, rerender } = render(<DeskStripCard />);
+    fixture.current = offlineStrip();
+    rerender(<DeskStripCard />);
+    expect(meta(container)).toBe("Offline");
+    fixture.current = onAt(80);
+    rerender(<DeskStripCard />);
+    expect(meta(container)).toBe("On · 80%");
+    expect(screen.getByRole("switch", { name: "Desk strip" })).not.toBeDisabled();
+  });
+
+  it("a payload without `online` is read as before", () => {
+    fixture.current = strip([{ powerState: "on" }, { brightness: 40 }]);
+    const { container } = render(<DeskStripCard />);
+    expect(meta(container)).toBe("On · 40%");
+    expect(screen.getByRole("switch", { name: "Desk strip" })).not.toBeDisabled();
+  });
+});
+
+describe("DeskStripCard — no swatch pressed for a colour nobody reported", () => {
+  const pressed = () => screen.getAllByRole("button", { name: /^Set Desk strip to / })
+    .filter((b) => b.getAttribute("aria-pressed") === "true");
+
+  it("an unavailable sensor presses nothing (Amber 2700K used to be the default)", () => {
+    fixture.current = { entity: { state: "unavailable", attributes: {} }, status: "unavailable" };
+    render(<DeskStripCard />);
+    expect(pressed()).toEqual([]);
+  });
+
+  it("a strip that reported power and brightness but no colour presses nothing", () => {
+    fixture.current = strip([{ powerState: "on" }, { brightness: 40 }]);
+    render(<DeskStripCard />);
+    expect(pressed()).toEqual([]);
+  });
+
+  it("a reported colour still presses its swatch", () => {
+    fixture.current = onAt(40); // 255,198,130 = Amber 2700K
+    render(<DeskStripCard />);
+    expect(pressed().map((b) => b.getAttribute("aria-label"))).toEqual(["Set Desk strip to Amber 2700K"]);
   });
 });

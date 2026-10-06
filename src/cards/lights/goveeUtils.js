@@ -24,6 +24,10 @@ export function parseGoveeProps(attrs) {
   const out = {};
   for (const p of props) {
     if (!p || typeof p !== "object") continue;
+    // Whether the cloud can reach the strip at all. Govee has sent it both as
+    // a boolean and as the string "true"/"false"; anything else is unknown.
+    if (p.online === true || p.online === "true") out.online = true;
+    if (p.online === false || p.online === "false") out.online = false;
     if (p.powerState === "on" || p.powerState === "off") out.power = p.powerState;
     if (within(num(p.brightness), 0, 100)) out.brightness = num(p.brightness);
     if (p.color && typeof p.color === "object") {

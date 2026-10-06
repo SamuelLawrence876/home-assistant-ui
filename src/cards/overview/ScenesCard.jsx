@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useEntities, useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
@@ -13,7 +13,10 @@ import { Card } from "../../components/Card.jsx";
    Two shapes:
    - "moment"  one script, runs and ends (sunrise fade, All off). State comes
                from the script entity, so the tile lights up while it runs and
-               tapping again cancels it via script.toggle.
+               a tap on the lit tile cancels it (script.turn_off). Never
+               script.toggle: a toggle decides from HA's state at arrival, so
+               the second tap of a double-tap cancelled the run the first one
+               had just started.
    - "mode"    a script pair, and state comes from input_boolean.gh_mode_*
                rather than from a device. That matters: the old Leaving tile
                read the air purifier to decide which way it pointed, so once
@@ -140,31 +143,39 @@ function SceneTile({ s, firing, onFire }) {
   );
 }
 
+const FIRING_MS = 1100;
+
 export function ScenesCard({ index = 0 }) {
   const [firing, setFiring] = useState(null);
+  // Tiles whose call is in flight or whose firing sweep is still showing. A
+  // tap on one of those is the second half of a double-tap, not a new
+  // decision, so it is dropped. A ref, not state: the second click can land
+  // before React has re-rendered with the first one's `firing`.
+  const busy = useRef(new Set());
   const allStates = useEntities(ALL_DEPS);
   const { status } = useEntityStatus(ALL_DEPS[0]);
   const downCount = status === "loading" ? 0 : ALL_DEPS.filter((id) => isDown(allStates[id])).length;
 
-  async function fire(s, active) {
+  // `active` is what the tile showed when it was tapped, so the call matches
+  // the words on it: "Running · tap to stop" stops, anything else starts.
+  function fire(s, active) {
+    if (busy.current.has(s.id)) return;
+    busy.current.add(s.id);
     setFiring(s.id);
-    let ok = true;
-    try {
-      if (s.kind === "moment") {
-        // Runs if idle, cancels if already running.
-        await callService("script", "toggle", { entity_id: `script.${s.script}` });
-      } else {
-        await callService("script", "turn_on", {
-          entity_id: `script.${active ? s.offScript : s.script}`,
-        });
-      }
-    } catch {
+    const release = () => {
+      busy.current.delete(s.id);
+      // Only clear our own sweep — another tile may have fired since.
+      setFiring((f) => (f === s.id ? null : f));
+    };
+    const target = s.kind === "moment" ? s.script : active ? s.offScript : s.script;
+    const service = s.kind === "moment" && active ? "turn_off" : "turn_on";
+    callService("script", service, { entity_id: `script.${target}` }).then(
+      () => setTimeout(release, FIRING_MS),
       // client.js broadcasts to onServiceError, which App.jsx turns into a
-      // toast — so drop the animation rather than implying it worked.
-      ok = false;
-      setFiring(null);
-    }
-    if (ok) setTimeout(() => setFiring(null), 1100);
+      // toast — so drop the animation (and the guard, so a retry works)
+      // rather than implying it worked.
+      release,
+    );
   }
 
   return (
