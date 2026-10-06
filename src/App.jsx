@@ -19,6 +19,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from "react";
 import {
   skyColors,
+  sunReadout,
   sunTimesFromEntity,
   loadStoredTweaks,
   persistTweaks,
@@ -32,6 +33,8 @@ import {
 import { useConnectionStatus, useEntityCounts, useEntity } from "./ha/useEntity.js";
 import { useCurrentUser } from "./ha/useCurrentUser.js";
 import { onServiceError } from "./ha/client.js";
+import { describeHaError } from "./ha/errors.js";
+import { isSessionExpired, onSessionExpiredChange, signIn } from "./ha/socket.js";
 import { readURLParam } from "./lib/url.js";
 import { deriveRole, canSeeTab, ROLE_PENDING } from "./lib/roles.js";
 import { fmtTime } from "./lib/format.js";
@@ -51,14 +54,15 @@ const ClimateView = lazy(() => import("./views/ClimateView.jsx"));
 const WorkshopView = lazy(() => import("./views/WorkshopView.jsx"));
 const SystemView = lazy(() => import("./views/SystemView.jsx"));
 
+// `glyph` is the phone bottom-nav icon (decorative; aria-label names the tab).
 const TABS = [
-  { id: "overview", label: "Overview" },
-  { id: "lights", label: "Lights" },
-  { id: "media", label: "Media" },
-  { id: "schedule", label: "Schedule" },
-  { id: "climate", label: "Climate" },
-  { id: "workshop", label: "Workshop" },
-  { id: "system", label: "System" },
+  { id: "overview", label: "Overview", glyph: "◐" },
+  { id: "lights", label: "Lights", glyph: "◉" },
+  { id: "media", label: "Media", glyph: "♪" },
+  { id: "schedule", label: "Schedule", glyph: "▦" },
+  { id: "climate", label: "Climate", glyph: "◇" },
+  { id: "workshop", label: "Workshop", glyph: "▣" },
+  { id: "system", label: "System", glyph: "▤" },
 ];
 
 /* Service-error toasts. The subscription lives here rather than inside
@@ -70,9 +74,11 @@ function useServiceErrors() {
   const dismiss = useCallback((id) => setToasts((t) => t.filter((x) => x.id !== id)), []);
   useEffect(
     () =>
-      onServiceError(({ domain, service, data, error }) => {
+      onServiceError(({ domain, service, data, error, message }) => {
         const entityId = data?.entity_id || "";
-        const errMsg = error?.message || String(error);
+        // Not `error.message || String(error)`: with the socket down that
+        // printed "3" or "[object Object]" (ha/errors.js).
+        const errMsg = message || describeHaError(error);
         const shortErr = errMsg.length > 120 ? errMsg.slice(0, 120) + "…" : errMsg;
         const label = entityId ? `${domain}.${service} on ${entityId}` : `${domain}.${service}`;
         setToasts((t) => [...t.slice(-4), { id: ++toastIdCounter, label, detail: shortErr }]);
@@ -94,8 +100,37 @@ function ViewSkeleton() {
   );
 }
 
+/* The session, not the connection: socket.js keeps "signed out" apart from
+   the status strings useEntity.js maps (there it is still "disconnected"). */
+function useSessionExpired() {
+  const [expired, setExpired] = useState(isSessionExpired);
+  useEffect(() => onSessionExpiredChange(setExpired), []);
+  return expired;
+}
+
+/* [visible label, screen-reader announcement] per chip state. "ready"'s
+   label carries the live count, so it is built in the component.
+
+   The announcement is deliberately built from the state alone. The chip's
+   own text carries the entity count, which moves on every state batch from
+   HA — wire a live region to that and a screen reader reads the connection
+   chip over the top of whatever the user was actually doing, several times
+   a minute. This changes only when the connection itself does.
+
+   signed_out: an expired session used to read "Pi offline" — telling the
+   family the Pi was down when it was the login that had lapsed — and
+   nothing on screen led back to the login page. Now the chip does. */
+const CHIP_TEXT = {
+  signed_out: ["Signed out · sign in", "Signed out of Home Assistant"],
+  ready: [null, "Connected to Home Assistant"],
+  disconnected: ["Pi offline", "Not connected to Home Assistant"],
+  authenticating: ["Pi · authenticating…", "Connecting to Home Assistant"],
+  connecting: ["Pi · connecting…", "Connecting to Home Assistant"],
+};
+
 function ConnectionChip() {
   const status = useConnectionStatus();
+  const signedOut = useSessionExpired();
   const { available, total } = useEntityCounts();
   const live = status === "ready";
   const dotColor = live
@@ -103,31 +138,18 @@ function ConnectionChip() {
     : status === "disconnected"
       ? "var(--bad)"
       : "var(--accent-2)";
-  const label = live
-    ? `Pi · ${available}/${total} live`
-    : status === "disconnected"
-      ? "Pi offline"
-      : status === "authenticating"
-        ? "Pi · authenticating…"
-        : "Pi · connecting…";
-  /* Announced separately from the visible chip, and deliberately built
-     from `status` alone. The chip's own text carries the entity count,
-     which moves on every state batch from HA — wire a live region to
-     that and a screen reader reads the connection chip over the top of
-     whatever the user was actually doing, several times a minute. This
-     changes only when the connection itself does. */
-  const announcement = live
-    ? "Connected to Home Assistant"
-    : status === "disconnected"
-      ? "Not connected to Home Assistant"
-      : "Connecting to Home Assistant";
+  const [text, announcement] = CHIP_TEXT[signedOut ? "signed_out" : status] || CHIP_TEXT.connecting;
+  const label = text ?? `Pi · ${available}/${total} live`;
+  const Tag = signedOut ? "button" : "span";
   return (
     <>
     <span className="visually-hidden" role="status">
       {announcement}
     </span>
-    <span
+    <Tag
       className="chip"
+      type={signedOut ? "button" : undefined}
+      onClick={signedOut ? signIn : undefined}
       style={{
         background: "transparent",
         borderColor: "var(--rule)",
@@ -135,7 +157,7 @@ function ConnectionChip() {
         alignItems: "center",
         gap: 8,
       }}
-      title={`HA WebSocket: ${status}`}
+      title={signedOut ? "Home Assistant session ended — sign in again" : `HA WebSocket: ${status}`}
     >
       <span
         style={{
@@ -148,7 +170,7 @@ function ConnectionChip() {
         }}
       />
       {label}
-    </span>
+    </Tag>
     </>
   );
 }
@@ -315,6 +337,9 @@ export default function App() {
   // skyColors falls back to the authored day rather than drawing nothing.
   const sky = useMemo(() => skyColors(skyHour, sunTimes), [skyHour, sunTimes]);
   const effectiveMode = modePref === "auto" ? (sky.isDay ? "day" : "night") : modePref;
+  // The weather card's sun readout follows the real sun at `now`, never the
+  // Mode pin above: a theme preference must not rewrite a fact (theme.js).
+  const sunNow = useMemo(() => sunReadout(now, sunTimes), [now, sunTimes]);
 
   // Apply theme on every change
   useEffect(() => {
@@ -452,11 +477,11 @@ export default function App() {
               <Suspense fallback={<ViewSkeleton />}>
                 {canSeeTab(role, tab) && (
                   <>
-                    {tab === "overview" && <OverviewView viewport={viewport} sky={sky} />}
+                    {tab === "overview" && <OverviewView viewport={viewport} sun={sunNow} />}
                     {tab === "lights" && <LightsView />}
                     {tab === "media" && <MediaView />}
                     {tab === "schedule" && <ScheduleView />}
-                    {tab === "climate" && <ClimateView sky={sky} />}
+                    {tab === "climate" && <ClimateView sun={sunNow} />}
                     {tab === "workshop" && <WorkshopView />}
                     {tab === "system" && <SystemView />}
                   </>
@@ -485,17 +510,7 @@ export default function App() {
               tabIndex={rovingTab === t.id ? 0 : -1}
             >
               <span className="ic" aria-hidden>
-                {
-                  {
-                    overview: "◐",
-                    lights: "◉",
-                    media: "♪",
-                    schedule: "▦",
-                    climate: "◇",
-                    workshop: "▣",
-                    system: "▤",
-                  }[t.id]
-                }
+                {t.glyph}
               </span>
               <span className="lbl">{t.label}</span>
             </button>

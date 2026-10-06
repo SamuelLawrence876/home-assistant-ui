@@ -12,11 +12,11 @@ import { MediaCard } from "../cards/media/MediaCard.jsx";
 import { QuickLightsCard } from "../cards/lights/QuickLightsCard.jsx";
 import { InProgressCard } from "../cards/system/InProgressCard.jsx";
 
-export default function OverviewView({ viewport, sky }) {
+export default function OverviewView({ viewport, sun }) {
   return (
     <div className="grid">
       <div className="col-8">
-        <WeatherSunHero index={0} sky={sky} compact={viewport === "phone"} />
+        <WeatherSunHero index={0} sun={sun} compact={viewport === "phone"} />
       </div>
       <div className="col-4" style={{ display: "grid", gap: 14 }}>
         <PresenceCard index={1} />
