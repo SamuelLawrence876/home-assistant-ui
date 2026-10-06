@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
@@ -20,8 +20,13 @@ import { numOr } from "../../lib/format.js";
 
    A press is shown as sent-and-waiting, not as the new state: the sensor's
    next report ends the wait, whatever it says, and PRESS_WINDOW_MS caps it
-   if the report never comes. Both buttons are always offered, because a
-   possibly-stale reading is no reason to block either command.
+   if the report never comes. A press for the state the sensor already
+   reads ends when the script call returns — HA doesn't bump last_updated
+   when a poll re-reads the same state, so otherwise "Turning off…" sat
+   over an off heater for the whole window. Both buttons are offered
+   whatever the reading says, because a possibly-stale reading is no
+   reason to block either command — but not while Govee reports the heater
+   offline: that is not a stale reading, and the command can't reach it.
 
    There is deliberately no target-temperature control.
    input_number.govee_heater_temperature exists, but nothing sends it to the
@@ -68,25 +73,36 @@ export function HeaterCard({ index = 0 }) {
     return () => clearTimeout(t);
   }, [press]);
 
+  // The reading when a script call returns, not when it was sent.
+  const powerRef = useRef(power);
+  powerRef.current = power;
+
   function send(want) {
     setPress(want);
-    // The error log already records the failure (client.js); the card just stops waiting.
+    // Only this press's wait is ended: a newer press for the other state keeps its own.
+    const endIf = (done) => setPress((p) => (p === want && done() ? null : p));
     callService("script", want === "on" ? "turn_on_govee_heater" : "turn_off_govee_heater", {})
-      .catch(() => setPress(null));
+      // Already reads what was asked for: there is no report left to wait for.
+      .then(() => endIf(() => powerRef.current === want))
+      // The error log already records the failure (client.js); the card just stops waiting.
+      .catch(() => endIf(() => true));
   }
 
   const meta = powerStatus === "loading" ? "—"
     : offline ? "Offline"
     : press ? (press === "on" ? "Turning on…" : "Turning off…")
     : power === "on" ? "On" : power === "off" ? "Off" : "Power unknown";
-  const note = press ? `${press === "on" ? "Turn on" : "Turn off"} sent · waiting for the heater to report`
-    : offline ? "Govee reports the heater offline"
+  const note = offline ? "Govee reports the heater offline"
+    : press ? `${press === "on" ? "Turn on" : "Turn off"} sent · waiting for the heater to report`
     : reported === "error" ? "Govee answered without a power state"
     : null;
+  // The timer outlives an off made at the device or in the Govee app, so an
+  // auto-off time is only shown while the heater reads on.
   const act = offline ? "Offline"
     : power == null ? "Unknown"
+    : power === "off" ? "Standby"
     : autoOff ? (autoOffAt ? `Auto-off ${autoOffAt}` : "Auto-off armed")
-    : power === "on" ? "Running" : "Standby";
+    : "Running";
 
   return (
     <Card index={index} eyebrow="Climate · Govee heater" title="Heater" meta={meta}>
@@ -102,8 +118,8 @@ export function HeaterCard({ index = 0 }) {
           </div>
           {note && <div className="meta" style={{ marginTop: 4 }}>{note}</div>}
           <div className="heater-controls">
-            <button className="btn primary" onClick={() => send("on")}>Turn on</button>
-            <button className="btn" onClick={() => send("off")}>Turn off</button>
+            <button className="btn primary" disabled={offline} onClick={() => send("on")}>Turn on</button>
+            <button className="btn" disabled={offline} onClick={() => send("off")}>Turn off</button>
           </div>
         </div>
         <div className="heater-dial" style={{ "--ang": `${power === "on" ? 270 : 0}deg` }}>

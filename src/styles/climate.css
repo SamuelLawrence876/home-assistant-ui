@@ -175,3 +175,10 @@
   display: flex; align-items: center; gap: 10px;
   flex-wrap: wrap;
 }
+/* While Govee reports the heater offline. Scoped, not a global .btn:disabled —
+   the app has never had one, and a global rule would restyle every button. */
+.heater-controls .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}

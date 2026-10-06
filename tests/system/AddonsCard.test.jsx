@@ -1,6 +1,8 @@
 /* The Updates card. One tap on a Core row's Install used to restart Home
    Assistant, an OS row rebooted the Pi, and "Install all" fired every pending
-   update at once — Core and OS included — with no confirm and no backup. */
+   update at once — Core and OS included — with no confirm and no backup.
+   Now the system rows confirm first and back up where HA supports it; routine
+   installs stay one tap and take no backup (a policy change nobody asked for). */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, within } from "@testing-library/react";
 
@@ -46,10 +48,14 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("installData", () => {
-  it("asks for a backup only where the entity declares the BACKUP feature", () => {
+  it("asks for a backup only on a system row that declares the BACKUP feature", () => {
     expect(installData(CORE)).toEqual({ entity_id: CORE.entity_id, backup: true });
     expect(installData(OS)).toEqual({ entity_id: OS.entity_id });
     expect(installData({ entity_id: "update.x", attributes: {} })).toEqual({ entity_id: "update.x" });
+  });
+
+  it("never asks for one on a routine install, even where the entity supports it", () => {
+    expect(installData(TAILSCALE)).toEqual({ entity_id: TAILSCALE.entity_id });
   });
 });
 
@@ -60,7 +66,16 @@ describe("AddonsCard", () => {
     fireEvent.click(installIn("Home Assistant Core"));
     expect(callService).not.toHaveBeenCalled();
     expect(installIn("Home Assistant Core").textContent).toBe("Confirm");
-    expect(screen.getByText(/Restarts Home Assistant/)).toBeTruthy();
+    // Core supports BACKUP, and the confirm says it will take one.
+    expect(screen.getByText("Backs up, then restarts Home Assistant — confirm to install")).toBeTruthy();
+  });
+
+  it("doesn't promise a backup on a system row that can't take one", () => {
+    fixtures.updates = [OS];
+    render(<AddonsCard />);
+    fireEvent.click(installIn("Home Assistant Operating System"));
+    expect(screen.getByText("Reboots the Pi — confirm to install")).toBeTruthy();
+    expect(screen.queryByText(/Backs up/)).toBeNull();
   });
 
   it("a double-click on OS still installs nothing", () => {
@@ -90,18 +105,53 @@ describe("AddonsCard", () => {
     expect(callService).toHaveBeenCalledWith("update", "install", { entity_id: ESPHOME.entity_id });
   });
 
+  it("installing another row disarms a pending Core confirm", async () => {
+    fixtures.updates = [CORE, TAILSCALE];
+    render(<AddonsCard />);
+    fireEvent.click(installIn("Home Assistant Core")); // armed
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
+    fireEvent.click(installIn("Tailscale"));
+    await flush();
+    expect(installIn("Home Assistant Core").textContent).toBe("Install");
+
+    // One press after the other row finished must only re-arm, never install.
+    fireEvent.click(installIn("Home Assistant Core"));
+    await flush();
+    expect(callService.mock.calls.map((c) => c[2].entity_id)).toEqual([TAILSCALE.entity_id]);
+  });
+
+  it("Install all disarms a pending Core confirm", async () => {
+    fixtures.updates = [CORE, TAILSCALE, ESPHOME];
+    render(<AddonsCard />);
+    fireEvent.click(installIn("Home Assistant Core"));
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
+    fireEvent.click(screen.getByRole("button", { name: "Install the rest" }));
+    await flush();
+    await flush();
+    expect(callService.mock.calls.map((c) => c[2].entity_id)).toEqual([TAILSCALE.entity_id, ESPHOME.entity_id]);
+    expect(installIn("Home Assistant Core").disabled).toBe(false);
+    expect(installIn("Home Assistant Core").textContent).toBe("Install");
+    fireEvent.click(installIn("Home Assistant Core"));
+    await flush();
+    expect(callService.mock.calls.map((c) => c[2].entity_id)).not.toContain(CORE.entity_id);
+  });
+
   it("Install all leaves Core and OS out, says so, and goes one at a time", async () => {
     fixtures.updates = [CORE, TAILSCALE, OS, ESPHOME];
     const first = deferred();
     callService.mockReturnValueOnce(first.promise);
     render(<AddonsCard />);
 
-    const all = screen.getByRole("button", { name: "Install all but system" });
+    // Short and unwrapping: "Install all but system" was a three-line pill at 360px.
+    const all = screen.getByRole("button", { name: "Install the rest" });
+    expect(all.style.whiteSpace).toBe("nowrap");
+    expect(all.title).toMatch(/Core, OS and Supervisor/);
     fireEvent.click(all);
     await flush();
-    // Only the first install is out; the second waits for it.
+    // Only the first install is out; the second waits for it. No backup:
+    // Tailscale supports one, but a routine install doesn't ask.
     expect(callService).toHaveBeenCalledTimes(1);
-    expect(callService).toHaveBeenLastCalledWith("update", "install", { entity_id: TAILSCALE.entity_id, backup: true });
+    expect(callService).toHaveBeenLastCalledWith("update", "install", { entity_id: TAILSCALE.entity_id });
 
     await act(async () => {
       first.resolve();

@@ -130,8 +130,9 @@ export function resolveSunTimes(times) {
 
 /* What the weather card says about the sun, as opposed to what the sky looks
    like. Returns { hour, phase, isUp }: phase 0 at sunrise, 1 at sunset — the
-   two times the card's arc is labelled with — at App's clock, which honours
-   the Tweaks clock override.
+   two times the card's arc is labelled with — at the real clock (or ?clock=,
+   for the screenshot harness), never the Tweaks clock override, which only
+   previews the sky.
 
    Deliberately not skyColors' phase. The palette follows Tweaks → Mode
    (Day / Night pin it to 13:00 / 23:00) and runs dawn → dusk because twilight

@@ -25,6 +25,9 @@ function speakerStatus(status, m) {
   }
   if (a.source === PI_SPEAKER && m.state === "paused") return { meta: "Paused", line: "Paused", onPi: true };
   if (active && a.source) return { meta: "—", line: `Linked account on ${a.source}` };
+  // Playing with no `source`: HA didn't name the device, which could be the
+  // Pi. Say so; "not in use" here contradicted the hero on the same tab.
+  if (active) return { meta: "—", line: `Linked account ${m.state} · device unknown` };
   return { meta: "—", line: "Not in use by the linked account" };
 }
 

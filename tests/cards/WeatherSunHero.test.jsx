@@ -60,6 +60,18 @@ describe("WeatherSunHero sun readout", () => {
     expect(container.querySelector(".moon-dot")).not.toBeNull();
   });
 
+  it("draws the moon as one crescent, independent of the sky palette", () => {
+    // It used to be a disc plus a cutout circle filled with var(--sky-top):
+    // under Mode: day that painted a pale blue dot at the noon-sun position.
+    weather("clear-night");
+    const { container } = render(<WeatherSunHero sun={sunReadout(3, OCT)} />);
+    const moon = container.querySelectorAll(".moon-dot");
+    expect(moon).toHaveLength(1);
+    expect(moon[0].tagName.toLowerCase()).toBe("path");
+    expect(moon[0].getAttribute("d")).not.toMatch(/NaN/);
+    expect(container.querySelector(".sun-arc svg").innerHTML).not.toContain("--sky-top");
+  });
+
   it("claims neither sun nor moon when sun.sun gave nothing usable", () => {
     weather("cloudy");
     const { container } = render(<WeatherSunHero sun={sunReadout(14, null)} />);

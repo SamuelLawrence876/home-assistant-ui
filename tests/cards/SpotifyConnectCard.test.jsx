@@ -54,6 +54,24 @@ describe("SpotifyConnectCard", () => {
     expect(container.textContent).not.toMatch(NEVER);
   });
 
+  it("playing with no source: says the device is unknown, not 'Not in use'", () => {
+    // The hero on the same tab says the account is playing; HA just didn't
+    // name the device. It could be the Pi, so this card claims neither way.
+    fixtures.np = ready("playing", { media_title: "Glass Harbour" });
+    const { container } = render(<SpotifyConnectCard />);
+    expect(meta(container)).toBe("—");
+    expect(container.textContent).toContain("Linked account playing · device unknown");
+    expect(container.textContent).not.toContain("Not in use");
+    expect(container.textContent).not.toMatch(NEVER);
+  });
+
+  it("paused with no source: same, and still not 'Not in use'", () => {
+    fixtures.np = ready("paused", {});
+    const { container } = render(<SpotifyConnectCard />);
+    expect(container.textContent).toContain("Linked account paused · device unknown");
+    expect(container.textContent).not.toContain("Not in use");
+  });
+
   it("loading (and mock mode): em-dashes, no 'Available'", () => {
     const { container } = render(<SpotifyConnectCard />);
     expect(meta(container)).toBe("—");

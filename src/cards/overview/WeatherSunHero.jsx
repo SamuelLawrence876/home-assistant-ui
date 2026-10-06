@@ -204,11 +204,15 @@ export function WeatherSunHero({ index = 0, sun, compact }) {
                 <circle cx={sunX} cy={sunY} r={4} fill="#fff8e0" />
               </>
             )}
+            {/* One crescent path: a disc of r=10 at (cx, 20) less a disc of
+                r=8 offset (+3, -2), meeting at the two points below. It used
+                to be a second circle painted in var(--sky-top), which under
+                Mode: day turned the moon into a pale blue dot. */}
             {sunBelow && (
-              <>
-                <circle cx={cx} cy={20} r={10} className="moon-dot" />
-                <circle cx={cx + 3} cy={18} r={8} fill="var(--sky-top, #111)" />
-              </>
+              <path
+                d={`M ${cx + 1.58} 10.13 A 10 10 0 1 0 ${cx + 9.72} 22.34 A 8 8 0 1 1 ${cx + 1.58} 10.13 Z`}
+                className="moon-dot"
+              />
             )}
           </svg>
           <div className="sun-info">

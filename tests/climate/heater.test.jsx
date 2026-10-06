@@ -130,6 +130,18 @@ describe("HeaterCard power state", () => {
     const { container } = render(<HeaterCard />);
     expect(act_(container)).toBe("Auto-off armed");
   });
+
+  it("doesn't print an auto-off time under 'Off' when the timer outlived an off made elsewhere", () => {
+    // Switched off at the device or in the Govee app: the dashboard script
+    // never ran, so nothing cancelled the timer.
+    fake.set(POWER, reading("off"));
+    fake.set(TIMER, reading("active", { finishes_at: new Date(Date.now() + 3600_000).toISOString() }));
+    const { container } = render(<HeaterCard />);
+    expect(dial(container)).toBe("Off");
+    expect(act_(container)).toBe("Standby");
+    act(() => fake.set(TIMER, reading("active", { finishes_at: "not a date" })));
+    expect(act_(container)).toBe("Standby");
+  });
 });
 
 describe("HeaterCard presses", () => {
@@ -179,6 +191,60 @@ describe("HeaterCard presses", () => {
     fireEvent.click(screen.getByRole("button", { name: "Turn on" }));
     fireEvent.click(screen.getByRole("button", { name: "Turn off" }));
     expect(calls).toEqual(["script.turn_on_govee_heater", "script.turn_off_govee_heater"]);
+  });
+
+  /* HA doesn't bump last_updated when a poll re-reads the same state, so a
+     press for the state the heater is already in never got a "fresh report"
+     and held "Turning off…" over an off heater for the full two minutes. */
+  it("a press for the state the sensor already reads ends when the script returns", async () => {
+    fake.set(POWER, reading("off"));
+    const { container } = render(<HeaterCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn off" }));
+    await flush();
+    expect(meta(container)).toBe("Off");
+    expect(container.textContent).not.toContain("waiting for the heater");
+  });
+
+  it("a press for the other state still waits for the sensor after the script returns", async () => {
+    fake.set(POWER, reading("off"));
+    const { container } = render(<HeaterCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn on" }));
+    await flush();
+    expect(meta(container)).toBe("Turning on…");
+  });
+
+  it("an earlier press returning doesn't end a newer press's wait", async () => {
+    fake.set(POWER, reading("on"));
+    const { container } = render(<HeaterCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn on" })); // already on
+    fireEvent.click(screen.getByRole("button", { name: "Turn off" }));
+    await flush();
+    expect(meta(container)).toBe("Turning off…");
+  });
+
+  it("disables both commands while Govee reports the heater offline", () => {
+    fake.set(POWER, reading("off"));
+    fake.set(LINK, reading("offline"));
+    const { container } = render(<HeaterCard />);
+    const on = screen.getByRole("button", { name: "Turn on" });
+    const off = screen.getByRole("button", { name: "Turn off" });
+    expect(on.disabled).toBe(true);
+    expect(off.disabled).toBe(true);
+    fireEvent.click(on);
+    fireEvent.click(off);
+    expect(calls).toEqual([]);
+    expect(container.textContent).toContain("Govee reports the heater offline");
+  });
+
+  it("says the heater went offline, not 'waiting', when it drops mid-press", () => {
+    fake.set(POWER, reading("off"));
+    fake.set(LINK, reading("online"));
+    const { container } = render(<HeaterCard />);
+    fireEvent.click(screen.getByRole("button", { name: "Turn on" }));
+    act(() => fake.set(LINK, reading("offline")));
+    expect(meta(container)).toBe("Offline");
+    expect(container.textContent).toContain("Govee reports the heater offline");
+    expect(container.textContent).not.toContain("waiting for the heater");
   });
 
   it("has no target-temperature control, because nothing sends it to the heater", () => {

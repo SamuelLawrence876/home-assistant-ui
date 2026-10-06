@@ -329,7 +329,7 @@ export default function App() {
     [sunState, nextRising, nextSetting, nextDawn, nextDusk, nextNoon],
   );
 
-  // Live clock (rerenders every 30s); honors clockOverride
+  // Live clock (rerenders every 30s). `now` honors clockOverride (a sky preview)
   const liveNow = useNow();
   const now = clockOverride ? clock : liveNow;
   const skyHour = modePref === "day" ? 13 : modePref === "night" ? 23 : now;
@@ -337,9 +337,10 @@ export default function App() {
   // skyColors falls back to the authored day rather than drawing nothing.
   const sky = useMemo(() => skyColors(skyHour, sunTimes), [skyHour, sunTimes]);
   const effectiveMode = modePref === "auto" ? (sky.isDay ? "day" : "night") : modePref;
-  // The weather card's sun readout follows the real sun at `now`, never the
-  // Mode pin above: a theme preference must not rewrite a fact (theme.js).
-  const sunNow = useMemo(() => sunReadout(now, sunTimes), [now, sunTimes]);
+  // The weather card's sun readout follows the real clock, never the Mode pin
+  // or the Tweaks clock override above: those preview the palette, and a theme
+  // preference must not rewrite a fact (theme.js). ?clock= still pins it.
+  const sunNow = useMemo(() => sunReadout(liveNow, sunTimes), [liveNow, sunTimes]);
 
   // Apply theme on every change
   useEffect(() => {
