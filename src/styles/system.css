@@ -167,57 +167,6 @@
   border: 1px solid var(--glass-stroke);
 }
 
-/* Stats list (chip-cards) */
-.statbox {
-  padding: 16px 18px;
-  display: flex; flex-direction: column;
-  gap: 4px;
-}
-.statbox .eyebrow {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-.statbox .v {
-  font-family: var(--font-display);
-  font-style: var(--display-italic);
-  font-size: 28px;
-  letter-spacing: -0.02em;
-  font-feature-settings: "tnum";
-  line-height: 1;
-  margin: 4px 0 4px;
-  color: var(--ink);
-}
-.statbox .v .u {
-  font-family: var(--font-body);
-  font-style: normal;
-  font-size: 13px;
-  color: var(--ink-3);
-  margin-left: 2px;
-}
-.statbox .cap {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-.statbox .progress-mini {
-  height: 4px; border-radius: 2px;
-  background: var(--rule);
-  margin-top: 8px;
-  overflow: hidden;
-}
-.statbox .progress-mini > span {
-  display: block; height: 100%;
-  width: var(--p, 0%);
-  background: var(--c, var(--accent));
-  border-radius: 2px;
-  transition: width 1.2s ease;
-}
-
 /* SamBox game-stream card (System tab) */
 .sbx-warn {
   font-family: var(--font-mono);
