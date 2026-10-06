@@ -24,7 +24,9 @@ body.mode-night {
      (phone.css: `body.viewport-phone .weekcal { --col-h: 20px }`). */
   --col-h: 26px;
   display: grid;
-  grid-template-columns: 48px repeat(7, 1fr);
+  /* minmax(0, 1fr), not 1fr: a bare 1fr has an `auto` minimum, i.e. "at least
+     as wide as my content", and see the min-width: 0 note on the cells below. */
+  grid-template-columns: 48px repeat(7, minmax(0, 1fr));
   gap: 0;
   position: relative;
   margin-top: 12px;
@@ -34,6 +36,18 @@ body.mode-night {
   display: contents;
 }
 .weekcal-head .corner { /* empty top-left */ }
+/* The day columns must stay seven equal shares however long an event title
+   is. A grid item's default `min-width: auto` is its min-content width, and
+   the off-grid pills are `white-space: nowrap`, so one all-day "Weekend away"
+   made its whole column as wide as the sentence: on a 390px phone the week
+   grew to 555px, Wed/Thu shrank to 22px slivers and the page panned sideways
+   (588px), clipping the New event dialog. With min-width: 0 the pill
+   ellipsises instead. This is set on the items, not only via minmax(0, 1fr)
+   above, because phone.css replaces the template with a plain `1fr`
+   (!important) — and min-width: 0 holds under either. .weekcal-col is
+   overflow: hidden, which already gives it a zero minimum. */
+.weekcal-head .dow,
+.weekcal-offgrid-row .cell { min-width: 0; }
 .weekcal-head .dow {
   padding: 10px 8px 8px;
   border-left: 1px solid var(--rule);
@@ -323,13 +337,14 @@ body.mode-night {
 }
 .kanban-card:hover .kanban-card-actions,
 .kanban-card.move-open .kanban-card-actions { opacity: 1; }
-/* No hover on a touch screen, so they would never show — while the corner
-   still took taps nobody could see. Always visible there, and the summary
-   keeps clear of them. */
-@media (hover: none) {
-  .kanban-card-actions { opacity: 1; }
-  .kanban-card .summary { padding-right: 44px; }
-}
+/* The summary always keeps clear of the corner. Reserving it only on touch
+   left a long title running under ⇄ and × the moment a mouse hovered the
+   card; reserving it only on hover would re-wrap the text under the pointer.
+   36px = the buttons' 4px inset + 20 + 2 + 20, less the card's own 12px
+   padding, plus 2px of air. */
+.kanban-card .summary { padding-right: 36px; }
+/* Touch screens: see the (hover: none) block after .kanban-undo-btn below —
+   it has to come after the rules it resizes. */
 .kanban-card-act {
   display: inline-flex;
   align-items: center;
@@ -419,6 +434,25 @@ body.mode-night {
   transition: border-color 0.15s;
 }
 .kanban-undo-btn:hover { border-color: var(--ink-3); }
+
+/* Touch screens. No hover there, so the corner actions would never show —
+   while the corner still took taps nobody could see. Always visible.
+   And a finger needs more than a 20px target 2px from Delete: each button
+   is 24×24 (WCAG 2.5.8's minimum) with 12px between them, and an invisible
+   ::after pad widens the hit area to 36×40. The pads meet in the middle of
+   the gap and never overlap, so a slightly-off tap on Move can't land on
+   Delete. The summary keeps clear of the pads too (4 + 24 + 12 + 24 + 6,
+   less the card's 12px padding). The Move-to options and Undo grow to
+   match. Placed after the rules it resizes, which it ties on specificity. */
+@media (hover: none) {
+  .kanban-card-actions { opacity: 1; gap: 12px; }
+  .kanban-card .summary { padding-right: 58px; }
+  .kanban-card-act { position: relative; width: 24px; height: 24px; }
+  .kanban-card-act::after { content: ""; position: absolute; inset: -8px -6px; }
+  .kanban-move { gap: 8px; }
+  .kanban-move-opt { padding: 6px 12px; }
+  .kanban-undo-btn { padding: 7px 14px; }
+}
 
 /* Why a column shows no cards when that isn't the same as "empty":
    connecting, not connected, or the read failed. */
@@ -627,8 +661,10 @@ body.mode-night {
 }
 .kanban-tag-toggle:hover,
 .kanban-tag-toggle:focus-within { border-color: var(--accent); }
-/* The menu toggle fills whatever the chips leave, so most of the box still
-   opens the menu the way the whole box used to. */
+/* The menu toggle fills whatever the chips leave. Once chips fill the first
+   row that is only a corner, so a click anywhere else in the box is passed
+   to the same toggle (onBoxClick in KanbanAddForm.jsx) — the box's
+   cursor: pointer is telling the truth. */
 .kanban-tag-open {
   flex: 1 1 24px;
   align-self: stretch;
@@ -712,6 +748,15 @@ body.mode-night .kanban-tag-menu {
   border-top: 1px solid var(--rule);
   margin-top: 2px;
 }
+/* Why a custom tag was changed or refused. A live region, so it stays in
+   the DOM while empty — and an empty <p> with no margin takes no space. */
+.kanban-tag-hint {
+  margin: 4px 2px 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.kanban-tag-hint:empty { margin: 0; }
 
 /* Phone-specific kanban — horizontal scroll columns */
 body.viewport-phone .kanban {

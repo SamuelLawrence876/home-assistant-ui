@@ -98,6 +98,12 @@ export async function getForecast(entityId, type = "daily") {
   return res?.response?.[entityId]?.forecast || [];
 }
 
+/* Rejects unless Home Assistant really answered for this list. HA skips an
+   unavailable entity instead of failing the call, so a list that is
+   unavailable or gone comes back missing from the response — and that used to
+   read as `[]`. "Empty" is a claim nobody checked: the Kanban showed a dead
+   list as a 0 column and offered it as a move target. Missing is a failed
+   read. */
 export async function getTodoItems(entityId, status) {
   const data = { entity_id: entityId };
   if (status) data.status = status;
@@ -108,7 +114,9 @@ export async function getTodoItems(entityId, status) {
     service_data: data,
     return_response: true,
   });
-  return res?.response?.[entityId]?.items || [];
+  const items = res?.response?.[entityId]?.items;
+  if (!Array.isArray(items)) throw new Error(`todo.get_items: no answer for ${entityId}`);
+  return items;
 }
 
 export async function browseMedia(entityId, mediaContentType, mediaContentId) {

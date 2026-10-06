@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useId } from "react";
-import { useConnectionStatus } from "../../ha/useEntity.js";
+import { useConnectionStatus, useEntityStatus } from "../../ha/useEntity.js";
 import { callService, getTodoItems } from "../../ha/client.js";
+import { describeHaError } from "../../ha/errors.js";
+import { logError } from "../../lib/errorLog.js";
 import { Card } from "../../components/Card.jsx";
 import { KanbanAddForm } from "./KanbanAddForm.jsx";
 import { KanbanTask } from "./KanbanTask.jsx";
 import {
-  buildDescription, dueFields, boardState, cardKey, itemRef, isTempCard, omit, TEMP_UID_PREFIX,
+  buildDescription, dueFields, boardState, cardKey, itemRef, isTempCard, isDeadList, omit, TEMP_UID_PREFIX,
 } from "./kanbanUtils.js";
 
 /* ----------------------------------------------------------------
@@ -31,13 +33,47 @@ const UNDO_MS = 5000;
 
 let tempSeq = 0;
 
-function useKanbanItems(entityIds) {
+/* One useEntityStatus per list. The lists are fixed, so the hooks run in the
+   same order on every render. */
+const [BACKLOG, NEXT, DOING] = KANBAN_ENTITY_IDS;
+function useListStatuses() {
+  const backlog = useEntityStatus(BACKLOG).status;
+  const next = useEntityStatus(NEXT).status;
+  const doing = useEntityStatus(DOING).status;
+  return { [BACKLOG]: backlog, [NEXT]: next, [DOING]: doing };
+}
+
+/* Adds `card` to `listId` and resolves with the new item's uid once a re-read
+   of the list shows it there. Home Assistant skips an unavailable list and
+   still reports success, so "add_item resolved" is not proof the task exists
+   anywhere. Rejects without writing anything if the list can't be read first
+   (getTodoItems rejects for a list HA didn't answer for). */
+async function addConfirmed(listId, card) {
+  const before = new Set((await getTodoItems(listId, "needs_action")).map((i) => i.uid));
+  await callService("todo", "add_item", {
+    entity_id: listId,
+    item: card.summary,
+    ...dueFields(card.due),
+    ...(card.description ? { description: card.description } : {}),
+  });
+  const after = await getTodoItems(listId, "needs_action");
+  const landed = after.find((i) => !before.has(i.uid) && i.summary === card.summary);
+  if (!landed) throw new Error(`todo.add_item to ${listId} did not land`);
+  return landed.uid;
+}
+
+function useKanbanItems(entityIds, deadKey) {
   const connStatus = useConnectionStatus();
   const [columns, setColumns] = useState(() => Object.fromEntries(ALL_COL_IDS.map((id) => [id, []])));
-  /* Per column: "unread" | "ok" | "error". Done is "ok" only if every list's
-     completed items came back. See boardState() for what each one says. */
+  /* Per column: "unread" | "ok" | "error", and Done can be "partial". Done is
+     "ok" only if every list's completed items came back. See boardState() for
+     what each one says. */
   const [reads, setReads] = useState(() => Object.fromEntries(ALL_COL_IDS.map((id) => [id, "unread"])));
   const [fetchTick, setFetchTick] = useState(0);
+  /* Lists whose completed items have been read at least once. A failed list
+     keeps its old cards in Done, but one never read has none there — and then
+     Done's count is a subset passed off as the whole column. */
+  const doneRead = useRef(new Set());
 
   useEffect(() => {
     if (connStatus !== "ready") return;
@@ -65,12 +101,16 @@ function useKanbanItems(entityIds) {
         next[DONE] = done;
         return next;
       });
-      const r = { [DONE]: results.every((x) => x.completed.status === "fulfilled") ? "ok" : "error" };
+      const hole = results.some((x) => x.completed.status !== "fulfilled" && !doneRead.current.has(x.id));
+      for (const { id, completed } of results) if (completed.status === "fulfilled") doneRead.current.add(id);
+      const r = { [DONE]: results.every((x) => x.completed.status === "fulfilled") ? "ok" : hole ? "partial" : "error" };
       for (const { id, active } of results) r[id] = active.status === "fulfilled" ? "ok" : "error";
       setReads(r);
     })();
     return () => { cancelled = true; };
-  }, [connStatus, fetchTick]);
+    /* deadKey (which lists are unavailable, as a string) is a reason to read
+       again: a list coming back is the only way its column recovers by itself. */
+  }, [connStatus, fetchTick, deadKey]);
 
   const refresh = () => setFetchTick((t) => t + 1);
 
@@ -78,8 +118,19 @@ function useKanbanItems(entityIds) {
 }
 
 export function KanbanBoardCard({ index = 0 }) {
-  const { connStatus, columns, setColumns, reads, refresh } = useKanbanItems(KANBAN_ENTITY_IDS);
+  const lists = useListStatuses();
+  const deadKey = KANBAN_ENTITY_IDS.filter((id) => isDeadList(lists[id])).join(",");
+  const { connStatus, columns, setColumns, reads, refresh } = useKanbanItems(KANBAN_ENTITY_IDS, deadKey);
   const canWrite = connStatus === "ready";
+  /* A write is offered only into a list HA will act on. "loading" (no state
+     snapshot yet) isn't proof the list exists, so it doesn't count either. */
+  const listReady = (id) => lists[id] === "ready";
+  const accepts = (colId) => colId === DONE || listReady(colId);
+  const whyNoWrite = (listId) => (
+    !canWrite ? "Not connected to Home Assistant"
+      : listReady(listId) ? undefined
+        : isDeadList(lists[listId]) ? "This list is unavailable in Home Assistant" : "Loading…"
+  );
   const [dragOver, setDragOver] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
   const [adding, setAdding] = useState(null);
@@ -87,6 +138,13 @@ export function KanbanBoardCard({ index = 0 }) {
      (card, column, timer) so a timer callback never reads stale state. */
   const [pending, setPending] = useState({});
   const pendingRef = useRef(new Map());
+  /* Cards whose move is still in flight. Such a card is already drawn in its
+     new column but still carries its old list and uid — the very item the move
+     is deleting — so a second move or a delete from it hit a dead uid and left
+     the task in two lists. Refused until the move settles. The ref is the
+     synchronous guard against a double click; the state is for rendering. */
+  const [moving, setMoving] = useState({});
+  const movingRef = useRef(new Set());
   const colRefs = useRef({});
   const idBase = useId();
 
@@ -106,9 +164,12 @@ export function KanbanBoardCard({ index = 0 }) {
   }
 
   async function moveCard(key, fromCol, toCol) {
-    if (fromCol === toCol || !canWrite) return;
+    if (fromCol === toCol || !canWrite || movingRef.current.has(key)) return;
     const card = columns[fromCol]?.find((c) => cardKey(c) === key);
     if (!card || isTempCard(card) || pendingRef.current.has(key)) return;
+    if (!listReady(card._entity) || !accepts(toCol)) return;
+    movingRef.current.add(key);
+    setMoving((m) => ({ ...m, [key]: true }));
     optimisticMove(key, fromCol, toCol);
     try {
       if (toCol === DONE) {
@@ -116,26 +177,35 @@ export function KanbanBoardCard({ index = 0 }) {
       } else if (fromCol === DONE && card._entity === toCol) {
         await callService("todo", "update_item", { entity_id: card._entity, item: itemRef(card), status: "needs_action" });
       } else {
-        /* Cross-list move is two calls with no transaction. Add to the
-           target FIRST so a failure between them leaves a recoverable
-           duplicate instead of deleting the task from both lists. The
-           new item lands as needs_action, so no status update is needed. */
-        await callService("todo", "add_item", {
-          entity_id: toCol,
-          item: card.summary,
-          ...dueFields(card.due),
-          ...(card.description ? { description: card.description } : {}),
-        });
+        /* Cross-list move is two calls with no transaction. The add goes
+           first and is CONFIRMED by re-reading the target (addConfirmed);
+           only then is the source removed. Any failure leaves the task where
+           it was or, at worst, in both lists — never in neither. The new item
+           lands as needs_action, so no status update is needed. */
+        const uid = await addConfirmed(toCol, card);
         await callService("todo", "remove_item", { entity_id: card._entity, item: itemRef(card) });
+        /* The card now IS the new item: give it that list and uid, so the
+           next move or delete before the re-read targets what exists. */
+        setColumns((cur) => ({
+          ...cur,
+          [toCol]: cur[toCol].map((c) => (cardKey(c) === key ? { ...c, uid, _entity: toCol, status: "needs_action" } : c)),
+        }));
       }
       setTimeout(refresh, 500);
-    } catch {
+    } catch (err) {
+      /* Most failures here never pass through callService — a list that
+         couldn't be read, an add HA silently skipped — so nothing else would
+         record them, and the card would just snap back without a word. */
+      logError({ source: "service", message: "Kanban move didn't go through", detail: `${fromCol} → ${toCol} · ${describeHaError(err)}` });
       /* Put the card back, then re-read: half the move may have landed, and
          the re-read shows what really exists. Offline the re-read can't run,
          but then the first call is the one that failed, so nothing landed
          and the revert is the truth. */
       optimisticMove(key, toCol, fromCol);
       refresh();
+    } finally {
+      movingRef.current.delete(key);
+      setMoving((m) => omit(m, key));
     }
   }
 
@@ -143,6 +213,9 @@ export function KanbanBoardCard({ index = 0 }) {
      The form waits on this and keeps its draft on a rejection — it used to be
      closed before the call settled, so a failed add threw the typing away. */
   async function addItem(colId, summary, tags, due) {
+    /* HA would skip a dead list and still say yes, and the "added" card would
+       vanish on the next read. Refuse instead, so the form keeps the draft. */
+    if (!listReady(colId)) throw new Error(`${colId} is not available`);
     const desc = buildDescription(tags, "");
     await callService("todo", "add_item", {
       entity_id: colId,
@@ -158,7 +231,7 @@ export function KanbanBoardCard({ index = 0 }) {
 
   function startDelete(colId, card) {
     const key = cardKey(card);
-    if (pendingRef.current.has(key)) return;
+    if (pendingRef.current.has(key) || movingRef.current.has(key) || !listReady(card._entity || colId)) return;
     const timer = setTimeout(() => commitDelete(key), UNDO_MS);
     pendingRef.current.set(key, { card, colId, timer, sent: false });
     setPending((p) => ({ ...p, [key]: "undo" }));
@@ -219,7 +292,12 @@ export function KanbanBoardCard({ index = 0 }) {
     setDraggingId(key);
   }
   function onDragEnd() { setDraggingId(null); setDragOver(null); }
-  function onDragOver(ev, col) { ev.preventDefault(); ev.dataTransfer.dropEffect = "move"; setDragOver(col); }
+  /* No preventDefault over a dead list: the browser then refuses the drop
+     itself and shows "can't drop here". */
+  function onDragOver(ev, col) {
+    if (!accepts(col)) return;
+    ev.preventDefault(); ev.dataTransfer.dropEffect = "move"; setDragOver(col);
+  }
   function onDrop(ev, col) {
     ev.preventDefault();
     try {
@@ -231,7 +309,7 @@ export function KanbanBoardCard({ index = 0 }) {
   }
 
   const counts = Object.fromEntries(ALL_COL_IDS.map((id) => [id, columns[id]?.length || 0]));
-  const { meta, total, columns: colView } = boardState({ connStatus, reads, counts });
+  const { meta, total, columns: colView } = boardState({ connStatus, reads, counts, lists });
 
   return (
     <Card
@@ -245,7 +323,8 @@ export function KanbanBoardCard({ index = 0 }) {
           const items = columns[id] || [];
           const view = colView[id];
           const headId = `${idBase}-${id}`;
-          const targets = KANBAN_COLS.filter((c) => c.id !== id);
+          const targets = KANBAN_COLS.filter((c) => c.id !== id)
+            .map((c) => ({ ...c, disabled: !accepts(c.id), why: whyNoWrite(c.id) }));
           return (
             /* Focusable from script only (tabIndex -1): it's where focus
                lands after a keyboard move, because the card itself remounts
@@ -270,7 +349,8 @@ export function KanbanBoardCard({ index = 0 }) {
                 const key = cardKey(c);
                 return (
                   <KanbanTask
-                    key={key} card={c} isDone={id === DONE} targets={targets} canWrite={canWrite}
+                    key={key} card={c} isDone={id === DONE} targets={targets}
+                    canWrite={canWrite && listReady(c._entity) && !moving[key]}
                     dragging={draggingId === key} pending={pending[key]}
                     onDragStart={(ev) => onDragStart(ev, key, id)} onDragEnd={onDragEnd}
                     onMove={(toCol, hadFocus) => { moveCard(key, id, toCol); if (hadFocus) focusColumn(toCol); }}
@@ -285,9 +365,9 @@ export function KanbanBoardCard({ index = 0 }) {
                   type="button"
                   className="kanban-add"
                   onClick={() => setAdding(id)}
-                  disabled={!canWrite}
+                  disabled={!canWrite || !listReady(id)}
                   aria-label={`Add a task to ${label}`}
-                  title={canWrite ? undefined : "Not connected to Home Assistant"}
+                  title={whyNoWrite(id)}
                 >
                   + Add
                 </button>

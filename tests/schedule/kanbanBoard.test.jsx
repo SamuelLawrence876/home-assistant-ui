@@ -23,15 +23,19 @@ function setConn(s) {
 
 vi.mock("../../src/ha/useEntity.js", async () => {
   const React = await import("react");
+  const useConnectionStatus = () => {
+    const [s, set] = React.useState(conn.status);
+    React.useEffect(() => {
+      conn.listeners.add(set);
+      return () => { conn.listeners.delete(set); };
+    }, []);
+    return s;
+  };
   return {
-    useConnectionStatus: () => {
-      const [s, set] = React.useState(conn.status);
-      React.useEffect(() => {
-        conn.listeners.add(set);
-        return () => { conn.listeners.delete(set); };
-      }, []);
-      return s;
-    },
+    useConnectionStatus,
+    // Every list exists and is available in this file; unavailable and
+    // missing lists are kanbanRound2.test.jsx's.
+    useEntityStatus: () => ({ entity: { state: "0" }, status: useConnectionStatus() === "ready" ? "ready" : "loading" }),
   };
 });
 

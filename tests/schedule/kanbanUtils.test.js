@@ -7,7 +7,7 @@
    re-added (LESSONS.md pattern 2). */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
-  parseTags, buildDescription, fmtDue, dueFields, normaliseTag, itemRef, boardState,
+  parseTags, buildDescription, fmtDue, dueFields, normaliseTag, tagDropsCharacters, itemRef, boardState,
 } from "../../src/cards/schedule/kanbanUtils.js";
 
 describe("parseTags", () => {
@@ -67,6 +67,54 @@ describe("normaliseTag", () => {
       expect(parseTags(buildDescription([t], "")).tags).toEqual([t]);
     }
   });
+
+  it("round-trips scripts with combining marks and decomposed input too", () => {
+    for (const raw of ["हिंदी", "ภาษาไทย", "café", "İstanbul"]) {
+      const t = normaliseTag(raw);
+      expect(t).not.toBe("");
+      expect(parseTags(buildDescription([t], "")).tags).toEqual([t]);
+    }
+  });
+
+  it("keeps combining marks — they are part of the word, not punctuation", () => {
+    // Devanagari vowel signs are \p{M}: stripping them stored "हिंदी" as "हद".
+    expect(normaliseTag("हिंदी")).toBe("हिंदी");
+    expect(normaliseTag("café")).toBe("café"); // NFD in, NFC out
+  });
+
+  it("never starts a tag with a mark parseTags can't start on", () => {
+    expect(normaliseTag("́abc")).toBe("abc");
+    expect(normaliseTag("-́x")).toBe("x");
+  });
+
+  it("leaves nothing for an emoji, and says less than was typed for 'C++'", () => {
+    expect(normaliseTag("😀")).toBe("");
+    expect(normaliseTag("C++")).toBe("c");
+  });
+});
+
+describe("tagDropsCharacters", () => {
+  it("is true when typed characters were thrown away", () => {
+    expect(tagDropsCharacters("C++")).toBe(true);
+    expect(tagDropsCharacters("q&a")).toBe(true);
+    expect(tagDropsCharacters("😀")).toBe(true);
+  });
+
+  it("is false for spacing, case, hyphen runs or a leading #", () => {
+    for (const raw of ["urgent ", "  Side   Project ", "#Garden", "a - b", "हिंदी", "café"]) {
+      expect(tagDropsCharacters(raw)).toBe(false);
+    }
+  });
+});
+
+describe("parseTags with marks and other clients' input", () => {
+  it("reads a tag with combining marks whole", () => {
+    expect(parseTags("#हिंदी practice")).toEqual({ tags: ["हिंदी"], text: "practice" });
+  });
+
+  it("reads a decomposed (NFD) tag from another client as the same NFC tag", () => {
+    expect(parseTags("#café-crème").tags).toEqual(["café-crème"]);
+  });
 });
 
 describe("itemRef", () => {
@@ -121,6 +169,39 @@ describe("boardState", () => {
     expect(s.meta).toBe("not connected · may be out of date");
     expect(s.columns["todo.backlog"].count).toBe(3);
     expect(s.total).toBe(3);
+  });
+
+  it("says the whole board couldn't be read when no column could, not 'some'", () => {
+    expect(boardState({ connStatus: "ready", reads: all("error"), counts: none }).meta).toBe("board couldn't be read");
+    // ...and that it couldn't be REFRESHED when it is showing what it read before.
+    const stale = boardState({ connStatus: "ready", reads: all("error"), counts: { ...none, "todo.backlog": 2 } });
+    expect(stale.meta).toBe("board couldn't be refreshed · may be out of date");
+  });
+
+  it("shows '—' for a partially read Done rather than the subset it has", () => {
+    const reads = { ...all("ok"), __done__: "partial" };
+    const s = boardState({ connStatus: "ready", reads, counts: { ...none, __done__: 2 } });
+    expect(s.columns.__done__).toMatchObject({ count: "—", note: "Couldn't read all of this column", tone: "error" });
+    expect(s.total).toBe(null);
+    expect(s.meta).toBe("some columns couldn't be read");
+  });
+
+  it("treats an unavailable or missing list as unreadable, whatever its last read said", () => {
+    const lists = { "todo.backlog": "ready", "todo.next": "unavailable" };
+    const s = boardState({ connStatus: "ready", reads: all("ok"), counts: none, lists });
+    expect(s.columns["todo.next"]).toMatchObject({ count: "—", note: "List unavailable", tone: "error" });
+    // Done holds that list's completed items, so it has a hole now too.
+    expect(s.columns.__done__).toMatchObject({ count: 0, tone: "stale" });
+    expect(s.total).toBe(null);
+    const gone = boardState({ connStatus: "ready", reads: all("ok"), counts: { ...none, "todo.next": 3 }, lists: { ...lists, "todo.next": "not_found" } });
+    expect(gone.columns["todo.next"]).toMatchObject({ count: 3, note: "List not found · may be out of date", tone: "stale" });
+  });
+
+  it("ignores list status while offline — the connection is the explanation then", () => {
+    const lists = { "todo.backlog": "loading", "todo.next": "unavailable" };
+    const s = boardState({ connStatus: "disconnected", reads: all("unread"), counts: none, lists });
+    expect(s.columns["todo.next"].note).toBe("Not connected");
+    expect(s.meta).toBe("not connected");
   });
 
   it("states the total only when every column read cleanly", () => {

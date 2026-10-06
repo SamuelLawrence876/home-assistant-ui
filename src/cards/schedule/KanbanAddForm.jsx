@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { normaliseTag } from "./kanbanUtils.js";
+import { normaliseTag, tagDropsCharacters } from "./kanbanUtils.js";
 
 /* The inline "+ Add" form on a Kanban column. Owns nothing but its own draft:
    it hands (summary, tags, dueDate) back to KanbanBoardCard, which is the only
@@ -26,6 +26,8 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
   const [selectedTags, setSelectedTags] = useState([]);
   const [customTag, setCustomTag] = useState("");
   const [showTagMenu, setShowTagMenu] = useState(false);
+  /* Why the last custom tag isn't stored exactly as typed, or "". */
+  const [tagHint, setTagHint] = useState("");
   const [due, setDue] = useState("");
   const [send, setSend] = useState("idle"); // "idle" | "busy" | "failed"
   const ref = useRef(null);
@@ -56,10 +58,38 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
   function toggleTag(id) {
     setSelectedTags((cur) => cur.includes(id) ? cur.filter((t) => t !== id) : [...cur, id]);
   }
+  function toggleMenu() {
+    setTagHint("");
+    setShowTagMenu((open) => !open);
+  }
+  /* The box is a pointer shortcut to the toggle, the way the whole box was
+     one button before the chips got their own remove buttons — chips can
+     fill its first row and wrap the toggle into a small corner. The real
+     <button> is still the keyboard and screen-reader way in, and a click on
+     any button inside the box is left to that button. */
+  /* A div with onClick, deliberately (LESSONS.md pattern 8 is about controls):
+     this is only a bigger mouse/touch target for the real toggle <button>,
+     which stays the keyboard and screen-reader way in. A click on a button
+     inside it (a chip's ×, the toggle itself) is that button's, not the box's. */
+  function onBoxClick(ev) {
+    if (ev.target.closest("button")) return;
+    toggleMenu();
+    toggleRef.current?.focus();
+  }
+  /* A tag is stored only as letters, marks, digits, - and _ (normaliseTag),
+     so "C++" becomes "c" and an emoji becomes nothing. Either way it is
+     said: the input used to just clear, with no chip and no reason. A tag
+     that can't be made keeps its text so it can be fixed. */
   function addCustomTag(ev) {
     ev.preventDefault();
+    if (!customTag.trim()) { setCustomTag(""); return; }
     const t = normaliseTag(customTag);
-    if (t && !selectedTags.includes(t)) setSelectedTags((cur) => [...cur, t]);
+    if (!t) {
+      setTagHint(`Can’t make a tag from “${customTag.trim()}” — use letters, numbers, - or _.`);
+      return;
+    }
+    if (!selectedTags.includes(t)) setSelectedTags((cur) => [...cur, t]);
+    setTagHint(tagDropsCharacters(customTag) ? `Added as #${t} — tags keep only letters, numbers, - and _.` : "");
     setCustomTag("");
   }
   /* The chip's × is about to unmount under the focus it holds; hand focus
@@ -94,7 +124,7 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
               sit inside the toggle, which left their × as an aria-hidden
               mouse-only <span> — a button inside a button isn't valid HTML —
               so a custom tag couldn't be removed from the keyboard at all. */}
-          <div className="kanban-tag-toggle">
+          <div className="kanban-tag-toggle" onClick={onBoxClick}>
             {selectedTags.map((t) => (
               <span key={t} className={`tag tag-${t}`}>
                 {tagLabel(t)}
@@ -107,7 +137,7 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
               type="button"
               ref={toggleRef}
               className="kanban-tag-open"
-              onClick={() => setShowTagMenu(!showTagMenu)}
+              onClick={toggleMenu}
               aria-label={
                 selectedTags.length
                   ? `Tags: ${selectedTags.map(tagLabel).join(", ")}. Choose tags`
@@ -137,9 +167,12 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
                   placeholder="Custom tag…"
                   aria-label="Custom tag"
                   value={customTag}
-                  onChange={(ev) => setCustomTag(ev.target.value)}
+                  onChange={(ev) => { setCustomTag(ev.target.value); setTagHint(""); }}
                   onKeyDown={(ev) => { if (ev.key === "Enter") addCustomTag(ev); }}
                 />
+                {/* Always in the DOM so the live region exists before it
+                    has anything to say; zero height while empty. */}
+                <p className="kanban-tag-hint" role="status">{tagHint}</p>
               </div>
             </div>
           )}

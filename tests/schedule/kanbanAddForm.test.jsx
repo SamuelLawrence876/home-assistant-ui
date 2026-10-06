@@ -59,6 +59,73 @@ describe("custom tags", () => {
   });
 });
 
+describe("custom tags that can't be stored as typed say so", () => {
+  const hint = () => screen.getByRole("status");
+
+  it("refuses an emoji with a reason, and keeps what was typed so it can be fixed", async () => {
+    const onSubmit = setup();
+    addCustomTag("😀");
+    expect(hint()).toHaveTextContent(/Can.t make a tag from “😀”/);
+    expect(screen.getByRole("textbox", { name: "Custom tag" })).toHaveValue("😀");
+    await submit("Sort the shed");
+    expect(onSubmit.mock.calls[0][1]).toEqual([]);
+  });
+
+  it("says what 'C++' was stored as instead of silently writing 'c'", () => {
+    setup();
+    addCustomTag("C++");
+    expect(hint()).toHaveTextContent("Added as #c");
+    expect(screen.getByRole("button", { name: "Remove tag c" })).toBeInTheDocument();
+  });
+
+  it("says nothing when only spacing, case or a leading # changed", () => {
+    setup();
+    addCustomTag("#Garden Shed ");
+    expect(hint()).toHaveTextContent("");
+    expect(screen.getByRole("button", { name: "Remove tag garden-shed" })).toBeInTheDocument();
+  });
+
+  it("keeps a tag with combining marks whole", async () => {
+    const onSubmit = setup();
+    addCustomTag("हिंदी");
+    expect(hint()).toHaveTextContent("");
+    await submit("Practise");
+    expect(onSubmit.mock.calls[0][1]).toEqual(["हिंदी"]);
+  });
+});
+
+describe("the tag box", () => {
+  const menuOpen = () => screen.queryByRole("textbox", { name: "Custom tag" }) !== null;
+  const box = () => document.querySelector(".kanban-tag-toggle");
+
+  it("opens and closes the menu from anywhere in the box, not just the small + corner", () => {
+    setup();
+    addCustomTag("garden");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(menuOpen()).toBe(false);
+    fireEvent.click(box());
+    expect(menuOpen()).toBe(true);
+    fireEvent.click(box());
+    expect(menuOpen()).toBe(false);
+    // A chip's label is part of the box too.
+    fireEvent.click(screen.getByText("garden"));
+    expect(menuOpen()).toBe(true);
+  });
+
+  it("leaves a click on a button inside the box to that button", () => {
+    setup();
+    addCustomTag("garden");
+    fireEvent.keyDown(document, { key: "Escape" });
+    // The toggle itself opens it once — not open-then-closed by the box too.
+    fireEvent.click(screen.getByRole("button", { name: /Choose tags$/ }));
+    expect(menuOpen()).toBe(true);
+    fireEvent.keyDown(document, { key: "Escape" });
+    // Removing a tag doesn't open the menu.
+    fireEvent.click(screen.getByRole("button", { name: "Remove tag garden" }));
+    expect(menuOpen()).toBe(false);
+  });
+});
+
 describe("submitting", () => {
   it("shows it is busy and can't be sent twice while Home Assistant is answering", async () => {
     let resolve;
