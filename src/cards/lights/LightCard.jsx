@@ -58,13 +58,16 @@ export function LightCard({ index = 0, entityId }) {
 
   // Resync from HA only. `known` is in the list so a light coming back from
   // unavailable re-reads its state even when nothing else changed meanwhile.
+  // A null is HA's answer too (an off bulb has no brightness or colour, an
+  // RGB-mode bulb no temperature), so it is written through: skipping it left
+  // the last reading — or the 0 that switched it off — beside "Off".
   useEffect(() => {
     if (!known) return;
     const at = live.attributes || {};
     setOn(live.state === "on");
-    if (at.brightness != null) setB(at.brightness);
-    if (at.rgb_color) setRgb(at.rgb_color);
-    if (at.color_temp_kelvin != null) setKelvin(at.color_temp_kelvin);
+    setB(at.brightness ?? null);
+    setRgb(at.rgb_color || null);
+    setKelvin(at.color_temp_kelvin ?? null);
   }, [known, live?.state, live?.attributes?.brightness, live?.attributes?.rgb_color?.join(","), live?.attributes?.color_temp_kelvin]);
 
   /* A failed call puts back what HA says *now*, not what the card showed at
@@ -72,17 +75,18 @@ export function LightCard({ index = 0, entityId }) {
      effect above only fires when a value changes — so a call that failed and
      left HA where it was used to leave the optimistic colour / brightness on
      screen for good (useOptimisticToggle's entityRef exists for the same
-     reason). `prev` names the fields to restore and is the fallback for one
-     HA doesn't report — an off light carries no brightness or colour. */
+     reason). `prev` names the fields to restore, and is used only when HA has
+     no entity to ask; HA's null wins over it — the light went off under the
+     call, say — or the value that failed stays on screen. */
   const eRef = useRef(live);
   eRef.current = live;
   function restore(prev) {
     const cur = eRef.current;
     const at = cur?.attributes || {};
     if ("on" in prev) setOn(cur ? cur.state === "on" : prev.on);
-    if ("bright" in prev) setB(at.brightness ?? prev.bright);
-    if ("rgb" in prev) setRgb(at.rgb_color ?? prev.rgb);
-    if ("kelvin" in prev) setKelvin(at.color_temp_kelvin ?? prev.kelvin);
+    if ("bright" in prev) setB(cur ? at.brightness ?? null : prev.bright);
+    if ("rgb" in prev) setRgb(cur ? at.rgb_color || null : prev.rgb);
+    if ("kelvin" in prev) setKelvin(cur ? at.color_temp_kelvin ?? null : prev.kelvin);
   }
 
   function toggle() {
@@ -126,10 +130,11 @@ export function LightCard({ index = 0, entityId }) {
   const kelvinRef = useRangeCommit(commitKelvin);
 
   // What the light is doing, as far as anyone knows. Local state survives a
-  // dropout, but nothing on screen may claim it while HA can't vouch for it.
+  // dropout, but nothing on screen may claim it while HA can't vouch for it —
+  // and an off light has no brightness, temperature or colour to claim.
   const lit = known && on;
-  const shownBright = known ? bright : null;
-  const shownKelvin = known ? kelvin : null;
+  const shownBright = lit ? bright : null;
+  const shownKelvin = lit ? kelvin : null;
   const pct = shownBright != null ? Math.round((shownBright / 255) * 100) : null;
   const paint = rgb || (kelvin != null ? kelvinToRgb(kelvin) : UNREPORTED_PAINT);
   const meta = placeholder ? "Not yet added"
@@ -169,7 +174,7 @@ export function LightCard({ index = 0, entityId }) {
             onToggle={toggle}
             disabled={inert}
             // role="switch" has no "unknown", so the real state goes in the name.
-            label={known ? name : `${name} — ${pending ? "not reported yet" : "unavailable"}`}
+            label={known ? name : `${name} — ${pending ? "state unknown" : "unavailable"}`}
           />
         )
       }
@@ -262,7 +267,7 @@ export function LightCard({ index = 0, entityId }) {
         <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
           <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <PresetSwatches presets={LIGHT_PRESETS} rgb={known ? rgb : null} onPick={pickColor} targetName={name} disabled={inert} />
+            <PresetSwatches presets={LIGHT_PRESETS} rgb={lit ? rgb : null} onPick={pickColor} targetName={name} disabled={inert} />
           </div>
         </div>
       )}

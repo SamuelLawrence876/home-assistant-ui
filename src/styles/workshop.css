@@ -615,6 +615,28 @@
 }
 .ws-vac-actbtns .btn { padding: 8px 14px; font-size: 12px; }
 .ws-vac-actbtns .btn.ghost { background: transparent; }
+/* While the vacuum can't take a command (unavailable, unknown or missing) its
+   buttons are disabled — and used to look exactly like live ones. Scoped, not a
+   global .btn:disabled: the app has never had one, and a global rule would
+   restyle every button. */
+.ws-vac-actbtns .btn:disabled,
+.ws-control-row .seg button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+/* Why a command is disabled, in text: a disabled button's title can't be
+   focused to read and never shows on touch. Its own line under the buttons. */
+.ws-vac-hint {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
 
 /* Mop intensity / mode segmented controls */
 .ws-vac-controls { display: flex; flex-direction: column; gap: 8px; }
@@ -788,6 +810,7 @@ body.viewport-phone .ws-vac-actbtns {
   grid-column: 1 / -1;
   justify-content: flex-start;
 }
+body.viewport-phone .ws-vac-hint { text-align: left; }
 body.viewport-phone .ws-control-row > .k { min-width: 100%; }
 body.viewport-phone .ws-wear-row {
   grid-template-columns: 80px 1fr 90px;

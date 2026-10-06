@@ -13,7 +13,7 @@ const PM_COLOR = { excellent: "var(--good)", good: "var(--good)", moderate: "var
    ----------------------------------------------------------------*/
 export function RoomClimateStrip({ index = 0 }) {
   const {
-    status, pending, stale: climateStale,
+    status, pending, stale: climateStale, staleNote,
     temp, humidity, tempHist, tempMin, tempMax,
     delta, trendIcon, tempBand, humBand, allGood, verdict, lastUp,
   } = useClimateDerived();
@@ -60,7 +60,7 @@ export function RoomClimateStrip({ index = 0 }) {
     <Card index={index} className="roomclim-strip"
           eyebrow="Climate · Govee H5075"
           title="Room"
-          meta={climateStale ? "Sensor offline · last known" : `${lastUp} · ${tempBand}`}
+          meta={staleNote ?? `${lastUp} · ${tempBand}`}
           badge={climateStale ? "stale" : undefined}>
       <div className="rcstrip-body">
         {/* Temp + trend */}

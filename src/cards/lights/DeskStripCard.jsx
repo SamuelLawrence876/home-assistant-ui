@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
@@ -17,7 +17,10 @@ import { parseGoveeProps } from "./goveeUtils.js";
    Govee poll failed) the card has no strip state to show — and a
    confident "Off" beside a live switch is the dead-plug-looks-off
    conflation SamBoxStrip was rewritten to remove. So: em-dash or
-   "Unavailable", every control disabled, nothing sent.
+   "Unavailable", every control disabled, nothing sent. Likewise when the
+   sensor is fine but Govee says the strip itself is offline (unplugged,
+   off Wi-Fi): its powerState is then only the last thing it said, and a
+   command goes nowhere — "Offline", same treatment.
    ----------------------------------------------------------------*/
 const ENTITY = "sensor.desk_strip_state";
 
@@ -49,14 +52,18 @@ const GOVEE_PRESETS = [
 
 export function DeskStripCard({ index = 0 }) {
   const { entity: live, status } = useEntityStatus(ENTITY);
-  const known = status === "ready";
   const hw = useMemo(() => parseGoveeProps(live?.attributes), [live?.attributes?.properties]);
+  // Only an explicit `online: false` counts; a payload without the field is
+  // read as before.
+  const offline = status === "ready" && hw.online === false;
+  const known = status === "ready" && !offline;
 
   const [on, setOn] = useState(false);
   // null = the strip hasn't reported it and nobody has set it here, so the
-  // readout is an em-dash rather than a made-up 100% / 2700K.
+  // readout is an em-dash (and no swatch is pressed) rather than a made-up
+  // 100% / 2700K / Amber.
   const [bright, setB] = useState(null);
-  const [rgb, setRgb] = useState([255, 198, 130]);
+  const [rgb, setRgb] = useState(null);
   const [kelvin, setKelvin] = useState(null);
   const userActedAt = useRef(0);
   const lastCmdTime = useRef(0);
@@ -83,12 +90,13 @@ export function DeskStripCard({ index = 0 }) {
     if (!known) return;
     if (Date.now() - userActedAt.current < RESYNC_FREEZE) return;
     setOn(hw.power ? hw.power === "on" : live.state === "on");
-    if (hw.brightness != null) setB(hw.brightness);
-    if (hw.color) setRgb(hw.color);
-    if (hw.kelvin != null) {
-      setKelvin(hw.kelvin);
-      if (!hw.color) setRgb(kelvinToRgb(hw.kelvin));
-    }
+    // A field the latest report leaves out is unknown now, so the absence is
+    // written through, as LightCard does. Skipping it kept the last reading:
+    // RGB mode reports no temperature (colorTemInKelvin 0), and a 4000K from
+    // before a switch to Red sat beside the red orb and pressed Red swatch.
+    setB(hw.brightness ?? null);
+    setKelvin(hw.kelvin ?? null);
+    setRgb(hw.color || (hw.kelvin != null ? kelvinToRgb(hw.kelvin) : null));
   }, [known, live?.state, hw.power, hw.brightness, hw.color?.join(","), hw.kelvin, resyncTick]);
 
   function scheduleVerify() {
@@ -161,6 +169,7 @@ export function DeskStripCard({ index = 0 }) {
       wasOff ? govee("turn", { value: "on" }).then(send).catch(() => {}) : send().catch(() => {});
     } else {
       setRgb(p.rgb);
+      setKelvin(null); // an RGB colour has no temperature
       const send = () => govee("color", { r: p.rgb[0], g: p.rgb[1], b: p.rgb[2] });
       wasOff ? govee("turn", { value: "on" }).then(send).catch(() => {}) : send().catch(() => {});
     }
@@ -184,13 +193,50 @@ export function DeskStripCard({ index = 0 }) {
   const pending = status === "loading";
   const shownBright = known ? bright : null;
   const shownKelvin = known ? kelvin : null;
+  // Orb paint for a lit strip that reported no colour. Decoration only —
+  // never handed to the swatches as the strip's colour.
+  const paint = rgb || [255, 198, 130];
+  const why = pending ? "state unknown" : offline ? "offline" : "unavailable";
   const meta = !known
-    ? pending ? "—" : "Unavailable"
+    ? pending ? "—" : offline ? "Offline" : "Unavailable"
     : on ? (bright != null ? `On · ${bright}%` : "On") : "Off";
 
   const glow = lit
-    ? `0 0 24px ${rgbStr(rgb)}33, 0 0 80px ${rgbStr(rgb)}1f`
+    ? `0 0 24px ${rgbStr(paint)}33, 0 0 80px ${rgbStr(paint)}1f`
     : "none";
+
+  /* Keyboard focus stays in the card when a control is disabled or removed
+     under it (the strip drops offline, the sensor dies and EntityGuard swaps
+     the body, the strip is switched off from elsewhere). Either one hands focus
+     to <body>, and a keyboard or screen-reader user loses their place. It goes
+     to the switch if that is still live, otherwise to the card's heading.
+     `anchor` wraps the switch, the one thing rendered in every state. */
+  const anchor = useRef(null);
+  const focused = useRef(null);
+  useEffect(() => {
+    const card = anchor.current?.closest(".card");
+    if (!card) return undefined;
+    const onIn = (e) => { focused.current = e.target; };
+    // A blur to nowhere from a control that is now disabled or gone is the
+    // drop this is here to catch; any other blur is the user moving on.
+    const onOut = (e) => {
+      if (e.relatedTarget || !(e.target.disabled || !e.target.isConnected)) focused.current = null;
+    };
+    card.addEventListener("focusin", onIn);
+    card.addEventListener("focusout", onOut);
+    return () => { card.removeEventListener("focusin", onIn); card.removeEventListener("focusout", onOut); };
+  }, []);
+  useLayoutEffect(() => {
+    const el = focused.current;
+    const now = document.activeElement;
+    if (!el || !(el.disabled || !el.isConnected)) return;
+    if (now && now !== el && now !== document.body) return;
+    const sw = anchor.current?.querySelector("button");
+    const to = sw && !sw.disabled ? sw : anchor.current?.closest(".card")?.querySelector("h2");
+    if (!to) return;
+    if (to !== sw) to.tabIndex = -1;
+    to.focus({ preventScroll: true });
+  }, [known, lit]);
 
   return (
     <Card
@@ -199,13 +245,15 @@ export function DeskStripCard({ index = 0 }) {
       title="Desk strip"
       meta={meta}
       headRight={
-        <ToggleSwitch
-          on={lit}
-          onToggle={toggle}
-          disabled={!known}
-          // role="switch" has no "unknown", so the real state goes in the name.
-          label={known ? "Desk strip" : `Desk strip — ${pending ? "not reported yet" : "unavailable"}`}
-        />
+        <span ref={anchor} style={{ display: "contents" }}>
+          <ToggleSwitch
+            on={lit}
+            onToggle={toggle}
+            disabled={!known}
+            // role="switch" has no "unknown", so the real state goes in the name.
+            label={known ? "Desk strip" : `Desk strip — ${why}`}
+          />
+        </span>
       }
     >
       <EntityGuard status={status} entityId={ENTITY}>
@@ -224,10 +272,10 @@ export function DeskStripCard({ index = 0 }) {
             height: 72,
             borderRadius: "50%",
             background: lit
-              ? `radial-gradient(circle at 32% 32%, white 0%, ${rgbStr(rgb)} 55%, ${rgbStr([
-                  Math.max(0, rgb[0] - 60),
-                  Math.max(0, rgb[1] - 60),
-                  Math.max(0, rgb[2] - 60),
+              ? `radial-gradient(circle at 32% 32%, white 0%, ${rgbStr(paint)} 55%, ${rgbStr([
+                  Math.max(0, paint[0] - 60),
+                  Math.max(0, paint[1] - 60),
+                  Math.max(0, paint[2] - 60),
                 ])} 100%)`
               : "color-mix(in oklch, var(--ink), transparent 88%)",
             boxShadow: glow,
@@ -256,7 +304,7 @@ export function DeskStripCard({ index = 0 }) {
             // reported one, say so rather than announce the parked thumb.
             aria-valuetext={shownBright != null ? `${shownBright}%` : "unknown"}
             className="gh-slider"
-            style={{ width: "100%", accentColor: lit ? rgbStr(rgb) : "var(--ink-4)" }}
+            style={{ width: "100%", accentColor: lit ? rgbStr(paint) : "var(--ink-4)" }}
           />
         </div>
       </div>
@@ -293,10 +341,28 @@ export function DeskStripCard({ index = 0 }) {
       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <PresetSwatches presets={GOVEE_PRESETS} rgb={rgb} onPick={pickColor} targetName="Desk strip" disabled={!known} />
+          <PresetSwatches presets={GOVEE_PRESETS} rgb={known ? rgb : null} onPick={pickColor} targetName="Desk strip" disabled={!known} />
         </div>
       </div>
       </EntityGuard>
+      {offline && <OfflineBadge />}
     </Card>
+  );
+}
+
+/* EntityGuard's corner badge, for the one case EntityGuard can't see: the
+   sensor is fine (status "ready") but Govee says the strip itself is offline.
+   An unreachable device is flagged the same way on every card — but in its own
+   words, because "sensor.desk_strip_state unavailable" would not be true. */
+function OfflineBadge() {
+  const label = "Desk strip offline";
+  return (
+    <span className="entity-warning-badge" title={label} aria-label={label} role="img">
+      <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        <line x1="12" y1="9" x2="12" y2="13" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    </span>
   );
 }

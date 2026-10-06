@@ -182,7 +182,9 @@
 }
 .sys-action:hover { transform: translateY(-2px); }
 .sys-action:active { transform: scale(0.98); }
-.sys-action:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+/* aria-disabled, not disabled, while an action runs: the pressed tile is the
+   focused one, and a disabled button drops keyboard focus. */
+.sys-action[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; transform: none; }
 .sys-action::after {
   content: "";
   position: absolute; inset: 0;
@@ -243,3 +245,27 @@
   transition: color 0.2s, border-color 0.2s;
 }
 .sys-action-cancel:hover { color: var(--ink); border-color: var(--ink-3); }
+/* "Restarting… the dashboard will reconnect." Rendered empty the rest of the
+   time (it is the card's live region), so no margin until it has text. */
+.sys-action-note {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-align: center;
+}
+.sys-action-note:not(:empty) { margin-top: 10px; }
+/* "Home Assistant didn't restart — try again." */
+.sys-action-note.bad { color: var(--bad); }
+
+/* Updates card: an Install that can't be used right now — one install is
+   already in flight, or the socket is down and the row is only what HA last
+   reported. aria-disabled, not disabled (focus stays on the pressed button),
+   so it needs its own look; .btn has never had a disabled style. */
+.btn.updates-btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}

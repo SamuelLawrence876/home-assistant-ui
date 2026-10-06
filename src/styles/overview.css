@@ -315,6 +315,17 @@
   background: color-mix(in oklch, var(--warn), transparent 84%);
   color: var(--warn);
 }
+/* State unknown (not connected, or the script / mode entity missing): the tile
+   takes no taps (aria-disabled, so a focused tile keeps focus) and must not
+   look like it does — no lift, no press, a greyed icon. */
+.scene[aria-disabled="true"] { cursor: not-allowed; }
+.scene[aria-disabled="true"]:hover,
+.scene[aria-disabled="true"]:active,
+.scene[aria-disabled="true"]:hover .scene-ic { transform: none; }
+.scene[aria-disabled="true"] .scene-ic {
+  background: color-mix(in oklch, var(--ink-3), transparent 85%);
+  color: var(--ink-3);
+}
 .scene-dot {
   position: absolute;
   top: 10px; right: 12px;

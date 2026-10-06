@@ -20,16 +20,23 @@ export function PiCard({ index = 0 }) {
   const diskGiB = numOr(liveDisk?.state, null);
   const diskPct = diskGiB != null ? (diskGiB / PI_DISK_GIB) * 100 : null;
 
-  // Health summary derived from the worst metric. Don't claim "all healthy"
-  // when every system_monitor sensor is missing — that reads as a clean bill.
+  // Health summary derived from the worst metric that was actually read. A
+  // reading that crosses a line is a fact even when others are missing, but
+  // "all healthy" needs all four: it used to print with CPU, memory and temp
+  // unavailable (disk alone was enough), and while the socket was down, from
+  // the last values cached before it dropped.
+  const readings = [cpu, memPct, temp, diskPct];
+  const missing = readings.filter((v) => v == null).length;
   const health =
-    [cpu, memPct, temp, diskPct].every((v) => v == null)
+    piStatus === "loading" || missing === readings.length
       ? "no readings"
       : temp >= 75 || cpu >= 90 || memPct >= 90 || diskPct >= 90
         ? "degraded"
         : temp >= 65 || cpu >= 70 || memPct >= 75 || diskPct >= 80
           ? "warm"
-          : "all healthy";
+          : missing
+            ? `${missing} reading${missing > 1 ? "s" : ""} missing`
+            : "all healthy";
 
   return (
     <Card index={index} eyebrow="System · raspberry_pi" title="Pi health" meta={health}>

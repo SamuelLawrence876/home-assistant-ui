@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useId } from "react";
 import { formatRelativeIso } from "../../lib/format.js";
 import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
 import { callService, imageUrl } from "../../ha/client.js";
+import { SETTLE_MS } from "../../hooks/useOptimistic.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
 
@@ -103,6 +104,7 @@ export function VacuumCard({ index = 0 }) {
   const liveFilter = useEntity("sensor.roborock_s8_filter_time_left");
   const liveMapImage = useEntity("image.roborock_s8_map_0");
   const liveError = useEntity("sensor.roborock_s8_vacuum_error");
+  const liveFull = useEntity("button.roborock_s8_full_cleaning");
 
   // Roborock's cloud sensors go "unavailable" while the dock is offline —
   // null here so the readouts render an em dash instead of "NaN%".
@@ -151,12 +153,28 @@ export function VacuumCard({ index = 0 }) {
   useEffect(() => { setMapBroken(false); }, [mapImgSrc]);
 
   const [state, setState] = useState(liveVac?.state ?? "docked");
-  const unavailable = liveVac?.state === "unavailable";
+  /* Anything but "ready" (unavailable, unknown, missing, or not read yet) is a
+     vacuum HA won't act on: it skips the call and still reports success. This
+     used to match only "unavailable", so a missing or "unknown" vacuum kept
+     Start live and the card then claimed a clean nothing had started. */
+  const unavailable = vacStatus !== "ready";
+  /* A button entity's state is when it was last pressed ("unknown" until the
+     first press), so only missing or unavailable means Full can't land. */
+  const fullDead = !liveFull || liveFull.state === "unavailable";
+  const fullHintId = useId();
+  const dndDead = unavailable || !has(liveDnd?.state);
+  const settleRef = useRef(null);
+  const vacRef = useRef(liveVac);
+  vacRef.current = liveVac;
   useEffect(() => {
+    // A real state change is the answer the settle timer was waiting for.
+    clearTimeout(settleRef.current);
     if (liveVac?.state) setState(liveVac.state);
   }, [liveVac?.state]);
-  const cleaning = state === "cleaning";
-  const paused = state === "paused";
+  useEffect(() => () => clearTimeout(settleRef.current), []);
+  // Only a vacuum HA says is there can be cleaning — not a leftover optimistic state.
+  const cleaning = !unavailable && state === "cleaning";
+  const paused = !unavailable && state === "paused";
 
   // Acting flips `state` optimistically, which re-renders a different command into
   // the same slot — click Return and "Full" lands under the cursor, so a fast second
@@ -171,23 +189,30 @@ export function VacuumCard({ index = 0 }) {
   const actionMode = lockedMode || (cleaning ? "cleaning" : paused ? "paused" : "idle");
   const actionsLocked = unavailable || lockedMode != null;
   const act = (fn) => { setLockedMode(actionMode); fn(); };
+  // Only while Full is on screen (the idle set) and dead for its own reason.
+  const fullHint = actionMode === "idle" && fullDead && !unavailable;
 
-  function start() {
-    setState("cleaning");
-    callService("vacuum", "start", { entity_id: "vacuum.roborock_s8" }).catch(() => setState(liveVac?.state || "docked"));
+  /* Shows the command's outcome straight away, then goes back to what HA says
+     if the call fails — or if it resolves and the vacuum never reports a new
+     state within SETTLE_MS. A resolve is not proof: HA skips a target it can't
+     act on, and the Roborock cloud can drop a command. Without the settle, a
+     Start that went nowhere read CLEANING · ACTIVE until something else moved. */
+  function command(optimistic, domain, service, entityId = "vacuum.roborock_s8") {
+    const before = state;
+    const settle = () => setState(vacRef.current?.state ?? before);
+    setState(optimistic);
+    clearTimeout(settleRef.current);
+    callService(domain, service, { entity_id: entityId })
+      .then(() => {
+        clearTimeout(settleRef.current);
+        settleRef.current = setTimeout(settle, SETTLE_MS);
+      })
+      .catch(settle);
   }
-  function pause() {
-    setState("paused");
-    callService("vacuum", "pause", { entity_id: "vacuum.roborock_s8" }).catch(() => setState(liveVac?.state || "cleaning"));
-  }
-  function dock() {
-    setState("returning");
-    callService("vacuum", "return_to_base", { entity_id: "vacuum.roborock_s8" }).catch(() => setState("cleaning"));
-  }
-  function fullClean() {
-    setState("cleaning");
-    callService("button", "press", { entity_id: "button.roborock_s8_full_cleaning" }).catch(() => setState(liveVac?.state || "docked"));
-  }
+  const start = () => command("cleaning", "vacuum", "start");
+  const pause = () => command("paused", "vacuum", "pause");
+  const dock = () => command("returning", "vacuum", "return_to_base");
+  const fullClean = () => command("cleaning", "button", "press", "button.roborock_s8_full_cleaning");
   function locate() {
     callService("vacuum", "locate", { entity_id: "vacuum.roborock_s8" }).catch(() => {});
   }
@@ -204,7 +229,8 @@ export function VacuumCard({ index = 0 }) {
     callService("switch", dndOn ? "turn_off" : "turn_on", { entity_id: "switch.roborock_s8_do_not_disturb" }).catch(() => {});
   }
 
-  const charge = cleaning ? "var(--accent)" : "var(--good)";
+  // Green is a claim that all is well; a vacuum HA can't vouch for gets neither colour.
+  const charge = unavailable ? "var(--ink-4)" : cleaning ? "var(--accent)" : "var(--good)";
   const batteryLabel = battery != null ? `${battery}%` : "—";
   const chargeLabel = cleaning
     ? `cleaning · ${batteryLabel}`
@@ -272,10 +298,24 @@ export function VacuumCard({ index = 0 }) {
           ) : (
             <>
               <button className="btn accent" onClick={() => act(start)} disabled={actionsLocked}>Start</button>
-              <button className="btn" onClick={() => act(fullClean)} disabled={actionsLocked}>Full</button>
+              <button
+                className="btn"
+                onClick={() => act(fullClean)}
+                disabled={actionsLocked || fullDead}
+                aria-describedby={fullHint ? fullHintId : undefined}
+              >
+                Full
+              </button>
             </>
           )}
           <button className="btn ghost" onClick={locate} disabled={unavailable} title="Beep so I can find it">Locate</button>
+          {/* Why Full is dead, on screen. It used to be a title on the disabled
+              button — which can't take focus and shows no tooltip on touch, so
+              on a phone Full just looked broken. Not shown when the whole
+              vacuum is out: the card's own badge already says why. */}
+          {fullHint && (
+            <p className="ws-vac-hint" id={fullHintId}>Full clean isn't available in Home Assistant</p>
+          )}
         </div>
       </div>
 
@@ -340,13 +380,13 @@ export function VacuumCard({ index = 0 }) {
             aria-checked={dndOn}
             aria-label="Do not disturb"
             onClick={toggleDnd}
-            disabled={unavailable}
+            disabled={dndDead}
             style={{
               appearance: "none",
               WebkitAppearance: "none",
               lineHeight: "inherit",   // buttons don't inherit it; keeps the pill the same height as its siblings
-              cursor: unavailable ? "not-allowed" : "pointer",
-              opacity: unavailable ? 0.5 : 1,
+              cursor: dndDead ? "not-allowed" : "pointer",
+              opacity: dndDead ? 0.5 : 1,
             }}
           >
             <span className={`mini-tog ${dndOn ? "on" : ""}`} aria-hidden />

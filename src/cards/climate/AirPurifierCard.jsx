@@ -30,7 +30,14 @@ export function AirPurifierCard({ index = 0 }) {
   const livePm = useEntity("sensor.core_300s_series_pm2_5");
   const liveFilt = useEntity("sensor.core_300s_series_filter_lifetime");
   const { entity: liveDisplay, status: displayStatus } = useEntityStatus("switch.core_300s_series_display");
-  const unavailable = liveFan?.state === "unavailable" || liveFan?.state === "unknown";
+  /* Only a fan HA vouches for right now drives the switch, the presets and the
+     dek. This used to check the state string alone, so a fan entity removed
+     from HA ("not_found": no entity, no state) fell through as available —
+     green switch, "Currently running auto", five live buttons sending
+     fan.set_percentage to nothing. And while HA hasn't answered (connecting,
+     signed out, a dropout) the switch kept its last value and stayed live. */
+  const known = fanStatus === "ready";
+  const unavailable = fanStatus === "unavailable" || fanStatus === "not_found";
   // The VeSync cloud sensors drop out independently of the fan, so these are
   // null / "—" (→ em dash) rather than 0 or "unavailable" when they go.
   const q = usable(liveQ?.state) ? liveQ.state : "—";
@@ -77,7 +84,9 @@ export function AirPurifierCard({ index = 0 }) {
       title="Air purifier"
       meta={unavailable ? "Unavailable" : `filter · ${filt != null ? `${filt}%` : "—"}`}
       headRight={
-        <ToggleSwitch on={on && !unavailable} onToggle={doToggle} disabled={unavailable} label="Air purifier" />
+        // role="switch" has no "unknown", so the real state goes in the name.
+        <ToggleSwitch on={on && known} onToggle={doToggle} disabled={!known}
+          label={known ? "Air purifier" : `Air purifier — ${unavailable ? "unavailable" : "state unknown"}`} />
       }
     >
       <EntityGuard status={fanStatus} entityId="fan.core_300s_series">
@@ -100,13 +109,13 @@ export function AirPurifierCard({ index = 0 }) {
             Air is <b>{q}</b>. Filter has <b style={{ color: "var(--ink)" }}>{filt != null ? `${filt}%` : "—"}</b> life left.
           </div>
           <div className="dek">
-            {unavailable ? <>Purifier is <b>unavailable</b>.</>
+            {!known ? <>Purifier is <b>unavailable</b>.</>
               : on ? <>Currently running <b>{mode}</b>.</>
               : <>Purifier is <b>off</b>.</>}{display}
           </div>
           <div className="preset-row" role="group" aria-label="Purifier mode">
             {["sleep", "auto", "low", "medium", "high"].map((p) => (
-              <button key={p} className={`preset ${mode === p ? "on" : ""}`} aria-pressed={mode === p} onClick={() => pickMode(p)} disabled={unavailable}>
+              <button key={p} className={`preset ${known && mode === p ? "on" : ""}`} aria-pressed={known && mode === p} onClick={() => pickMode(p)} disabled={!known}>
                 {p}
               </button>
             ))}

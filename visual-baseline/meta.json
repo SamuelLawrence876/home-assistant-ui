@@ -3,7 +3,7 @@
   "arch": "x64",
   "playwright": "1.62.1",
   "chromium": "151.0.7922.34",
-  "shotAt": "2026-10-06T18:09:20.183Z",
+  "shotAt": "2026-10-06T20:46:16.557Z",
   "waitMs": 11000,
   "tabs": [
     "overview",

@@ -6,7 +6,7 @@
    Every reading that can be unknown is null, never a stand-in: tempMin /
    tempMax with no recorder history, humidity with no reading or history.
    Consumers render an em dash. */
-import { useEntityStatus, combineStatuses, useStatistics } from "../ha/useEntity.js";
+import { useEntityStatus, useStatistics } from "../ha/useEntity.js";
 import { numOr } from "../lib/format.js";
 
 const TEMP_ID = "sensor.h5075_4fb6_temperature";
@@ -21,31 +21,64 @@ export function useClimateDerived() {
   const { entity: liveTemp, status: tempStatus } = useEntityStatus(TEMP_ID);
   const { entity: liveHum, status: humStatus } = useEntityStatus(HUM_ID);
   const { data: statsData, loading: historyLoading } = useStatistics(CLIMATE_STAT_IDS, 24);
-  const status = combineStatuses(tempStatus, humStatus);
 
   const tempStats = statsData?.[TEMP_ID];
   const humStats = statsData?.[HUM_ID];
   const rawTemp = tempStats?.mean || [];
   const rawHum = humStats?.mean || [];
-  const stale = status === "unavailable";
   const lastStatTemp = rawTemp.length > 0 ? rawTemp[rawTemp.length - 1] : null;
   const lastStatHum = rawHum.length > 0 ? rawHum[rawHum.length - 1] : null;
 
-  const temp = stale ? lastStatTemp : numOr(liveTemp?.state, null);
-  const humidity = stale ? round1(lastStatHum) : numOr(liveHum?.state, null);
+  /* Each reading is gated on its own sensor. This used to be one combined
+     status, so a humidity dropout alone threw away a live temperature and
+     showed the last hourly mean instead — "Sensor offline · last known 20.9°,
+     Comfortable" in a room the live sensor said was 23.4° and warm. A sensor
+     HA reports unavailable falls back to its last recorder mean; one that is
+     missing outright is unknown (null). */
+  const tempStale = tempStatus === "unavailable";
+  const humStale = humStatus === "unavailable";
+  const temp = tempStale ? lastStatTemp : numOr(liveTemp?.state, null);
+  const humidity = humStale ? round1(lastStatHum) : numOr(liveHum?.state, null);
 
-  /* Render the EntityGuard placeholder while this is true. A "ready" sensor
-     whose state isn't a number is reported to the guard as unavailable, so the
-     placeholder says so instead of rendering an empty card. */
-  const pending = status === "loading" || status === "not_found" || temp == null;
-  const guardStatus = status === "ready" && temp == null ? "unavailable" : status;
+  /* Render the EntityGuard placeholder while this is true. Temperature is the
+     card's headline (and the guard names its entity), so it alone decides; a
+     missing or offline humidity sensor is an em dash, not a blank card. A
+     "ready" sensor whose state isn't a number is reported to the guard as
+     unavailable, so the placeholder says so instead of rendering an empty card.
+     (Both sensors share one connection, so "loading" is never one-sided.) */
+  const pending = tempStatus === "loading" || tempStatus === "not_found" || temp == null;
+  const guardStatus = tempStatus === "ready" && temp == null ? "unavailable" : tempStatus;
 
+  // What is on screen as last-known rather than live, and the line that says
+  // which sensor that is. `stale` drives the badge, `staleNote` the meta.
+  const stale = tempStale || (humStale && humidity != null);
+  const staleNote = tempStale && humStale ? "Sensor offline · last known"
+    : tempStale ? "Temperature offline · last known"
+    : humStale ? (humidity != null ? "Humidity offline · last known" : "Humidity offline")
+    : null;
+
+  /* The 24h trace: two series on ONE time axis, slot i the same hour in both.
+     Temperature, the headline, sets the frame — the last 23 recorder hours
+     plus its live reading as "now", or, when it is the stale one, the last 24
+     recorder hours with its newest mean standing as now (the NOW tag and the
+     meta both say last known). Humidity is laid on those same slots, newest
+     recorder hour against newest; a slot it has no value for is null and the
+     chart skips it. The two used to be sliced each by its own stale flag, so a
+     temperature-only dropout left humidity one point longer and its trace ran
+     past the NOW line into the gutter. Recorder hours carry no timestamps by
+     the time they get here, so "newest against newest" is the alignment. */
   const tempHist = rawTemp.length > 0
-    ? (stale ? [...rawTemp.slice(-24)] : [...rawTemp.slice(-23), temp])
+    ? (tempStale ? [...rawTemp.slice(-24)] : [...rawTemp.slice(-23), temp])
     : temp == null ? [] : [temp];
-  const humHist = rawHum.length > 0
-    ? (stale || humidity == null ? [...rawHum.slice(-24)] : [...rawHum.slice(-23), humidity])
-    : humidity == null ? [] : [humidity];
+  const nowSlot = !tempStale && tempHist.length > 0;
+  const recSlots = tempHist.length - (nowSlot ? 1 : 0);
+  // slice(-0) is the whole array, so an empty frame has to be special-cased.
+  const humRec = recSlots > 0 ? rawHum.slice(-recSlots) : [];
+  const humHist = [
+    ...Array(recSlots - humRec.length).fill(null),
+    ...humRec,
+    ...(nowSlot ? [humStale ? null : humidity] : []),
+  ];
 
   // True min/max from recorder (not from hourly means) for accurate HIGH/LOW
   // labels, falling back to the hourly means. With no recorder history at all
@@ -99,7 +132,7 @@ export function useClimateDerived() {
     : "";
 
   return {
-    status: guardStatus, pending, stale, liveTemp, historyLoading,
+    status: guardStatus, pending, stale, staleNote, liveTemp, historyLoading,
     temp, humidity, tempHist, humHist, tempMin, tempMax,
     delta, trend, trendIcon, tempBand, humBand,
     allGood, verdict, verdictNote, lastUp,

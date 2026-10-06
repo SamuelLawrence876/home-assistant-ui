@@ -19,7 +19,9 @@ export const SPRAY_OPTIONS = ["off", "eco", "on"];
 
 /* The modes the spray select itself offers — what HA will accept and what its
    state is one of — when it carries a usable list. HA strips `options` from an
-   unavailable entity, so fall back to the modes these cards were built for. */
+   unavailable entity, and there is no entity at all before HA answers, so fall
+   back to the modes these cards were built for (layout only — the segments are
+   disabled whenever the state isn't known). */
 export function sprayOptions(entity) {
   const o = entity?.attributes?.options;
   return Array.isArray(o) && o.length > 0 && o.every((x) => typeof x === "string" && x !== "")
@@ -37,19 +39,42 @@ export function sprayPhase(mode, options = SPRAY_OPTIONS) {
   return options.includes(mode) ? "spraying" : "unrecognised";
 }
 
-/* Can a card trust this entity's state? `status` is useEntityStatus's;
-   `state` is the state string of the live entity, or of the GH_DATA mock when
-   there is no live one yet. Before HA has answered ("loading") the mock stands
-   in, so its state is what gets judged. After that, unavailable, unknown and
-   missing all mean "we don't know", which the cards must not render as a mist
-   mode or an LED that is off. meross_lan marks every entity of an offline
-   device unavailable, so this is the common case, not an edge one. */
-export function knownState(status, state) {
-  if (status === "not_found") return false;
-  return state != null && state !== "unavailable" && state !== "unknown";
+/* Can a card trust this entity's state? Only when Home Assistant vouches for
+   it right now — useEntityStatus's "ready". Unavailable, unknown and missing
+   all mean "we don't know", which the cards must not render as a mist mode or
+   an LED that is off; meross_lan marks every entity of an offline device
+   unavailable, so that is the common case, not an edge one.
+
+   "loading" is unknown too. It used to let the data.js mock stand in, which
+   printed "On · Spraying · Eco · Ocean" with live buttons for a dashboard
+   that had never reached HA (signed out, first connect) — and, because the
+   socket keeps its last states through a drop, the last-known mode with live
+   buttons through an outage, while every other card went to its guard. */
+export function knownState(status) {
+  return status === "ready";
 }
 
-/* Fallback LED colour when the light is in an effect mode (rgb_color is null). */
+/* The word for a value knownState() won't vouch for: an em dash while HA
+   hasn't answered (connecting, signed out, dropped), "Unavailable" once it
+   has said the device is offline or missing. Same split as LightCard. */
+export function unknownWord(status) {
+  return status === "loading" ? "—" : "Unavailable";
+}
+
+/* Why a "loading" value is unknown, for the sentences and accessible names
+   that spell it out — in words true in every case "loading" covers. It used
+   to be "not reported yet", which is false after a dropped connection or a
+   sign-out, when the diffuser had reported seconds before. `conn` is
+   useConnectionStatus(): anything but "ready" means the socket is down,
+   signed out or still connecting; "ready" while an entity is still "loading"
+   is the first snapshot in flight. */
+export function pendingWhy(conn) {
+  return conn === "ready" ? "state unknown" : "not connected";
+}
+
+/* Paint for the LED glow when the light is on but HA reports no rgb_color
+   (an effect mode, or the state push hasn't landed). Drawing only: it is the
+   old mock's "Ocean", so it must never be named or shown as a pressed swatch. */
 export const DEFAULT_RGB = [96, 170, 255];
 
 

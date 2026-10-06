@@ -251,7 +251,7 @@ describe("LightCard — the mock is layout, never state", () => {
   it("loading (HA down, or mock mode): an em-dash in the header and a switch that isn't on", () => {
     const { container } = render(<LightCard entityId="light.bathroom" />);
     expect(meta(container)).toBe("—");
-    const sw = screen.getByRole("switch", { name: "Bathroom — not reported yet" });
+    const sw = screen.getByRole("switch", { name: "Bathroom — state unknown" });
     expect(sw.getAttribute("aria-checked")).toBe("false");
     expect(sw).toBeDisabled();
   });
@@ -275,5 +275,90 @@ describe("LightCard — the mock is layout, never state", () => {
     expect(meta(container)).toBe("Off");
     expect(readouts(container)).toEqual(["—", "—"]);
     expect(pressed()).toEqual([]); // used to press "Amber 2700K", the default colour
+  });
+});
+
+/* An off light has no brightness, temperature or colour, and HA says so with
+   nulls. The resync effect used to skip a null, so whatever the card last held
+   stayed on screen beside "Off": the reading from before someone switched it
+   off at the wall, the reading from before the socket dropped, or the 0 the
+   slider sent to turn it off. */
+describe("LightCard — an off light shows no brightness, temperature or colour", () => {
+  const amberOn = () => light("on", { color_temp_kelvin: 2700, rgb_color: [255, 198, 130] });
+
+  it("switched off elsewhere: em-dashes and no pressed swatch, not the last reading", () => {
+    fixture.current = amberOn();
+    const { container, rerender } = render(<LightCard entityId={ID} />);
+    expect(readouts(container)).toEqual(["50%", "2700K"]);
+    expect(pressed().map((b) => b.getAttribute("aria-label"))).toEqual(["Set Living room to Amber 2700K"]);
+
+    fixture.current = light("off");
+    rerender(<LightCard entityId={ID} />);
+    expect(meta(container)).toBe("Off");
+    expect(readouts(container)).toEqual(["—", "—"]);
+    expect(pressed()).toEqual([]);
+    expect(brightness().getAttribute("aria-valuetext")).toBe("unknown");
+  });
+
+  it("after HA drops and comes back with the light off, nothing from before survives", () => {
+    fixture.current = amberOn();
+    const { container, rerender } = render(<LightCard entityId={ID} />);
+    fixture.current = { entity: null, status: "loading" }; // socket down
+    rerender(<LightCard entityId={ID} />);
+    fixture.current = light("off"); // back, and someone turned it off meanwhile
+    rerender(<LightCard entityId={ID} />);
+    expect(meta(container)).toBe("Off");
+    expect(readouts(container)).toEqual(["—", "—"]);
+    expect(container.textContent).not.toMatch(/\d+%|\d+K/);
+    expect(pressed()).toEqual([]);
+  });
+
+  it("never takes the mock's values for a light it came back to (bathroom mock: 200 / 4000K)", () => {
+    fixture.current = { entity: null, status: "loading" };
+    const { container, rerender } = render(<LightCard entityId="light.bathroom" />);
+    fixture.current = { entity: { entity_id: "light.bathroom", state: "off", attributes: { friendly_name: "Bathroom", supported_color_modes: ["color_temp", "rgb"], brightness: null, color_temp_kelvin: null, rgb_color: null } }, status: "ready" };
+    rerender(<LightCard entityId="light.bathroom" />);
+    expect(meta(container)).toBe("Off");
+    expect(readouts(container)).toEqual(["—", "—"]);
+    expect(screen.queryAllByRole("button", { name: /^Set Bathroom to / })
+      .filter((b) => b.getAttribute("aria-pressed") === "true")).toEqual([]);
+  });
+
+  it("brightness 0 turns it off and reads Off with an em-dash, not 'Off' beside '0%'", () => {
+    vi.useFakeTimers();
+    fixture.current = light("on");
+    const { container, rerender } = render(<LightCard entityId={ID} />);
+    adjust(brightness(), 0);
+    expect(calls.at(-1).data).toEqual({ entity_id: ID, brightness: 0 });
+    fixture.current = light("off"); // HA: brightness 0 means off
+    rerender(<LightCard entityId={ID} />);
+    expect(meta(container)).toBe("Off");
+    expect(readouts(container)).toEqual(["—", "—"]);
+  });
+
+  it("a bulb switched to an RGB colour reports no temperature, and the card shows none", () => {
+    fixture.current = light("on");
+    const { container, rerender } = render(<LightCard entityId={ID} />);
+    expect(readouts(container)).toEqual(["50%", "3000K"]);
+    fixture.current = light("on", { color_temp_kelvin: null, rgb_color: [255, 80, 80] });
+    rerender(<LightCard entityId={ID} />);
+    expect(readouts(container)).toEqual(["50%", "—"]);
+    expect(pressed().map((b) => b.getAttribute("aria-label"))).toEqual(["Set Living room to Red"]);
+  });
+
+  it("a failed change on a light that went off mid-call doesn't come back as its brightness", async () => {
+    vi.useFakeTimers();
+    fixture.current = light("on"); // 128
+    const d = deferred();
+    outcome.next = () => d.promise;
+    const { container, rerender } = render(<LightCard entityId={ID} />);
+    adjust(brightness(), 51); // 20%, in flight
+    fixture.current = light("off"); // switched off at the wall meanwhile
+    rerender(<LightCard entityId={ID} />);
+    await act(async () => d.reject(new Error("nope")));
+    outcome.next = () => new Promise(() => {}); // the turn_on below stays in flight
+    fireEvent.click(screen.getByRole("switch")); // optimistic on, before HA reports a brightness
+    expect(meta(container)).toBe("On");
+    expect(container.textContent).not.toMatch(/20%/);
   });
 });
