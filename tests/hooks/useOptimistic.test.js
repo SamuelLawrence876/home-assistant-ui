@@ -14,7 +14,7 @@ vi.mock("../../src/ha/client.js", () => ({
   callService: (...args) => callService(...args),
 }));
 
-const { useOptimisticToggle } = await import("../../src/hooks/useOptimistic.js");
+const { useOptimisticToggle, SETTLE_MS } = await import("../../src/hooks/useOptimistic.js");
 
 const entity = (state) => ({ entity: { entity_id: "light.desk", state }, status: "ready" });
 
@@ -134,5 +134,99 @@ describe("useOptimisticToggle", () => {
     act(() => result.current.setOn(true));
     expect(result.current.on).toBe(true);
     expect(callService).not.toHaveBeenCalled();
+  });
+});
+
+/* A resolved call is not proof anything moved. HA skips an unavailable
+   target and reports success; switch.sambox is a command_line switch that
+   accepts a command whose shell step failed. Without a settle step the switch
+   claimed ON over an entity HA still called off, until something else moved it. */
+describe("useOptimisticToggle — settling after a call that changed nothing", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    return () => vi.useRealTimers();
+  });
+
+  // Toggle and let the resolved call's .then run, without waitFor (which
+  // would spin on the faked clock).
+  async function toggleAndResolve(result) {
+    await act(async () => {
+      result.current.toggle();
+    });
+  }
+
+  it("goes back to what HA says when no state change arrives", async () => {
+    entityState.current = entity("off");
+    const { result } = renderHook(() => useOptimisticToggle("switch.sambox"));
+    await toggleAndResolve(result);
+    expect(result.current.on).toBe(true); // optimistic, inside the window
+
+    act(() => vi.advanceTimersByTime(SETTLE_MS - 1));
+    expect(result.current.on).toBe(true);
+    act(() => vi.advanceTimersByTime(1));
+    expect(result.current.on).toBe(false);
+  });
+
+  it("settles an unavailable entity to off, so it cannot read as on", async () => {
+    entityState.current = { entity: { entity_id: "switch.adguard_home_protection", state: "unavailable" }, status: "unavailable" };
+    const { result } = renderHook(() => useOptimisticToggle("switch.adguard_home_protection"));
+    await toggleAndResolve(result);
+    expect(result.current.on).toBe(true);
+    act(() => vi.advanceTimersByTime(SETTLE_MS));
+    expect(result.current.on).toBe(false);
+  });
+
+  it("stands down once a real state event arrives", async () => {
+    entityState.current = entity("off");
+    const { result, rerender } = renderHook(() => useOptimisticToggle("light.desk"));
+    await toggleAndResolve(result);
+    expect(vi.getTimerCount()).toBe(1);
+
+    entityState.current = entity("on");
+    rerender();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(result.current.on).toBe(true);
+  });
+
+  it("never settles when there is no live entity — mock mode must not flip switches off", async () => {
+    entityState.current = { entity: null, status: "loading" };
+    const { result } = renderHook(() => useOptimisticToggle("light.desk"));
+    await toggleAndResolve(result);
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(result.current.on).toBe(true);
+  });
+
+  it("only the latest press settles", async () => {
+    // Two quick presses: the first call resolves after the second press.
+    // Its settle must not fire over the second press's optimistic value.
+    const first = deferred();
+    const second = deferred();
+    callService.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    entityState.current = entity("off");
+    const { result } = renderHook(() => useOptimisticToggle("light.desk"));
+
+    act(() => result.current.toggle()); // on
+    act(() => result.current.toggle()); // off again
+    await act(async () => {
+      first.resolve();
+      await first.promise;
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    await act(async () => {
+      second.resolve();
+      await second.promise;
+    });
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("clears its timer on unmount", async () => {
+    entityState.current = entity("off");
+    const { result, unmount } = renderHook(() => useOptimisticToggle("light.desk"));
+    await toggleAndResolve(result);
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
