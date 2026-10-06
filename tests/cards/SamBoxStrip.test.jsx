@@ -148,14 +148,54 @@ describe("SamBoxStrip ordering", () => {
   it("tapping off while the plug call is still in flight cancels the queued session start", async () => {
     fixtures.entities = { "switch.sambox360_plug": plugEntity("off") };
     held["switch.sambox360_plug"] = null;
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
     render(<SamBoxStrip />);
     fireEvent.click(screen.getByRole("switch")); // on (turning)
     const plugOn = held["switch.sambox360_plug"];
+    now.mockReturnValue(1_000_000 + 1500); // a deliberate second tap, not a double-tap
     fireEvent.click(screen.getByRole("switch")); // off, before the plug answered
     expect(calls).toContain("switch.turn_off switch.sambox360_plug");
 
     await act(async () => plugOn.resolve()); // the first tap's plug call lands late
     expect(calls).not.toContain("switch.turn_on switch.sambox");
+  });
+});
+
+describe("SamBoxStrip double-tap", () => {
+  it("a double-tap on a running PC turns it off once — it does not power-cycle it", async () => {
+    fixtures.entities = { "switch.sambox360_plug": plugEntity("on") };
+    const now = vi.spyOn(Date, "now").mockReturnValue(2_000_000);
+    render(<SamBoxStrip />);
+    fireEvent.click(screen.getByRole("switch")); // off
+    now.mockReturnValue(2_000_000 + 150);
+    fireEvent.click(screen.getByRole("switch")); // the second half of a double-tap
+    await flush();
+    expect(calls).toContain("switch.turn_off switch.sambox360_plug");
+    expect(calls).not.toContain("switch.turn_on switch.sambox360_plug");
+  });
+
+  it("a slow triple-tap, or two taps a second apart, still doesn't power-cycle it", async () => {
+    fixtures.entities = { "switch.sambox360_plug": plugEntity("on") };
+    const now = vi.spyOn(Date, "now").mockReturnValue(3_000_000);
+    render(<SamBoxStrip />);
+    for (const t of [500, 1000, 2000, 4000]) {
+      now.mockReturnValue(3_000_000 + t); // each tap is past the 800 ms guard of… none, or of the last
+      fireEvent.click(screen.getByRole("switch"));
+    }
+    await flush();
+    expect(calls.filter((c) => c === "switch.turn_off switch.sambox360_plug")).toHaveLength(1);
+    expect(calls).not.toContain("switch.turn_on switch.sambox360_plug");
+  });
+
+  it("powers back on when asked again after a pause", async () => {
+    fixtures.entities = { "switch.sambox360_plug": plugEntity("on") };
+    const now = vi.spyOn(Date, "now").mockReturnValue(4_000_000);
+    render(<SamBoxStrip />);
+    fireEvent.click(screen.getByRole("switch")); // off
+    now.mockReturnValue(4_000_000 + 6000);
+    fireEvent.click(screen.getByRole("switch")); // a deliberate "on", well after
+    await flush();
+    expect(calls).toContain("switch.turn_on switch.sambox360_plug");
   });
 });
 
@@ -191,7 +231,15 @@ describe("SamBoxStrip with the game session unavailable", () => {
     fixtures.entities = { "switch.sambox360_plug": plugEntity("off"), "switch.sambox": sessionDown() };
     render(<SamBoxStrip />);
     expect(screen.getByRole("switch", { name: "SamBox360 power — game session unavailable" })).toBeTruthy();
-    expect(screen.getByText("Power only · game session unavailable")).toBeTruthy();
+    expect(screen.getByText("Power only · session unavailable")).toBeTruthy();
+  });
+
+  it("lets the power-only line wrap, so a phone doesn't ellipsise the reason away", () => {
+    // .sambox-out is nowrap + ellipsis; at 390px it cut this line to
+    // "Power only · game …" and the reason lived only in a touch-unreachable title.
+    fixtures.entities = { "switch.sambox360_plug": plugEntity("off"), "switch.sambox": sessionDown() };
+    render(<SamBoxStrip />);
+    expect(screen.getByText("Power only · session unavailable").style.whiteSpace).toBe("normal");
   });
 
   it("treats a missing session switch the same way", async () => {

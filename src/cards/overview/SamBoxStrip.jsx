@@ -45,6 +45,14 @@ const SESSION_SWITCH = "switch.sambox"; // TV-side kiosk: wake TV, stream the PC
 const HEALTH_ENTITY = "sensor.sambox_dropped_frames"; // streaming state lives in its attributes
 const DEVICE_NAME = "SamBox360";
 const BOOT_MS = 2200; // cold-boot transient while the plug restores + the Pi wakes
+/* A tap inside this window of the previous tap — any tap, ignored ones
+   included, so a triple-tap can't walk through it — is ignored. The switch
+   flips under the finger, so a double-tap on a running PC used to send off,
+   then on: mains cut and restored — a hard power-cycle. And for a few seconds
+   after cutting power, "on" is refused outright: two taps a second apart are
+   still a power-cycle. */
+const TAP_GUARD_MS = 800;
+const OFF_HOLD_MS = 5000;
 
 export function SamBoxStrip({ compact = false }) {
   const { entity: plug, status: plugStatus } = useEntityStatus(PLUG_ENTITY);
@@ -88,6 +96,8 @@ export function SamBoxStrip({ compact = false }) {
   // Bumped by every tap, so a session start waiting on the plug call can tell
   // the user has tapped off since — and doesn't wake the TV after "off".
   const tapSeq = useRef(0);
+  const lastTapAt = useRef(0);
+  const lastOffAt = useRef(0);
 
   function powerOn() {
     const seq = ++tapSeq.current;
@@ -164,10 +174,17 @@ export function SamBoxStrip({ compact = false }) {
             {/* The visible line names the plug — the entity whose state the
                 toggle shows. The session half rides in the tooltip and the
                 switch's accessible name — unless the session can't be
-                reached, which is the one thing a tap here needs to know. */}
+                reached, which is the one thing a tap here needs to know —
+                so that line wraps instead of ellipsising: on a phone the
+                ellipsis cut off exactly the fact, and a tooltip is out of
+                reach of a finger. */}
             {powerOnly ? (
-              <div className="sambox-out" title={`${SESSION_SWITCH} is unavailable, so a tap only drives ${PLUG_ENTITY} (PC power)`}>
-                Power only · game session unavailable
+              <div
+                className="sambox-out"
+                style={{ whiteSpace: "normal" }}
+                title={`${SESSION_SWITCH} is unavailable, so a tap only drives ${PLUG_ENTITY} (PC power)`}
+              >
+                Power only · session unavailable
               </div>
             ) : (
               <div className="sambox-out" title={`One tap drives both ${PLUG_ENTITY} (PC power) and ${SESSION_SWITCH} (game session)`}>
@@ -209,7 +226,18 @@ export function SamBoxStrip({ compact = false }) {
                   : undefined
             }
             style={known ? undefined : { opacity: 0.45, cursor: "not-allowed" }}
-            onClick={displayOn || turning ? powerOff : powerOn}
+            onClick={() => {
+              const now = Date.now();
+              const sinceLast = now - lastTapAt.current;
+              lastTapAt.current = now;
+              if (sinceLast < TAP_GUARD_MS) return;
+              if (displayOn || turning) {
+                lastOffAt.current = now;
+                powerOff();
+              } else if (now - lastOffAt.current >= OFF_HOLD_MS) {
+                powerOn();
+              }
+            }}
           >
             <span className="sambox-knob" />
           </button>

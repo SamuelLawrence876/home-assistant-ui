@@ -33,6 +33,28 @@ describe("SystemActionsCard confirm", () => {
     expect(btn.textContent).toMatch(/Confirm\?/);
   });
 
+  it("a triple-click spread past the lock does not fire either", () => {
+    render(<SystemActionsCard />);
+    const btn = tile("Reboot Pi");
+    fireEvent.click(btn);
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS / 2));
+    fireEvent.click(btn);
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS - 100)); // past the lock from arming, not from the last press
+    fireEvent.click(btn);
+    expect(callService).not.toHaveBeenCalled();
+  });
+
+  it("a held Enter key (auto-repeat) does not fire", () => {
+    render(<SystemActionsCard />);
+    const btn = tile("Restart HA");
+    fireEvent.click(btn);
+    for (let t = 0; t < 2000; t += 33) {
+      act(() => vi.advanceTimersByTime(33));
+      fireEvent.click(btn); // each auto-repeat activates the button again
+    }
+    expect(callService).not.toHaveBeenCalled();
+  });
+
   it("a deliberate second press fires", () => {
     render(<SystemActionsCard />);
     fireEvent.click(tile("Reboot Pi"));
