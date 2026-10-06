@@ -3,77 +3,115 @@ import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
+import { numOr } from "../../lib/format.js";
 
 /* ----------------------------------------------------------------
-   Heater — Govee
+   Heater — Govee H713B.
+
+   The heater is reached only through two fire-and-forget cloud scripts,
+   script.turn_on_govee_heater / script.turn_off_govee_heater. The one
+   read-back is sensor.govee_heater_power, polled from Govee's cloud, so the
+   power shown here is whatever that sensor last said. When it can't say —
+   'error' (Govee answered without a usable state), unavailable, not created,
+   or the link sensor reporting the heater offline — power is unknown and
+   reads "—", never "Off". This card used to hold power in local state that
+   started at false, so every mount said "Off" / "Unplugged" whatever the
+   heater was doing.
+
+   A press is shown as sent-and-waiting, not as the new state: the sensor's
+   next report ends the wait, whatever it says, and PRESS_WINDOW_MS caps it
+   if the report never comes. Both buttons are always offered, because a
+   possibly-stale reading is no reason to block either command.
+
+   There is deliberately no target-temperature control.
+   input_number.govee_heater_temperature exists, but nothing sends it to the
+   heater (script.set_govee_heater_temperature uses a command the H713B does
+   not support and has never run), so a stepper here was a thermostat that
+   did nothing. Re-add one when a script actually delivers the value.
    ----------------------------------------------------------------*/
-const numOr = (v, d) => (v != null && v !== "unavailable" && v !== "unknown" && !Number.isNaN(+v) ? +v : d);
+const HEATER = {
+  power: "sensor.govee_heater_power",
+  link: "sensor.govee_heater_link",
+  maxRuntime: "timer.govee_heater_max_runtime",
+};
+const PRESS_WINDOW_MS = 2 * 60_000;
+
+// HH:MM from an ISO timestamp HA supplied, or null — never "Invalid Date".
+const clockOf = (iso) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+};
 
 export function HeaterCard({ index = 0 }) {
-  const { entity: liveTarget, status: heaterStatus } = useEntityStatus("input_number.govee_heater_temperature");
+  const { entity: livePower, status: powerStatus } = useEntityStatus(HEATER.power);
+  const { entity: liveLink, status: linkStatus } = useEntityStatus(HEATER.link);
+  const liveTimer = useEntity(HEATER.maxRuntime);
   const roomTempEntity = useEntity("sensor.h5075_4fb6_temperature");
   const roomHumidity = useEntity("sensor.h5075_4fb6_humidity");
 
-  const roomTempRaw = roomTempEntity?.state;
-  const humRaw = roomHumidity?.state;
-  const roomTempValid = roomTempRaw && roomTempRaw !== "unavailable" && roomTempRaw !== "unknown";
-  const roomTemp = roomTempValid ? Number(roomTempRaw) : null;
-  const humidity = humRaw && humRaw !== "unavailable" && humRaw !== "unknown" ? Number(humRaw) : null;
+  const roomTemp = numOr(roomTempEntity?.state, null);
+  const humidity = numOr(roomHumidity?.state, null);
 
-  const [target, setTarget] = useState(numOr(liveTarget?.state, 20));
-  const [on, setOn] = useState(false);
+  const offline = linkStatus === "ready" && liveLink.state === "offline";
+  const reported = powerStatus === "ready" ? livePower.state : null;
+  // An offline heater's last reading can't be refreshed, so it isn't shown as current.
+  const power = !offline && (reported === "on" || reported === "off") ? reported : null;
+  const autoOff = liveTimer?.state === "active";
+  const autoOffAt = autoOff ? clockOf(liveTimer.attributes?.finishes_at) : null;
+
+  const [press, setPress] = useState(null); // "on" | "off" while a script call awaits the sensor
+  // Any fresh report ends the wait, whatever it says.
+  useEffect(() => { setPress(null); }, [livePower?.state, livePower?.last_updated]);
   useEffect(() => {
-    // Keep the last good setpoint if the input_number goes unavailable —
-    // otherwise the dial and every readout below turn into NaN.
-    if (liveTarget) setTarget((t) => numOr(liveTarget.state, t));
-  }, [liveTarget?.state]);
+    if (!press) return undefined;
+    const t = setTimeout(() => setPress(null), PRESS_WINDOW_MS);
+    return () => clearTimeout(t);
+  }, [press]);
 
-  function commitTemp(v) {
-    setTarget(v);
-    callService("input_number", "set_value", { entity_id: "input_number.govee_heater_temperature", value: v }).catch(() => {});
+  function send(want) {
+    setPress(want);
+    // The error log already records the failure (client.js); the card just stops waiting.
+    callService("script", want === "on" ? "turn_on_govee_heater" : "turn_off_govee_heater", {})
+      .catch(() => setPress(null));
   }
-  function toggleHeater() {
-    const next = !on;
-    setOn(next);
-    callService("script", next ? "turn_on_govee_heater" : "turn_off_govee_heater", {}).catch(() => setOn(on));
-  }
-  const angle = Math.max(0, Math.min(270, ((target - 12) / 18) * 270));
+
+  const meta = powerStatus === "loading" ? "—"
+    : offline ? "Offline"
+    : press ? (press === "on" ? "Turning on…" : "Turning off…")
+    : power === "on" ? "On" : power === "off" ? "Off" : "Power unknown";
+  const note = press ? `${press === "on" ? "Turn on" : "Turn off"} sent · waiting for the heater to report`
+    : offline ? "Govee reports the heater offline"
+    : reported === "error" ? "Govee answered without a power state"
+    : null;
+  const act = offline ? "Offline"
+    : power == null ? "Unknown"
+    : autoOff ? (autoOffAt ? `Auto-off ${autoOffAt}` : "Auto-off armed")
+    : power === "on" ? "Running" : "Standby";
 
   return (
-    <Card
-      index={index}
-      eyebrow="Climate · Govee heater"
-      title="Heater"
-      meta={on ? `On · target ${target}°` : `Off · target ${target}°`}
-    >
-      <EntityGuard status={heaterStatus} entityId="input_number.govee_heater_temperature">
+    <Card index={index} eyebrow="Climate · Govee heater" title="Heater" meta={meta}>
+      <EntityGuard status={powerStatus} entityId={HEATER.power}>
       <div className="heater-body">
         <div className="heater-controls-col">
-          <div className="eyebrow" style={{ fontSize: 9 }}>Setpoint</div>
-          <div className="heater-stepper">
-            <button className="heater-step" aria-label="Lower heater target by one degree" onClick={() => commitTemp(Math.max(12, target - 1))}>−</button>
-            <div className="heater-target-val">
-              {target}<span className="u">°</span>
-            </div>
-            <button className="heater-step" aria-label="Raise heater target by one degree" onClick={() => commitTemp(Math.min(30, target + 1))}>+</button>
+          <div className="eyebrow" style={{ fontSize: 9 }}>Room</div>
+          <div className="heater-room-val">
+            {roomTemp != null ? <>{roomTemp}<span className="u">°</span></> : "—"}
           </div>
           <div className="meta" style={{ marginTop: 8 }}>
-            {roomTemp != null ? `Room is ${roomTemp}° · ${humidity ?? "—"}% humidity` : "Room sensor offline"}
+            {roomTemp != null ? `${humidity ?? "—"}% humidity` : "Room sensor offline"}
           </div>
-          <button
-            className={`btn ${on ? "accent" : "primary"}`}
-            onClick={toggleHeater}
-            style={{ marginTop: 14, alignSelf: "flex-start" }}
-          >
-            {on ? "Turn off" : "Turn on"}
-          </button>
+          {note && <div className="meta" style={{ marginTop: 4 }}>{note}</div>}
+          <div className="heater-controls">
+            <button className="btn primary" onClick={() => send("on")}>Turn on</button>
+            <button className="btn" onClick={() => send("off")}>Turn off</button>
+          </div>
         </div>
-        <div className="heater-dial" style={{ "--ang": `${angle}deg` }}>
+        <div className="heater-dial" style={{ "--ang": `${power === "on" ? 270 : 0}deg` }}>
           <div className="heater-dial-inner">
             <div>
-              <div className="set">Target</div>
-              <div className="val">{target}°</div>
-              <div className="act">{on ? "Heating" : "Unplugged"}</div>
+              <div className="set">Power</div>
+              <div className="val">{power === "on" ? "On" : power === "off" ? "Off" : "—"}</div>
+              <div className="act">{act}</div>
             </div>
           </div>
         </div>

@@ -26,7 +26,7 @@ function smoothPath(pts) {
    ----------------------------------------------------------------*/
 export function RoomClimateCard({ index = 0, compact }) {
   const {
-    status, pending, stale: isStale, liveTemp,
+    status, pending, stale: isStale, liveTemp, historyLoading,
     temp, humidity, tempHist, humHist, tempMin, tempMax,
     delta, trend, humBand, allGood, verdict, verdictNote, lastUp,
   } = useClimateDerived();
@@ -45,10 +45,11 @@ export function RoomClimateCard({ index = 0, compact }) {
   const gamma = dewOk ? Math.log(humidity / 100) + (17.67 * temp) / (243.5 + temp) : 0;
   const dewPt = dewOk ? (243.5 * gamma) / (17.67 - gamma) : null;
 
-  // Humidity ring geometry (60px radius)
+  // Humidity ring geometry (60px radius). Unknown humidity draws an empty
+  // ring, not stroke-dashoffset="NaN".
   const R = 60;
   const C = 2 * Math.PI * R;
-  const humOffset = C * (1 - humidity / 100);
+  const humOffset = humidity == null ? C : C * (1 - humidity / 100);
 
   // ---- Chart geometry (needs ≥2 points) ----
   const hasHistory = tempHist.length >= 2;
@@ -107,7 +108,7 @@ export function RoomClimateCard({ index = 0, compact }) {
       index={index}
       eyebrow={`Climate · ${source}`}
       title="Room"
-      meta={isStale ? "Sensor offline · last known" : `${lastUp} · ${humBand}`}
+      meta={isStale ? "Sensor offline · last known" : `${lastUp} · ${humBand ?? "—"}`}
       badge={isStale ? "stale" : undefined}
     >
       <div className="roomclim-body">
@@ -125,14 +126,15 @@ export function RoomClimateCard({ index = 0, compact }) {
             </span>
           </div>
 
+          {/* null with no recorder history — the live reading is not a 24h range. */}
           <div className="roomclim-minmax">
             <div className="chip-stat">
               <span className="k">Low · 24h</span>
-              <span className="v">{tempMin.toFixed(1)}°</span>
+              <span className="v">{tempMin != null ? `${tempMin.toFixed(1)}°` : "—"}</span>
             </div>
             <div className="chip-stat">
               <span className="k">High · 24h</span>
-              <span className="v">{tempMax.toFixed(1)}°</span>
+              <span className="v">{tempMax != null ? `${tempMax.toFixed(1)}°` : "—"}</span>
             </div>
             <div className="chip-stat">
               <span className="k">Dew pt</span>
@@ -148,9 +150,11 @@ export function RoomClimateCard({ index = 0, compact }) {
             <circle cx="70" cy="70" r={R} className="fg"
               strokeDasharray={C} strokeDashoffset={humOffset} />
             <text x="70" y="62" textAnchor="middle" className="hum-label">HUMIDITY</text>
-            <text x="70" y="92" textAnchor="middle" className="hum-num">{humidity}<tspan className="hum-pct">%</tspan></text>
+            <text x="70" y="92" textAnchor="middle" className="hum-num">
+              {humidity ?? "—"}{humidity != null && <tspan className="hum-pct">%</tspan>}
+            </text>
           </svg>
-          <div className="hum-band">{humBand}</div>
+          <div className="hum-band">{humBand ?? "—"}</div>
         </div>
       </div>
 
@@ -172,9 +176,12 @@ export function RoomClimateCard({ index = 0, compact }) {
             <span className="li"><span className="sw hum" />Humidity</span>
           </span>
         </div>
+        {/* "Loading" only while a fetch is actually outstanding — once it has
+            settled with under two points, the recorder had nothing (or the
+            fetch failed), and that is a different sentence. */}
         {!hasHistory ? (
           <div className="chart-canvas" style={{ display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.5 }}>
-            Loading history…
+            {historyLoading ? "Loading history…" : "History unavailable"}
           </div>
         ) : <div className="chart-canvas">
           <svg viewBox={`0 0 ${SW} ${SH}`} preserveAspectRatio="none" className="chart-svg">

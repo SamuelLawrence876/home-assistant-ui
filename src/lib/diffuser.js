@@ -17,6 +17,18 @@ export const DIFFUSER = {
    pulses, on → continuous. */
 export const SPRAY_OPTIONS = ["off", "eco", "on"];
 
+/* Can a card trust this entity's state? `status` is useEntityStatus's;
+   `state` is the state string of the live entity, or of the GH_DATA mock when
+   there is no live one yet. Before HA has answered ("loading") the mock stands
+   in, so its state is what gets judged. After that, unavailable, unknown and
+   missing all mean "we don't know", which the cards must not render as a mist
+   mode or an LED that is off. meross_lan marks every entity of an offline
+   device unavailable, so this is the common case, not an edge one. */
+export function knownState(status, state) {
+  if (status === "not_found") return false;
+  return state != null && state !== "unavailable" && state !== "unknown";
+}
+
 /* Fallback LED colour when the light is in an effect mode (rgb_color is null). */
 export const DEFAULT_RGB = [96, 170, 255];
 

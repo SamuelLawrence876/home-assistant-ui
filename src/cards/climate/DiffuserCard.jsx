@@ -1,13 +1,20 @@
-import { useState, useEffect } from "react";
-import { useEntity } from "../../ha/useEntity.js";
+import { useState, useEffect, useRef } from "react";
+import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { GH_DATA } from "../../data.js";
-import { DIFFUSER, SPRAY_OPTIONS, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName } from "../../lib/diffuser.js";
+import { numOr } from "../../lib/format.js";
+import { DIFFUSER, SPRAY_OPTIONS, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName, knownState } from "../../lib/diffuser.js";
 
 const fb = GH_DATA.diffuser;
-const numOr = (v, d) => (v != null && v !== "unavailable" && v !== "unknown" && !Number.isNaN(+v) ? +v : d);
+
+// The only keys that move a range input's value — commit on their keyup, the
+// same as LightCard. Unfiltered, the Tab that lands on the slider would count
+// as an edit and send a light.turn_on.
+const VALUE_KEYS = new Set([
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
+]);
 
 /* Mist particles rising off the device head — static deterministic set so the
    verify harness can freeze the animation. */
@@ -19,6 +26,11 @@ const MIST_DOTS = [
   { dl: "2.8s", dx: "-18px", dur: "4.6s" },
   { dl: "3.4s", dx: "4px",   dur: "5.0s" },
 ];
+
+const brightPct = (ent, fallback) => {
+  const b = numOr(ent?.attributes?.brightness, null);
+  return b == null ? fallback : Math.round(b / 2.55);
+};
 
 function Swatches({ rgb, onPick, disabled }) {
   return (
@@ -47,10 +59,16 @@ function Swatches({ rgb, onPick, disabled }) {
    Mist spray (select: off/eco/on) + rgb LED night-light, plus the
    device's own humidity + temperature readings. Climate-tab
    "Atmosphere" hero. Falls back to GH_DATA.diffuser pre-WS.
+
+   meross_lan marks every entity of an offline device unavailable. That
+   string used to flow straight into `mode`, and `mode !== "off"` read it as
+   misting — "Misting · unavailable" with animated mist. knownState() is the
+   gate: once HA has answered, unavailable/unknown/missing is unknown, the
+   controls are disabled, and nothing is sent to a device that can't hear it.
    ----------------------------------------------------------------*/
 export function DiffuserCard({ index = 0 }) {
-  const liveSpray = useEntity(DIFFUSER.spray);
-  const liveLed = useEntity(DIFFUSER.light);
+  const { entity: liveSpray, status: sprayStatus } = useEntityStatus(DIFFUSER.spray);
+  const { entity: liveLed, status: ledStatus } = useEntityStatus(DIFFUSER.light);
   const liveHum = useEntity(DIFFUSER.humidity);
   const liveTemp = useEntity(DIFFUSER.temperature);
 
@@ -58,39 +76,58 @@ export function DiffuserCard({ index = 0 }) {
   const l = liveLed || fb[DIFFUSER.light];
   const hum = liveHum || fb[DIFFUSER.humidity];
   const temp = liveTemp || fb[DIFFUSER.temperature];
+  const sprayKnown = knownState(sprayStatus, spray.state);
+  const ledKnown = knownState(ledStatus, l.state);
 
   const [mode, setMode] = useState(spray.state);
-  const [bright, setBright] = useState(Math.round(numOr(l.attributes.brightness, 165) / 2.55));
+  const [bright, setBright] = useState(brightPct(l, 65));
   const [rgb, setRgb] = useState(l.attributes.rgb_color || DEFAULT_RGB);
   const [lightOn, setLightOn] = useState(l.state === "on");
 
   useEffect(() => { if (liveSpray) setMode(liveSpray.state); }, [liveSpray?.state]);
   useEffect(() => { if (liveLed) setLightOn(liveLed.state === "on"); }, [liveLed?.state]);
-  useEffect(() => { if (liveLed?.attributes.brightness != null) setBright(Math.round(liveLed.attributes.brightness / 2.55)); }, [liveLed?.attributes.brightness]);
+  useEffect(() => { if (liveLed?.attributes.brightness != null) setBright(brightPct(liveLed, 65)); }, [liveLed?.attributes.brightness]);
   useEffect(() => { if (liveLed?.attributes.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes.rgb_color?.join()]);
 
-  const misting = mode !== "off";
-  const led = lightOn ? rgbCss(rgb) : "var(--ink-4)";
+  // Revert from HA's truth at failure time (see DiffuserMini): the resync
+  // effects only fire on a *changed* value, so a stale revert would stick.
+  const sprayRef = useRef(liveSpray);
+  sprayRef.current = liveSpray;
+  const ledRef = useRef(liveLed);
+  ledRef.current = liveLed;
+
+  const misting = sprayKnown && mode !== "off" && SPRAY_OPTIONS.includes(mode);
+  const ledOn = ledKnown && lightOn;
+  const led = ledOn ? rgbCss(rgb) : "var(--ink-4)";
   const humidity = numOr(hum?.state, null);
   const temperature = numOr(temp?.state, null);
+  const colorName = nearestColorName(rgb).toLowerCase();
 
   function changeMode(m) {
     const prev = mode;
     setMode(m);
-    callService("select", "select_option", { entity_id: DIFFUSER.spray, option: m }).catch(() => setMode(prev));
+    callService("select", "select_option", { entity_id: DIFFUSER.spray, option: m })
+      .catch(() => setMode(sprayRef.current?.state ?? prev));
   }
   function toggleLight() {
     const next = !lightOn;
     setLightOn(next);
-    callService("light", next ? "turn_on" : "turn_off", { entity_id: DIFFUSER.light }).catch(() => setLightOn(!next));
+    callService("light", next ? "turn_on" : "turn_off", { entity_id: DIFFUSER.light })
+      .catch(() => setLightOn(ledRef.current ? ledRef.current.state === "on" : !next));
   }
+  // Committed on release (pointer-up, or a value key's keyup), never per step
+  // of a drag: each call is a round trip to the device, and the echoed
+  // in-between brightness values used to drag the thumb back under the finger.
   function commitBright(v) {
     setBright(v);
-    callService("light", "turn_on", { entity_id: DIFFUSER.light, brightness_pct: v }).catch(() => {});
+    callService("light", "turn_on", { entity_id: DIFFUSER.light, brightness_pct: v })
+      .catch(() => setBright((cur) => brightPct(ledRef.current, cur)));
   }
   function pickColor(c) {
+    const prev = rgb;
     setRgb(c);
-    callService("light", "turn_on", { entity_id: DIFFUSER.light, rgb_color: c }).catch(() => {});
+    callService("light", "turn_on", { entity_id: DIFFUSER.light, rgb_color: c })
+      .catch(() => setRgb(ledRef.current?.attributes?.rgb_color || prev));
   }
 
   return (
@@ -98,7 +135,7 @@ export function DiffuserCard({ index = 0 }) {
       index={index}
       eyebrow="Diffuser · Meross"
       title="Essential oil diffuser"
-      meta={misting ? `Misting · ${mode}` : "Standby"}
+      meta={!sprayKnown ? "Unavailable" : misting ? `Misting · ${mode}` : "Standby"}
       style={{ "--led": led }}
     >
       <div className="diff-a-body">
@@ -106,7 +143,7 @@ export function DiffuserCard({ index = 0 }) {
         <div className="diff-stage">
           <span className={`diff-stage-state ${misting ? "" : "off"}`}>
             <span className="dot" />
-            {misting ? "Mist on" : "Mist off"}
+            {!sprayKnown ? "Unavailable" : misting ? "Mist on" : "Mist off"}
           </span>
           {misting && (
             <div className="diff-mist" aria-hidden>
@@ -121,16 +158,21 @@ export function DiffuserCard({ index = 0 }) {
         {/* Controls */}
         <div className="diff-a-controls">
           <div className="lede">
-            {misting
-              ? <>Spraying on <b>{mode}</b>. {lightOn ? <>LED set to <b>{nearestColorName(rgb).toLowerCase()}</b>.</> : <>LED is <b>off</b>.</>}</>
-              : <>Mist is off. {lightOn ? <>The LED stays <b>{nearestColorName(rgb).toLowerCase()}</b> as a night light.</> : <>LED is <b>off</b>.</>}</>}
+            {!sprayKnown ? <>Diffuser is <b>unavailable</b>.</>
+              : misting ? <>Spraying on <b>{mode}</b>.</>
+              : <>Mist is off.</>}{" "}
+            {!ledKnown ? <>LED is <b>unavailable</b>.</>
+              : !lightOn ? <>LED is <b>off</b>.</>
+              : misting ? <>LED set to <b>{colorName}</b>.</>
+              : <>The LED stays <b>{colorName}</b> as a night light.</>}
           </div>
 
           <div className="diff-field">
             <span className="flabel">Mist</span>
             <div className="diff-seg" role="group" aria-label="Mist mode">
               {SPRAY_OPTIONS.map((m) => (
-                <button key={m} className={mode === m ? "on" : ""} aria-pressed={mode === m} onClick={() => changeMode(m)}>{m}</button>
+                <button key={m} className={sprayKnown && mode === m ? "on" : ""} aria-pressed={sprayKnown && mode === m}
+                  disabled={!sprayKnown} onClick={() => changeMode(m)}>{m}</button>
               ))}
             </div>
           </div>
@@ -139,8 +181,8 @@ export function DiffuserCard({ index = 0 }) {
             <span className="flabel">
               <span>LED light</span>
               <span className="diff-led-state">
-                <span className={`w ${lightOn ? "lit" : ""}`}>{lightOn ? "On" : "Off"}</span>
-                <ToggleSwitch on={lightOn} onToggle={toggleLight} label="Diffuser LED light" />
+                <span className={`w ${ledOn ? "lit" : ""}`}>{!ledKnown ? "Unavailable" : lightOn ? "On" : "Off"}</span>
+                <ToggleSwitch on={ledOn} onToggle={toggleLight} disabled={!ledKnown} label="Diffuser LED light" />
               </span>
             </span>
             {/* Dimmed when the LED is off. `disabled` is what actually blocks the
@@ -149,19 +191,22 @@ export function DiffuserCard({ index = 0 }) {
                 on top so the dimmed block doesn't answer hover either. */}
             <div
               className="diff-led-controls"
-              style={{ opacity: lightOn ? 1 : 0.4, pointerEvents: lightOn ? "auto" : "none", filter: lightOn ? "none" : "saturate(0.4)" }}
+              style={{ opacity: ledOn ? 1 : 0.4, pointerEvents: ledOn ? "auto" : "none", filter: ledOn ? "none" : "saturate(0.4)" }}
             >
               <div className="diff-bright">
                 <input
                   type="range" min="1" max="100" value={bright} className="diff-range"
                   aria-label="Diffuser LED brightness"
-                  disabled={!lightOn}
+                  disabled={!ledOn}
                   style={{ "--bp": `${bright}%`, "--led": led }}
-                  onChange={(e) => commitBright(+e.target.value)}
+                  onChange={(e) => setBright(+e.target.value)}
+                  onPointerUp={(e) => commitBright(+e.target.value)}
+                  onKeyUp={(e) => { if (VALUE_KEYS.has(e.key)) commitBright(+e.target.value); }}
                 />
-                <span className="val">{bright}%</span>
+                {/* An unavailable light reports no brightness; don't print the default as if it had. */}
+                <span className="val">{ledKnown ? `${bright}%` : "—"}</span>
               </div>
-              <Swatches rgb={rgb} onPick={pickColor} disabled={!lightOn} />
+              <Swatches rgb={rgb} onPick={pickColor} disabled={!ledOn} />
             </div>
           </div>
 

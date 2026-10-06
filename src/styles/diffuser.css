@@ -67,6 +67,9 @@
 }
 .diff-seg button:hover { color: var(--ink); }
 .diff-seg button.on { background: var(--ink); color: var(--on-ink, #fff); }
+/* Device unavailable: the segments stay visible but read as inert. */
+.diff-seg button:disabled,
+.diff-seg button:disabled:hover { color: var(--ink-4); cursor: not-allowed; }
 
 /* Stat chips */
 .diff-stats { display: flex; gap: 10px; flex-wrap: wrap; }

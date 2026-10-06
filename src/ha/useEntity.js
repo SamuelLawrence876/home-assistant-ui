@@ -7,7 +7,7 @@
    useEntityCounts()                 -> { available, unavailable, total }
    useStatistics(ids, hours)         -> { data, loading } — hourly mean from recorder */
 
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import {
   subscribe,
   onConnectionChange,
@@ -123,17 +123,20 @@ export function combineStatuses(...statuses) {
 /**
  * Fetch hourly statistics from HA's recorder for the last N hours.
  * Returns { data: { [statistic_id]: { mean: number[], min: number[], max: number[] } }, loading: boolean }
+ * `loading` is true until a fetch made over a ready socket has settled. Once
+ * it is false, `data` null (or an empty series) means the recorder really had
+ * nothing, or the fetch failed — say "no history", not "loading".
  */
 export function useStatistics(statisticIds, hours = 24) {
   const key = statisticIds.join(",");
+  const ready = useConnectionStatus() === "ready";
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const lastKey = useRef("");
 
   // Same identity trick as useEntities: `statisticIds` is a fresh array on
   // every render, so the ids are recovered from the joined key instead. That
-  // keeps `fetch` stable, which keeps the 10-minute interval below from being
-  // torn down and rebuilt on every render.
+  // keeps `fetch` stable, which keeps the effect below from being torn down
+  // and re-fetching on every render.
   const fetch = useCallback(async () => {
     const ids = key ? key.split(",") : [];
     const startTime = new Date(Date.now() - hours * 3600_000).toISOString();
@@ -165,18 +168,19 @@ export function useStatistics(statisticIds, hours = 24) {
     setLoading(false);
   }, [key, hours]);
 
+  // Keyed on "is the socket ready", the way useForecast is: fetch as soon as
+  // it is, again on every reconnect, and every 10 minutes while it stays up.
+  // This used to fetch once at mount and then only on the interval, so a first
+  // connect slower than waitForConnection's 15 s timeout — or any reconnect —
+  // left the climate cards without history for up to 10 minutes. Nothing
+  // fetches while disconnected; it could only time out.
   useEffect(() => {
-    if (key === lastKey.current) return;
-    lastKey.current = key;
+    if (!ready) return undefined;
     setLoading(true);
     fetch();
-  }, [key, fetch]);
-
-  // Refresh every 10 minutes
-  useEffect(() => {
     const id = setInterval(fetch, 10 * 60_000);
     return () => clearInterval(id);
-  }, [fetch]);
+  }, [ready, fetch]);
 
   return { data, loading };
 }
