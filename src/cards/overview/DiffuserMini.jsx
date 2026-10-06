@@ -3,10 +3,7 @@ import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
-import { GH_DATA } from "../../data.js";
-import { DIFFUSER, DEFAULT_RGB, rgbCss, nearestColorName, knownState, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
-
-const fb = GH_DATA.diffuser;
+import { DIFFUSER, DEFAULT_RGB, rgbCss, nearestColorName, knownState, unknownWord, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
 
 /* ----------------------------------------------------------------
    Overview quick-control strip — glanceable mist + LED. Compact
@@ -25,42 +22,48 @@ const fb = GH_DATA.diffuser;
    card didn't recognise. sprayPhase() keeps the three apart, and the
    segments are the select's own options, so a mode meross_lan adds is a
    button rather than a mystery.
+
+   There is no mock fallback. The data.js mock used to stand in until HA
+   answered, so a signed-out or never-connected dashboard read a green
+   "On · Spraying · eco · ocean" with live buttons. Before HA answers, and
+   through a dropped connection, both halves read "—" and their controls are
+   disabled.
    ----------------------------------------------------------------*/
 export function DiffuserMini({ index = 0 }) {
   const { entity: liveSpray, status: sprayStatus } = useEntityStatus(DIFFUSER.spray);
   const { entity: liveLed, status: ledStatus } = useEntityStatus(DIFFUSER.light);
-  const spray = liveSpray || fb[DIFFUSER.spray];
-  const l = liveLed || fb[DIFFUSER.light];
-  const sprayKnown = knownState(sprayStatus, spray.state);
-  const ledKnown = knownState(ledStatus, l.state);
+  const sprayKnown = knownState(sprayStatus);
+  const ledKnown = knownState(ledStatus);
 
-  const [mode, setMode] = useState(spray.state);
-  const [rgb, setRgb] = useState(l.attributes.rgb_color || DEFAULT_RGB);
-  const [lightOn, setLightOn] = useState(l.state === "on");
+  const [mode, setMode] = useState(sprayKnown ? liveSpray.state : null);
+  const [rgb, setRgb] = useState(liveLed?.attributes?.rgb_color || DEFAULT_RGB);
+  const [lightOn, setLightOn] = useState(ledKnown && liveLed.state === "on");
 
-  useEffect(() => { if (liveSpray) setMode(liveSpray.state); }, [liveSpray?.state]);
-  useEffect(() => { if (liveLed) setLightOn(liveLed.state === "on"); }, [liveLed?.state]);
-  useEffect(() => { if (liveLed?.attributes.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes.rgb_color?.join()]);
+  // Resync from HA only. `*Known` is in the lists so a diffuser coming back
+  // from a dropout re-reads its state even when nothing changed meanwhile.
+  useEffect(() => { if (sprayKnown) setMode(liveSpray.state); }, [sprayKnown, liveSpray?.state]);
+  useEffect(() => { if (ledKnown) setLightOn(liveLed.state === "on"); }, [ledKnown, liveLed?.state]);
+  useEffect(() => { if (liveLed?.attributes?.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes?.rgb_color?.join()]);
 
-  const options = sprayOptions(spray);
+  const options = sprayOptions(liveSpray);
   const phase = sprayKnown ? sprayPhase(mode, options) : null;
   const misting = phase === "spraying";
   const ledOn = ledKnown && lightOn;
   const led = ledOn ? rgbCss(rgb) : "var(--ink-4)";
   const statusColor = misting ? "var(--good)" : "var(--ink-4)";
+  const ledPending = ledStatus === "loading";
   // An unrecognised mode is shown as HA reported it — neither Off nor On.
-  const mistText = !sprayKnown ? "Mist unavailable"
+  const mistText = !sprayKnown ? (sprayStatus === "loading" ? "Mist —" : "Mist unavailable")
     : misting ? `Spraying · ${mode}`
     : phase === "unrecognised" ? `Mist: ${mode}`
     : "Standby";
-  const sub = !sprayKnown && !ledKnown ? "Unavailable"
+  const sub = !sprayKnown && !ledKnown ? unknownWord(sprayStatus)
     : mistText
-      + `${!ledKnown ? " · LED unavailable" : lightOn ? ` · ${nearestColorName(rgb).toLowerCase()}` : " · LED off"}`;
+      + `${!ledKnown ? ` · LED ${ledPending ? "—" : "unavailable"}` : lightOn ? ` · ${nearestColorName(rgb).toLowerCase()}` : " · LED off"}`;
 
   // Revert from HA's truth at failure time rather than the value captured at
   // click time: the resync effects above only fire on a *changed* state, so a
-  // stale revert would stick. Falls back to the pre-click value in mock mode,
-  // where there is no live entity to revert to.
+  // stale revert would stick.
   const sprayRef = useRef(liveSpray);
   sprayRef.current = liveSpray;
   const ledRef = useRef(liveLed);
@@ -88,7 +91,7 @@ export function DiffuserMini({ index = 0 }) {
       style={{ "--led": led }}
       headRight={
         <span className="gs-status" style={{ "--gs-color": statusColor }}>
-          <span className="d" />{!sprayKnown ? "Unavailable" : misting ? "On" : phase === "off" ? "Off" : "—"}
+          <span className="d" />{!sprayKnown ? unknownWord(sprayStatus) : misting ? "On" : phase === "off" ? "Off" : "—"}
         </span>
       }
     >
@@ -113,8 +116,10 @@ export function DiffuserMini({ index = 0 }) {
         <div className="dmini-ledrow">
           <span className="k">LED light</span>
           <span className="dmini-led">
-            <span className={`w ${ledOn ? "lit" : ""}`}>{!ledKnown ? "Unavailable" : lightOn ? "On" : "Off"}</span>
-            <ToggleSwitch on={ledOn} onToggle={toggleLight} disabled={!ledKnown} label="Diffuser LED" />
+            <span className={`w ${ledOn ? "lit" : ""}`}>{!ledKnown ? unknownWord(ledStatus) : lightOn ? "On" : "Off"}</span>
+            {/* role="switch" has no "unknown", so the real state goes in the name. */}
+            <ToggleSwitch on={ledOn} onToggle={toggleLight} disabled={!ledKnown}
+              label={ledKnown ? "Diffuser LED" : `Diffuser LED — ${ledPending ? "not reported yet" : "unavailable"}`} />
           </span>
         </div>
       </div>

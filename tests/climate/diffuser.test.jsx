@@ -4,8 +4,9 @@
    cards used to copy that string into `mode`, and `mode !== "off"` read it as
    misting: a green "On · Spraying · unavailable", animated mist, and an LED
    switch that stayed live and stuck at "On" when tapped. These tests pin the
-   unknown case, keep the pre-connection mock fallback (mock mode) intact, and
-   pin the brightness slider to one service call per gesture, not per step —
+   unknown case, pin that the GH_DATA mock no longer stands in before HA
+   answers (mock mode reads "—", round3.test.jsx M1), and pin the brightness
+   slider to one service call per gesture, not per step —
    sent on the native change event (useRangeCommit), so an assistive-tech
    adjustment reaches HA too. And a live spray mode the card does not know is
    a third state: not "Off · Standby", and not a confident "Spraying". */
@@ -93,7 +94,7 @@ describe("DiffuserCard", () => {
     offline();
     render(<DiffuserCard />);
     for (const b of screen.getAllByRole("button", { name: /^(off|eco|on)$/ })) expect(b).toBeDisabled();
-    const sw = screen.getByRole("switch", { name: "Diffuser LED light" });
+    const sw = screen.getByRole("switch", { name: "Diffuser LED light — unavailable" });
     expect(sw).toBeDisabled();
     fireEvent.click(sw);
     expect(sw.getAttribute("aria-checked")).toBe("false");
@@ -110,12 +111,15 @@ describe("DiffuserCard", () => {
     expect(container.querySelector(".lede").textContent).toMatch(/^Diffuser is unavailable\./);
   });
 
-  it("still renders the GH_DATA fallback before Home Assistant has answered (mock mode)", () => {
+  it("shows no mock state before Home Assistant has answered (mock mode) — '—', no mist, nothing pressed", () => {
+    // This used to render GH_DATA ("Spraying on eco", animated mist, eco
+    // pressed) as if HA had said so. See round3.test.jsx (M1).
     fake.status = "connecting";
     const { container } = render(<DiffuserCard />);
-    expect(container.querySelector(".lede").textContent).toBe("Spraying on eco. LED set to ocean.");
-    expect(container.querySelector(".diff-mist")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "eco" })).toHaveAttribute("aria-pressed", "true");
+    expect(container.querySelector(".lede").textContent).toBe("Diffuser has not reported yet.");
+    expect(container.querySelector(".diff-mist")).toBeNull();
+    expect(screen.getByRole("button", { name: "eco" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "eco" })).toBeDisabled();
   });
 
   it("reads a live, misting diffuser as misting", () => {
@@ -209,14 +213,15 @@ describe("DiffuserMini", () => {
       expect(b).toBeDisabled();
       expect(b).toHaveAttribute("aria-pressed", "false");
     }
-    expect(screen.getByRole("switch", { name: "Diffuser LED" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Diffuser LED — unavailable" })).toBeDisabled();
   });
 
-  it("keeps the mock fallback before Home Assistant has answered (mock mode)", () => {
+  it("shows no mock state before Home Assistant has answered (mock mode)", () => {
+    // Used to read the GH_DATA mock's green "On" / "Spraying · eco · ocean".
     fake.status = "connecting";
     const { container } = render(<DiffuserMini />);
-    expect(container.querySelector(".gs-status").textContent).toBe("On");
-    expect(container.querySelector(".sub").textContent).toBe("Spraying · eco · ocean");
+    expect(container.querySelector(".gs-status").textContent).toBe("—");
+    expect(container.querySelector(".sub").textContent).toBe("—");
   });
 
   it("names which half is unknown when only one is", () => {

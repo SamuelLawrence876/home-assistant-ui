@@ -1,14 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
+import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
-import { GH_DATA } from "../../data.js";
 import { numOr } from "../../lib/format.js";
 import { useRangeCommit } from "../../hooks/useRangeCommit.js";
-import { DIFFUSER, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName, knownState, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
-
-const fb = GH_DATA.diffuser;
+import { DIFFUSER, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName, knownState, unknownWord, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
 
 /* Mist particles rising off the device head — static deterministic set so the
    verify harness can freeze the animation. */
@@ -26,11 +23,12 @@ const brightPct = (ent, fallback) => {
   return b == null ? fallback : Math.round(b / 2.55);
 };
 
+// `rgb` is null when the LED's colour isn't known — then no swatch is pressed.
 function Swatches({ rgb, onPick, disabled }) {
   return (
     <div className="diff-swatches">
       {DIFFUSER_COLORS.map((c) => {
-        const on = c.rgb.join() === rgb.join();
+        const on = rgb != null && c.rgb.join() === rgb.join();
         return (
           <button
             key={c.name}
@@ -52,38 +50,43 @@ function Swatches({ rgb, onPick, disabled }) {
    Diffuser — Meross Smart Essential Oil Diffuser (meross_lan).
    Mist spray (select: off/eco/on) + rgb LED night-light, plus the
    device's own humidity + temperature readings. Climate-tab
-   "Atmosphere" hero. Falls back to GH_DATA.diffuser pre-WS.
+   "Atmosphere" hero.
 
    meross_lan marks every entity of an offline device unavailable. That
    string used to flow straight into `mode`, and `mode !== "off"` read it as
    misting — "Misting · unavailable" with animated mist. knownState() is the
-   gate: once HA has answered, unavailable/unknown/missing is unknown, the
+   gate: only what HA vouches for right now is shown; anything else is "—"
+   (not answered yet, or the connection dropped) or "Unavailable", the
    controls are disabled, and nothing is sent to a device that can't hear it.
    A live mode that isn't one of the select's options is a third case
    (sprayPhase), shown as reported — never as "Mist is off".
+
+   There is no mock fallback. The data.js mock used to stand in until HA
+   answered, so a signed-out or never-connected dashboard showed animated
+   mist, "Spraying on eco" and 77% / 27.7°C as if measured.
    ----------------------------------------------------------------*/
 export function DiffuserCard({ index = 0 }) {
   const { entity: liveSpray, status: sprayStatus } = useEntityStatus(DIFFUSER.spray);
   const { entity: liveLed, status: ledStatus } = useEntityStatus(DIFFUSER.light);
-  const liveHum = useEntity(DIFFUSER.humidity);
-  const liveTemp = useEntity(DIFFUSER.temperature);
+  const { entity: liveHum, status: humStatus } = useEntityStatus(DIFFUSER.humidity);
+  const { entity: liveTemp, status: tempStatus } = useEntityStatus(DIFFUSER.temperature);
 
-  const spray = liveSpray || fb[DIFFUSER.spray];
-  const l = liveLed || fb[DIFFUSER.light];
-  const hum = liveHum || fb[DIFFUSER.humidity];
-  const temp = liveTemp || fb[DIFFUSER.temperature];
-  const sprayKnown = knownState(sprayStatus, spray.state);
-  const ledKnown = knownState(ledStatus, l.state);
+  const sprayKnown = knownState(sprayStatus);
+  const ledKnown = knownState(ledStatus);
+  // One connection behind all four entities, so "not answered yet" is shared.
+  const pending = sprayStatus === "loading";
 
-  const [mode, setMode] = useState(spray.state);
-  const [bright, setBright] = useState(brightPct(l, 65));
-  const [rgb, setRgb] = useState(l.attributes.rgb_color || DEFAULT_RGB);
-  const [lightOn, setLightOn] = useState(l.state === "on");
+  const [mode, setMode] = useState(sprayKnown ? liveSpray.state : null);
+  const [bright, setBright] = useState(brightPct(liveLed, 65));
+  const [rgb, setRgb] = useState(liveLed?.attributes?.rgb_color || DEFAULT_RGB);
+  const [lightOn, setLightOn] = useState(ledKnown && liveLed.state === "on");
 
-  useEffect(() => { if (liveSpray) setMode(liveSpray.state); }, [liveSpray?.state]);
-  useEffect(() => { if (liveLed) setLightOn(liveLed.state === "on"); }, [liveLed?.state]);
-  useEffect(() => { if (liveLed?.attributes.brightness != null) setBright(brightPct(liveLed, 65)); }, [liveLed?.attributes.brightness]);
-  useEffect(() => { if (liveLed?.attributes.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes.rgb_color?.join()]);
+  // Resync from HA only. `*Known` is in the lists so a diffuser coming back
+  // from a dropout re-reads its state even when nothing changed meanwhile.
+  useEffect(() => { if (sprayKnown) setMode(liveSpray.state); }, [sprayKnown, liveSpray?.state]);
+  useEffect(() => { if (ledKnown) setLightOn(liveLed.state === "on"); }, [ledKnown, liveLed?.state]);
+  useEffect(() => { if (liveLed?.attributes?.brightness != null) setBright(brightPct(liveLed, 65)); }, [liveLed?.attributes?.brightness]);
+  useEffect(() => { if (liveLed?.attributes?.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes?.rgb_color?.join()]);
 
   // Revert from HA's truth at failure time (see DiffuserMini): the resync
   // effects only fire on a *changed* value, so a stale revert would stick.
@@ -92,14 +95,15 @@ export function DiffuserCard({ index = 0 }) {
   const ledRef = useRef(liveLed);
   ledRef.current = liveLed;
 
-  const options = sprayOptions(spray);
+  const options = sprayOptions(liveSpray);
   const phase = sprayKnown ? sprayPhase(mode, options) : null;
   const misting = phase === "spraying";
   const unrecognised = phase === "unrecognised";
   const ledOn = ledKnown && lightOn;
   const led = ledOn ? rgbCss(rgb) : "var(--ink-4)";
-  const humidity = numOr(hum?.state, null);
-  const temperature = numOr(temp?.state, null);
+  // A reading HA isn't vouching for right now is an em dash, not the last one.
+  const humidity = humStatus === "ready" ? numOr(liveHum.state, null) : null;
+  const temperature = tempStatus === "ready" ? numOr(liveTemp.state, null) : null;
   const colorName = nearestColorName(rgb).toLowerCase();
 
   function changeMode(m) {
@@ -138,7 +142,7 @@ export function DiffuserCard({ index = 0 }) {
       index={index}
       eyebrow="Diffuser · Meross"
       title="Essential oil diffuser"
-      meta={!sprayKnown ? "Unavailable" : misting ? `Misting · ${mode}` : unrecognised ? `Mist: ${mode}` : "Standby"}
+      meta={!sprayKnown ? unknownWord(sprayStatus) : misting ? `Misting · ${mode}` : unrecognised ? `Mist: ${mode}` : "Standby"}
       style={{ "--led": led }}
     >
       <div className="diff-a-body">
@@ -146,7 +150,7 @@ export function DiffuserCard({ index = 0 }) {
         <div className="diff-stage">
           <span className={`diff-stage-state ${misting ? "" : "off"}`}>
             <span className="dot" />
-            {!sprayKnown ? "Unavailable" : misting ? "Mist on" : unrecognised ? "Mist unknown" : "Mist off"}
+            {!sprayKnown ? (pending ? "Mist —" : "Unavailable") : misting ? "Mist on" : unrecognised ? "Mist unknown" : "Mist off"}
           </span>
           {misting && (
             <div className="diff-mist" aria-hidden>
@@ -161,14 +165,16 @@ export function DiffuserCard({ index = 0 }) {
         {/* Controls */}
         <div className="diff-a-controls">
           <div className="lede">
-            {!sprayKnown ? <>Diffuser is <b>unavailable</b>.</>
-              : misting ? <>Spraying on <b>{mode}</b>.</>
-              : unrecognised ? <>Mist reports <b>{mode}</b>.</>
-              : <>Mist is off.</>}{" "}
-            {!ledKnown ? <>LED is <b>unavailable</b>.</>
-              : !lightOn ? <>LED is <b>off</b>.</>
-              : misting ? <>LED set to <b>{colorName}</b>.</>
-              : <>The LED stays <b>{colorName}</b> as a night light.</>}
+            {pending ? <>Diffuser has <b>not reported yet</b>.</> : <>
+              {!sprayKnown ? <>Diffuser is <b>unavailable</b>.</>
+                : misting ? <>Spraying on <b>{mode}</b>.</>
+                : unrecognised ? <>Mist reports <b>{mode}</b>.</>
+                : <>Mist is off.</>}{" "}
+              {!ledKnown ? <>LED is <b>unavailable</b>.</>
+                : !lightOn ? <>LED is <b>off</b>.</>
+                : misting ? <>LED set to <b>{colorName}</b>.</>
+                : <>The LED stays <b>{colorName}</b> as a night light.</>}
+            </>}
           </div>
 
           <div className="diff-field">
@@ -185,8 +191,10 @@ export function DiffuserCard({ index = 0 }) {
             <span className="flabel">
               <span>LED light</span>
               <span className="diff-led-state">
-                <span className={`w ${ledOn ? "lit" : ""}`}>{!ledKnown ? "Unavailable" : lightOn ? "On" : "Off"}</span>
-                <ToggleSwitch on={ledOn} onToggle={toggleLight} disabled={!ledKnown} label="Diffuser LED light" />
+                <span className={`w ${ledOn ? "lit" : ""}`}>{!ledKnown ? unknownWord(ledStatus) : lightOn ? "On" : "Off"}</span>
+                {/* role="switch" has no "unknown", so the real state goes in the name. */}
+                <ToggleSwitch on={ledOn} onToggle={toggleLight} disabled={!ledKnown}
+                  label={ledKnown ? "Diffuser LED light" : `Diffuser LED light — ${ledStatus === "loading" ? "not reported yet" : "unavailable"}`} />
               </span>
             </span>
             {/* Dimmed when the LED is off. `disabled` is what actually blocks the
@@ -210,7 +218,7 @@ export function DiffuserCard({ index = 0 }) {
                 {/* An unavailable light reports no brightness; don't print the default as if it had. */}
                 <span className="val">{ledKnown ? `${bright}%` : "—"}</span>
               </div>
-              <Swatches rgb={rgb} onPick={pickColor} disabled={!ledOn} />
+              <Swatches rgb={ledKnown ? rgb : null} onPick={pickColor} disabled={!ledOn} />
             </div>
           </div>
 

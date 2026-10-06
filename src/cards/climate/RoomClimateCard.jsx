@@ -26,7 +26,7 @@ function smoothPath(pts) {
    ----------------------------------------------------------------*/
 export function RoomClimateCard({ index = 0, compact }) {
   const {
-    status, pending, stale: isStale, liveTemp, historyLoading,
+    status, pending, stale: isStale, staleNote, liveTemp, historyLoading,
     temp, humidity, tempHist, humHist, tempMin, tempMax,
     delta, trend, humBand, allGood, verdict, verdictNote, lastUp,
   } = useClimateDerived();
@@ -108,7 +108,7 @@ export function RoomClimateCard({ index = 0, compact }) {
       index={index}
       eyebrow={`Climate · ${source}`}
       title="Room"
-      meta={isStale ? "Sensor offline · last known" : `${lastUp} · ${humBand ?? "—"}`}
+      meta={staleNote ?? `${lastUp} · ${humBand ?? "—"}`}
       badge={isStale ? "stale" : undefined}
     >
       <div className="roomclim-body">
