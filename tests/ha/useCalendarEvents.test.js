@@ -236,6 +236,112 @@ describe("useCalendarEvents", () => {
     expect(result.current.events[0].cal_entity_id).toBe("calendar.personal");
   });
 
+  /* One calendar going dark (an expired CalDAV or Google credential) used to
+     drop its events from the list while the rest refreshed — so "Work could
+     not be read" rendered exactly like "nothing on Work this week". */
+  describe("when one of several calendars fails", () => {
+    const okFor = (cal) => ({
+      ok: true,
+      status: 200,
+      json: async () => [{ ...EVENT, uid: `${cal}-evt`, summary: cal === "calendar.work" ? "Standup" : "Gym" }],
+      text: async () => "",
+    });
+    const refuse = { ok: false, status: 500, json: async () => [], text: async () => "nope" };
+    const both = ["calendar.personal", "calendar.work"];
+
+    it("keeps the failed calendar's last known events instead of dropping them", async () => {
+      fetchMock.mockImplementation(async (url) =>
+        okFor(String(url).includes("calendar.work") ? "calendar.work" : "calendar.personal"),
+      );
+      const { result } = renderHook(() => useCalendarEvents(both, START, END));
+      await waitFor(() => expect(result.current.events).toHaveLength(2));
+
+      fetchMock.mockImplementation(async (url) =>
+        String(url).includes("calendar.work") ? refuse : okFor("calendar.personal"),
+      );
+      await act(async () => {
+        await result.current.refresh();
+      });
+
+      expect(result.current.error).toBeTruthy();
+      expect(result.current.events.map((e) => e.summary).sort()).toEqual(["Gym", "Standup"]);
+      expect(result.current.failedIds).toEqual(["calendar.work"]);
+    });
+
+    it("still hands back fresh events for the calendars that did answer", async () => {
+      fetchMock.mockImplementation(async (url) =>
+        okFor(String(url).includes("calendar.work") ? "calendar.work" : "calendar.personal"),
+      );
+      const { result } = renderHook(() => useCalendarEvents(both, START, END));
+      await waitFor(() => expect(result.current.events).toHaveLength(2));
+
+      fetchMock.mockImplementation(async (url) =>
+        String(url).includes("calendar.work")
+          ? refuse
+          : { ...okFor("calendar.personal"), json: async () => [{ ...EVENT, uid: "p2", summary: "Gym (moved)" }] },
+      );
+      await act(async () => {
+        await result.current.refresh();
+      });
+
+      expect(result.current.events.map((e) => e.summary).sort()).toEqual(["Gym (moved)", "Standup"]);
+    });
+
+    it("names no calendar once everything answers again", async () => {
+      fetchMock.mockImplementation(async (url) =>
+        String(url).includes("calendar.work") ? refuse : okFor("calendar.personal"),
+      );
+      const { result } = renderHook(() => useCalendarEvents(both, START, END));
+      await waitFor(() => expect(result.current.failedIds).toEqual(["calendar.work"]));
+
+      fetchMock.mockImplementation(async (url) =>
+        okFor(String(url).includes("calendar.work") ? "calendar.work" : "calendar.personal"),
+      );
+      await act(async () => {
+        await result.current.refresh();
+      });
+
+      expect(result.current.error).toBe(null);
+      expect(result.current.failedIds).toEqual([]);
+      expect(result.current.events).toHaveLength(2);
+    });
+
+    it("names every calendar when none of them answer", async () => {
+      fetchMock.mockImplementation(async () => refuse);
+      const { result } = renderHook(() => useCalendarEvents(both, START, END));
+      await waitFor(() => expect(result.current.failedIds).toEqual(both));
+    });
+
+    it("hands back the same failedIds array while the same calendar keeps failing", async () => {
+      // Same reason events keeps its identity: a fresh array per run would
+      // re-render every caller for nothing.
+      fetchMock.mockImplementation(async (url) =>
+        String(url).includes("calendar.work") ? refuse : okFor("calendar.personal"),
+      );
+      const { result } = renderHook(() => useCalendarEvents(both, START, END));
+      await waitFor(() => expect(result.current.failedIds).toEqual(["calendar.work"]));
+      const first = result.current.failedIds;
+
+      await act(async () => {
+        await result.current.refresh();
+      });
+
+      expect(result.current.failedIds).toBe(first);
+    });
+  });
+
+  it("starts with no failed calendars, and keeps that same empty array", async () => {
+    const { result, rerender } = renderHook(() => useCalendarEvents(["calendar.personal"], START, END));
+    await waitFor(() => expect(result.current.events).toHaveLength(1));
+    const first = result.current.failedIds;
+    expect(first).toEqual([]);
+    await act(async () => {
+      await result.current.refresh();
+    });
+    rerender();
+    expect(result.current.failedIds).toBe(first);
+  });
+
   it("sends the token in a header, never in the URL", async () => {
     renderHook(() => useCalendarEvents(["calendar.personal"], START, END));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());

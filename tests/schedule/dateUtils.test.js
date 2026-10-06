@@ -30,13 +30,14 @@ describe("toLocalISOWithOffset", () => {
     expect(toLocalISOWithOffset(new Date(2026, 2, 9, 7, 8)).slice(0, 16)).toBe("2026-03-09T07:08");
   });
 
-  it.skip("BUG: refuses an unparseable date instead of writing NaN into the payload", () => {
-    // new Date("nonsense") produces "NaN-NaN-NaNTNaN:NaN:00+NaN:NaN", which is
-    // what would be posted to calendar.create_event. Not reachable from the
-    // dialog today (its inputs are a date picker and two time pickers), but
-    // there is no guard in the helper itself.
-    // Expected: null, and the caller renders an error rather than submitting.
+  it("refuses an unparseable date instead of writing NaN into the payload", () => {
+    // new Date("nonsense") used to produce "NaN-NaN-NaNTNaN:NaN:00+NaN:NaN",
+    // which is what would have been posted to calendar.create_event. Reachable
+    // from the dialog by clearing a time field. The dialog's half — render an
+    // error rather than submit — is in calendarNewEventDialog.test.jsx.
     expect(toLocalISOWithOffset(new Date("nonsense"))).toBe(null);
+    expect(toLocalISOWithOffset(new Date(NaN))).toBe(null);
+    expect(toLocalISOWithOffset(undefined)).toBe(null);
   });
 });
 

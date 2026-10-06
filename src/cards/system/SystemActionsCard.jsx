@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
+import { useArmedConfirm } from "./useArmedConfirm.js";
 
 const SYSTEM_ACTIONS = [
   { id: "restart_ha", label: "Restart HA", icon: "↻", desc: "homeassistant.restart", confirm: true,
@@ -15,14 +16,16 @@ const SYSTEM_ACTIONS = [
 
 export function SystemActionsCard({ index = 0 }) {
   const [firing, setFiring] = useState(null);
-  const [confirm, setConfirm] = useState(null);
+  // A double-click can't arm-and-fire, and an armed tile disarms itself —
+  // see useArmedConfirm.js for why each guard exists.
+  const { armed: confirm, request, disarm } = useArmedConfirm();
 
   async function exec(action) {
-    if (action.confirm && confirm !== action.id) {
-      setConfirm(action.id);
-      return;
+    if (action.confirm) {
+      if (!request(action.id)) return;
+    } else {
+      disarm();
     }
-    setConfirm(null);
     setFiring(action.id);
     try {
       await action.run();
@@ -53,7 +56,7 @@ export function SystemActionsCard({ index = 0 }) {
         ))}
       </div>
       {confirm && (
-        <button className="sys-action-cancel" onClick={() => setConfirm(null)}>
+        <button className="sys-action-cancel" onClick={disarm}>
           Cancel
         </button>
       )}

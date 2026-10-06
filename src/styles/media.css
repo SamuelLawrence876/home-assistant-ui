@@ -73,3 +73,12 @@
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Now-playing transport while the player can't take a command (unavailable or
+   missing, or no track to seek in). Scoped, not a global .btn:disabled —
+   the app has never had one, and a global rule would restyle every button. */
+.nowplaying-controls .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}

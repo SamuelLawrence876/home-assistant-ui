@@ -128,6 +128,25 @@ export function resolveSunTimes(times) {
   return isUsableWindow(times) ? times : SUN_FALLBACK;
 }
 
+/* What the weather card says about the sun, as opposed to what the sky looks
+   like. Returns { hour, phase, isUp }: phase 0 at sunrise, 1 at sunset — the
+   two times the card's arc is labelled with — at the real clock (or ?clock=,
+   for the screenshot harness), never the Tweaks clock override, which only
+   previews the sky.
+
+   Deliberately not skyColors' phase. The palette follows Tweaks → Mode
+   (Day / Night pin it to 13:00 / 23:00) and runs dawn → dusk because twilight
+   is part of the painted sky; reading the card off it drew a moon at 2pm in
+   Night mode and kept the sun up past the sunset it printed. Without a usable
+   sun.sun window phase and isUp are null — SUN_FALLBACK is a fine colour,
+   not a fact. */
+export function sunReadout(hour, sunTimes) {
+  const h = Number.isFinite(hour) && hour >= 0 && hour <= 24 ? hour : null;
+  if (h === null || !isUsableWindow(sunTimes)) return { hour: h, phase: null, isUp: null };
+  const phase = sunPhase(h, sunTimes.sunrise, sunTimes.sunset);
+  return { hour: h, phase, isUp: isDay(phase) };
+}
+
 /* Map a real clock hour onto the reference day the palette was painted for,
    piecewise-linearly: night-before-dawn, daylight, night-after-dusk. A
    December afternoon at 15:00 lands near the reference day's late afternoon

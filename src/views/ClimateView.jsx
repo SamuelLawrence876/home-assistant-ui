@@ -5,7 +5,7 @@ import { HeaterCard } from "../cards/climate/HeaterCard.jsx";
 import { FanCard } from "../cards/climate/FanCard.jsx";
 import { WeatherSunHero } from "../cards/overview/WeatherSunHero.jsx";
 
-export default function ClimateView({ sky }) {
+export default function ClimateView({ sun }) {
   return (
     <div className="grid">
       <div className="col-12"><RoomClimateCard index={0} /></div>
@@ -13,7 +13,7 @@ export default function ClimateView({ sky }) {
       <div className="col-5"><HeaterCard index={2} /></div>
       <div className="col-12"><AirPurifierCard index={3} /></div>
       <div className="col-12"><FanCard index={4} /></div>
-      <div className="col-12"><WeatherSunHero index={5} sky={sky} /></div>
+      <div className="col-12"><WeatherSunHero index={5} sun={sun} /></div>
     </div>
   );
 }

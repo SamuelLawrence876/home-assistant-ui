@@ -130,3 +130,7 @@
   display: inline-flex; align-items: center; gap: 6px;
 }
 .chip .marker { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-2); }
+/* The connection chip becomes a button once the HA session has expired
+   (App.jsx ConnectionChip): same pill, plus the affordance. */
+button.chip { cursor: pointer; }
+button.chip:hover { color: var(--ink); }

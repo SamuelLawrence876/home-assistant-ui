@@ -16,7 +16,8 @@
 
    The reload also hands the open tab across to App (App strips ?tab= on
    mount), so the self-heal is invisible rather than bouncing the user back to
-   Overview with no explanation.
+   Overview with no explanation. A trip to Home Assistant's login page and back
+   has the same problem and gets the same hand-off — see LOGIN_REDIRECT_EVENT.
 
    Entity-agnostic by rule (components/ must not import ha/ or data.js).
    lib/errorLog.js is a pure helper and takes plain strings, so it is fair game.
@@ -31,9 +32,15 @@ const RELOAD_TAB_KEY = "gh-chunk-reload-tab";
 /* Long enough that a build which is broken for everyone can't loop (a reload
    cycle is a second or two), short enough that a later deploy re-arms. */
 const RELOAD_WINDOW_MS = 60_000;
+/* ha/socket.js fires this on window just before it sends the page to Home
+   Assistant's login (a session that died mid-use, or the chip's "Sign in").
+   An event rather than an import, because components/ may not import ha/ —
+   so keep the name in step with socket.js. */
+const LOGIN_REDIRECT_EVENT = "glasshouse:login-redirect";
 
-/* Read-and-clear the tab the auto-reload died on, so it only ever steers the
-   very next mount. App calls this while computing its initial tab. */
+/* Read-and-clear the tab a reload or a login round trip left from, so it only
+   ever steers the very next mount. App calls this while computing its
+   initial tab. */
 export function takePendingTab() {
   try {
     const t = sessionStorage.getItem(RELOAD_TAB_KEY);
@@ -58,10 +65,25 @@ export class ErrorBoundary extends Component {
     super(props);
     this.state = { error: null };
     this.reload = this.reload.bind(this);
+    this.onLoginRedirect = this.onLoginRedirect.bind(this);
   }
 
   static getDerivedStateFromError(error) {
     return { error };
+  }
+
+  componentDidMount() {
+    window.addEventListener(LOGIN_REDIRECT_EVENT, this.onLoginRedirect);
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener(LOGIN_REDIRECT_EVENT, this.onLoginRedirect);
+  }
+
+  onLoginRedirect() {
+    try {
+      this.stashTab();
+    } catch {} // storage blocked: the round trip lands on Overview, as before
   }
 
   componentDidCatch(error, info) {
@@ -90,7 +112,8 @@ export class ErrorBoundary extends Component {
   }
 
   /* The active tab lives only in App's state and the URL has already had
-     ?tab= stripped, so nothing survives a reload without this. */
+     ?tab= stripped, so nothing survives a reload or a login round trip
+     without this. */
   stashTab() {
     if (this.props.tab) sessionStorage.setItem(RELOAD_TAB_KEY, this.props.tab);
   }

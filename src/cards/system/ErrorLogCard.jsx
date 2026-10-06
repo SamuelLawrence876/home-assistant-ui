@@ -15,6 +15,7 @@ import {
   MAX_ENTRIES,
 } from "../../lib/errorLog.js";
 import { Card } from "../../components/Card.jsx";
+import { useArmedConfirm } from "./useArmedConfirm.js";
 
 /* A deliberate 30-second tick, not a clock read during render.
    LESSONS.md pattern 1: "now" is either pinned or ticked, never incidental. */
@@ -111,7 +112,10 @@ export function ErrorLogCard({ index = 0 }) {
   const entries = useSyncExternalStore(subscribe, getEntries, getEntries);
   const now = useTick();
   const [copied, setCopied] = useState(null); // null | "ok" | "failed"
-  const [confirmClear, setConfirmClear] = useState(false);
+  // Same guard as Restart HA: a double-click on "Clear" used to arm and wipe
+  // the log in one gesture, and an armed "Confirm clear" never expired.
+  const { armed, request: requestClear, disarm: cancelClear } = useArmedConfirm();
+  const confirmClear = armed === "clear";
 
   // Reset the transient copy notice whenever the log changes underneath us.
   useEffect(() => setCopied(null), [entries]);
@@ -129,12 +133,7 @@ export function ErrorLogCard({ index = 0 }) {
   }
 
   function doClear() {
-    if (!confirmClear) {
-      setConfirmClear(true);
-      return;
-    }
-    setConfirmClear(false);
-    clearErrors();
+    if (requestClear("clear")) clearErrors();
   }
 
   const count = entries.length;
@@ -179,7 +178,7 @@ export function ErrorLogCard({ index = 0 }) {
           {confirmClear ? "Confirm clear" : "Clear"}
         </button>
         {confirmClear && (
-          <button className="btn" onClick={() => setConfirmClear(false)}>
+          <button className="btn" onClick={cancelClear}>
             Cancel
           </button>
         )}

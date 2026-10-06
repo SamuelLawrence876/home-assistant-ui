@@ -5,7 +5,7 @@
    reaches the screen. The rule these tests hold to is that an unknown value
    renders as an em-dash — never a calculation, never a plausible-looking zero. */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { fmtTime, formatRelativeIso, formatMiB } from "../../src/lib/format.js";
+import { fmtTime, formatRelativeIso, formatMiB, numOr, pmBand } from "../../src/lib/format.js";
 
 describe("fmtTime", () => {
   it("writes a fractional hour as a wall clock", () => {
@@ -108,12 +108,47 @@ describe("formatMiB", () => {
     expect(formatMiB("12 MB")).toBe("—");
   });
 
-  it.skip("BUG: treats a null size as unknown rather than as zero bytes", () => {
-    // Number(null) is 0 and Number("") is 0, so both currently render "0 MiB" —
+  it("treats a null size as unknown rather than as zero bytes (roadmap I16)", () => {
+    // Number(null) is 0 and Number("") is 0, so both used to render "0 MiB" —
     // a confident, wrong number where the honest answer is "we do not know".
-    // Not reachable today (BackupCard gates on the entity first), but it is one
-    // careless caller away. Expected: em-dash.
     expect(formatMiB(null)).toBe("—");
     expect(formatMiB("")).toBe("—");
+    expect(formatMiB("   ")).toBe("—");
+  });
+
+  it("still reads a real zero as zero", () => {
+    expect(formatMiB("0")).toBe("0 MiB");
+  });
+});
+
+describe("numOr", () => {
+  it("reads numbers and numeric strings", () => {
+    expect(numOr(5, null)).toBe(5);
+    expect(numOr("21.3", null)).toBe(21.3);
+    expect(numOr("0", null)).toBe(0);
+    expect(numOr(0, 7)).toBe(0);
+  });
+
+  it("falls back for every way a sensor says nothing", () => {
+    for (const v of [null, undefined, "", "  ", "unavailable", "unknown", "NaN", NaN, Infinity, "12 MB", true, false]) {
+      expect(numOr(v, null)).toBeNull();
+    }
+    expect(numOr("unavailable", 20)).toBe(20);
+  });
+});
+
+describe("pmBand", () => {
+  it("bands PM2.5 at the WHO / EPA-ish edges", () => {
+    expect(pmBand(0)).toBe("excellent");
+    expect(pmBand(12)).toBe("excellent");
+    expect(pmBand(13)).toBe("good");
+    expect(pmBand(35)).toBe("good");
+    expect(pmBand(55)).toBe("moderate");
+    expect(pmBand(56)).toBe("poor");
+  });
+
+  it("has no band for an unknown reading", () => {
+    expect(pmBand(null)).toBeNull();
+    expect(pmBand(NaN)).toBeNull();
   });
 });

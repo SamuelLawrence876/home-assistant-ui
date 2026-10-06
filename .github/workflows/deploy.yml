@@ -2,7 +2,7 @@ name: Deploy
 
 # Builds the Glasshouse UI and ships it to the prod S3 bucket fronted by
 # CloudFront. Bucket + distribution are provisioned by the backend CDK stack
-# in the sibling repo — values are supplied here as repo variables.
+# in the sibling repo.
 #
 # Auth: GitHub OIDC → assume the same IAM role the backend uses. Role's
 # trust policy must allow this repo's OIDC subject (refs/heads/main).
@@ -23,6 +23,10 @@ name: Deploy
 # the artifact: `gh workflow run ci.yml -f bless=true`, download, commit. A
 # baseline re-blessed on a dev machine will silently disarm this step, which is
 # what the grep below is watching for. See scripts/README.md.
+#
+# The runner is pinned to ubuntu-24.04 for the same reason — the screenshots'
+# fonts come from the image, and ubuntu-latest moves to 26.04 from 2026-10-19.
+# Move it together with every job in ci.yml, then re-bless on the new runner.
 #
 # Required repo configuration:
 #   Secrets:
@@ -45,6 +49,26 @@ env:
   AWS_REGION: us-east-1
   # Must match config.stackName in the backend repo's infrastructure/lib/config.ts.
   STACK_NAME: home-assistant
+  # Every file in dist/ that keeps a stable name (no content hash), as a path
+  # relative to dist/. These go up with a short cache and are invalidated on
+  # every deploy; the rest of dist/ is content-hashed and goes up immutable.
+  # One list, so the syncs, the upload and the invalidation can't disagree —
+  # and "Check root files" fails the deploy if dist/ grows a stable-named file
+  # that isn't on it, at the root or in any folder but assets/.
+  #
+  # The upload goes in this order, and the last two are the point:
+  # index.html after everything it names, and sw.js after index.html, because
+  # the service worker's precache names index.html (and the manifest and the
+  # icons). A client that fetched the new sw.js while the old index.html was
+  # still being served would precache the old shell under the new revision,
+  # and once the prune step deleted the old chunks it pointed at, that client
+  # would get a blank page until the tab was closed. The order shrinks that
+  # window to CloudFront's edge cache of index.html (MinTTL, about a second);
+  # it doesn't close it outright. Closing it means holding sw.js back until
+  # the invalidation has completed — a follow-up, not done here.
+  ROOT_FILES: >-
+    icon.svg apple-touch-icon.png icon-192.png icon-512.png
+    manifest.webmanifest index.html sw.js
 
 concurrency:
   group: deploy-prod
@@ -53,7 +77,7 @@ concurrency:
 jobs:
   deploy-prod:
     name: Deploy — production
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: screenshot fonts come from the image; moving it means re-blessing (see header)
     environment: production
     timeout-minutes: 30
 
@@ -88,9 +112,8 @@ jobs:
       # console error, then screenshots 7 tabs x 2 viewports and diffs them
       # against visual-baseline/.
       #
-      # Re-bless the baseline when a change is meant to move pixels:
-      #     node scripts/visual-check.mjs --bless     # then commit visual-baseline/
-      # For the Linux images this job compares against:
+      # Re-bless the baseline when a change is meant to move pixels — on a
+      # runner, never from a local --bless (that disarms this gate):
       #     gh workflow run ci.yml -f bless=true
       #     gh run download <run-id> -n visual-baseline -D visual-baseline
       # Full explanation in scripts/README.md.
@@ -120,6 +143,27 @@ jobs:
           VITE_SPOTIFY_CLIENT_ID: ${{ vars.VITE_SPOTIFY_CLIENT_ID }}
         run: npm run build
 
+      # A stable-named file missing from ROOT_FILES would be uploaded as
+      # immutable for a year (an app icon nobody can ever replace); one listed
+      # but not built would fail half-way through the upload. Catch both here,
+      # before the first AWS call. Every file outside dist/assets/ is checked,
+      # in subfolders and dotfiles too: the immutable sync takes all of them,
+      # so a future public/fonts/ would otherwise slip past a root-only glob.
+      # workbox-<hash>.js (root only, where the PWA plugin writes it) is
+      # hashed, so it's exempt.
+      - name: Check root files
+        run: |
+          for f in $ROOT_FILES; do
+            [ -f "dist/$f" ] || { echo "::error::ROOT_FILES names $f but dist/$f was not built"; exit 1; }
+          done
+          while IFS= read -r path; do
+            name=${path#dist/}
+            case " $ROOT_FILES " in *" $name "*) continue ;; esac
+            case "$name" in */*) ;; workbox-*.js) continue ;; esac
+            echo "::error::dist/$name has a stable name but is not in ROOT_FILES — it would ship immutable. Add it to ROOT_FILES and give it a cache rule."
+            exit 1
+          done < <(find dist -type f ! -path 'dist/assets/*')
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -147,12 +191,24 @@ jobs:
             echo "distribution-id=$dist"
           } >> "$GITHUB_OUTPUT"
 
-      # dist/assets/* and workbox-<hash>.js carry a content hash in the filename,
-      # so only those are safe to mark immutable. index.html, icon.svg,
-      # manifest.webmanifest and sw.js keep stable names and are copied
-      # separately below — marking those immutable would freeze the app icon and
-      # PWA manifest in every browser that had already fetched them, for a year,
-      # with no way to bust it.
+      # Order is the point of the next four steps. A visitor mid-deploy must
+      # never get an index.html that names chunks S3 no longer has:
+      #
+      #   1. new hashed assets go up BESIDE the old ones (no --delete)
+      #   2. the stable-named root files go up — the new index.html is live
+      #   3. invalidate, so no edge keeps serving the old index.html
+      #   4. only once that has finished, prune the old hashed assets
+      #
+      # This used to be one `sync --delete` before index.html was uploaded. In
+      # between, the old index.html pointed at deleted chunks; the distribution
+      # maps 403/404 to /index.html, so the browser got HTML for a module script
+      # and a blank page — and kept getting it if a later step failed.
+      #
+      # Cache policy: dist/assets/* and workbox-<hash>.js carry a content hash
+      # in the filename, so only those are safe to mark immutable. ROOT_FILES
+      # keep stable names — marking those immutable would freeze the app icons
+      # and PWA manifest in every browser that had already fetched them, for a
+      # year, with no way to bust it.
       #
       # sw.js is the one that matters most and is the least obvious: it is the
       # service worker whose whole job is noticing that a new build exists. The
@@ -160,34 +216,58 @@ jobs:
       # 24 hours, so an immutable sw.js does not break updates forever — it just
       # delays every "Update ready" prompt by up to a day, silently. Ship it
       # no-cache so a deploy is offered within the poll interval instead.
-      - name: Sync hashed assets (long cache)
+      - name: Upload hashed assets (long cache)
+        env:
+          BUCKET: ${{ steps.stack.outputs.bucket }}
         run: |
-          aws s3 sync dist/ "s3://${{ steps.stack.outputs.bucket }}/" \
-            --delete \
-            --exclude index.html \
-            --exclude icon.svg \
-            --exclude manifest.webmanifest \
-            --exclude sw.js \
+          excludes=(); for f in $ROOT_FILES; do excludes+=(--exclude "$f"); done
+          aws s3 sync dist/ "s3://$BUCKET/" "${excludes[@]}" \
             --cache-control "public, max-age=31536000, immutable"
 
-      - name: Upload unhashed root files (short cache)
+      - name: Upload stable-named root files (short cache)
+        env:
+          BUCKET: ${{ steps.stack.outputs.bucket }}
         run: |
-          aws s3 cp dist/index.html "s3://${{ steps.stack.outputs.bucket }}/index.html" \
-            --cache-control "no-cache, no-store, must-revalidate" \
-            --content-type "text/html; charset=utf-8"
-          aws s3 cp dist/icon.svg "s3://${{ steps.stack.outputs.bucket }}/icon.svg" \
-            --cache-control "public, max-age=300, must-revalidate" \
-            --content-type "image/svg+xml"
-          aws s3 cp dist/manifest.webmanifest "s3://${{ steps.stack.outputs.bucket }}/manifest.webmanifest" \
-            --cache-control "public, max-age=300, must-revalidate" \
-            --content-type "application/manifest+json"
-          aws s3 cp dist/sw.js "s3://${{ steps.stack.outputs.bucket }}/sw.js" \
-            --cache-control "no-cache, no-store, must-revalidate" \
-            --content-type "text/javascript; charset=utf-8"
+          for f in $ROOT_FILES; do
+            case "$f" in
+              index.html)    cc="no-cache, no-store, must-revalidate"; ct="text/html; charset=utf-8" ;;
+              sw.js)         cc="no-cache, no-store, must-revalidate"; ct="text/javascript; charset=utf-8" ;;
+              *.webmanifest) cc="public, max-age=300, must-revalidate"; ct="application/manifest+json" ;;
+              *.svg)         cc="public, max-age=300, must-revalidate"; ct="image/svg+xml" ;;
+              *.png)         cc="public, max-age=300, must-revalidate"; ct="image/png" ;;
+              *) echo "::error::no cache rule for $f — add one here"; exit 1 ;;
+            esac
+            aws s3 cp "dist/$f" "s3://$BUCKET/$f" --cache-control "$cc" --content-type "$ct"
+          done
 
-      # Every unhashed path gets invalidated; /assets/* never needs it.
+      # Every stable-named path gets invalidated; /assets/* never needs it.
       - name: Invalidate CloudFront
+        id: invalidate
+        env:
+          DIST_ID: ${{ steps.stack.outputs.distribution-id }}
         run: |
-          aws cloudfront create-invalidation \
-            --distribution-id "${{ steps.stack.outputs.distribution-id }}" \
-            --paths "/" "/index.html" "/icon.svg" "/manifest.webmanifest" "/sw.js"
+          paths=("/"); for f in $ROOT_FILES; do paths+=("/$f"); done
+          id=$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" \
+            --paths "${paths[@]}" --query 'Invalidation.Id' --output text)
+          echo "Invalidation $id: ${paths[*]}"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      # Old chunks go only after every edge has dropped the old index.html. If
+      # the wait fails (timeout, or the role can't cloudfront:GetInvalidation),
+      # the new site is already live and whole — the old assets just linger
+      # until a later deploy prunes them. That is a warning, not a red deploy.
+      # --size-only: everything left in dist/ went up in step 1, so this run
+      # should upload nothing; the cache header is there in case it ever does.
+      - name: Prune old hashed assets
+        env:
+          BUCKET: ${{ steps.stack.outputs.bucket }}
+          DIST_ID: ${{ steps.stack.outputs.distribution-id }}
+          INVALIDATION_ID: ${{ steps.invalidate.outputs.id }}
+        run: |
+          if ! aws cloudfront wait invalidation-completed --distribution-id "$DIST_ID" --id "$INVALIDATION_ID"; then
+            echo "::warning::Invalidation $INVALIDATION_ID did not finish; old hashed assets were left in place for a later deploy to prune."
+            exit 0
+          fi
+          excludes=(); for f in $ROOT_FILES; do excludes+=(--exclude "$f"); done
+          aws s3 sync dist/ "s3://$BUCKET/" --delete --size-only "${excludes[@]}" \
+            --cache-control "public, max-age=31536000, immutable"

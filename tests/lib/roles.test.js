@@ -32,6 +32,15 @@ describe("deriveRole", () => {
     expect(role).not.toBe(ROLES.GUEST);
   });
 
+  it("falls closed to guest for a user id that names an Object.prototype key", () => {
+    // USER_ROLE_MAP is a plain object, so a bare lookup answers for inherited
+    // keys: "constructor" came back as the Object function, "__proto__" as
+    // Object.prototype — non-nullish, so the `?? guest` default never fired.
+    for (const id of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      expect(deriveRole({ id, is_admin: false, is_owner: false }, true)).toBe(ROLES.GUEST);
+    }
+  });
+
   it("treats an undefined user the same as a missing one — still pending, not guest", () => {
     expect(deriveRole(undefined, true)).toBe(ROLE_PENDING);
   });
@@ -66,18 +75,18 @@ describe("allowedTabs", () => {
     expect(allowedTabs(null)).toEqual(["overview"]);
   });
 
-  it.skip("BUG: does not answer for inherited object keys", () => {
-    // `TAB_ACCESS[role] ?? TAB_ACCESS[GUEST]` reads through the prototype
-    // chain, so allowedTabs("constructor") hands back the Object constructor
-    // and canSeeTab then throws "allowedTabs(...).includes is not a function".
-    // Same shape as the ?lean=constructor bug already fixed in theme.js, which
-    // uses Object.prototype.hasOwnProperty.call for exactly this reason.
-    // Not reachable today — every value comes from deriveRole — but it is one
-    // hostile entry in USER_ROLE_MAP away, and the fail-closed guarantee this
-    // function exists to provide should not depend on that.
-    // Expected: the guest tab list, like any other unrecognised role.
+  it("does not answer for inherited object keys (roadmap I16)", () => {
+    // `TAB_ACCESS[role] ?? TAB_ACCESS[GUEST]` used to read through the
+    // prototype chain, so allowedTabs("constructor") handed back the Object
+    // constructor and canSeeTab then threw "allowedTabs(...).includes is not a
+    // function". Same shape as the ?lean=constructor bug fixed in theme.js.
+    // Not reachable today — every value comes from deriveRole — but the
+    // fail-closed guarantee this function exists to provide should not depend
+    // on that. Expected: the guest tab list, like any other unrecognised role.
     expect(allowedTabs("constructor")).toEqual(["overview"]);
     expect(allowedTabs("toString")).toEqual(["overview"]);
+    expect(allowedTabs("__proto__")).toEqual(["overview"]);
+    expect(canSeeTab("constructor", "system")).toBe(false);
   });
 });
 

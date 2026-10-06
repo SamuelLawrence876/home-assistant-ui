@@ -16,33 +16,56 @@ import { Card } from "../../components/Card.jsx";
    dead source. The System tab's Game stream card is still the
    fine-grained control (session without power-cut, smooth mode).
 
-   Firing the session while the PC is still booting is fine by design:
-   the kiosk waits for a stream source, and the System card reports
-   "PC is off" until there is one. A session-call failure does not
-   revert the toggle — the toggle's *state* is the plug, and client.js
-   has already put the failure in the error log.
+   On is plug first, session second: the session call goes out only
+   once the plug call has succeeded. Fired together, a failed plug call
+   left a session running — TV awake, kiosk waiting on a PC with no
+   power — behind a switch that read off and whose next tap only tried
+   to power on again (LESSONS.md pattern 2). Starting the session while
+   the PC is still booting is fine by design: the kiosk waits for a
+   stream source, and the System card reports "PC is off" until there
+   is one. A session-call failure does not revert the toggle — the
+   toggle's *state* is the plug, and client.js has already put the
+   failure in the error log.
 
    The toggle's state comes from the plug entity; "Streaming"/"Game on"
    labels come from the real session telemetry added 2026-08-06. When
    the plug entity is missing or unavailable the strip says so and the
    switch is disabled — a dead plug and a plug that is genuinely off
    must not look identical.
+
+   switch.sambox reads "unavailable" (not a fake "off") whenever the
+   SamBox Pi can't be reached, and HA silently skips a service call to
+   an unavailable entity — so the session half of a tap would go
+   nowhere, with no error to log. In that state the switch is
+   power-only: it sends no session call, and its name and sub-line say
+   so rather than promising a game it can't start.
    ----------------------------------------------------------------*/
 const PLUG_ENTITY = "switch.sambox360_plug"; // mains power to the gaming PC
 const SESSION_SWITCH = "switch.sambox"; // TV-side kiosk: wake TV, stream the PC
 const HEALTH_ENTITY = "sensor.sambox_dropped_frames"; // streaming state lives in its attributes
 const DEVICE_NAME = "SamBox360";
 const BOOT_MS = 2200; // cold-boot transient while the plug restores + the Pi wakes
+/* A tap inside this window of the previous tap — any tap, ignored ones
+   included, so a triple-tap can't walk through it — is ignored. The switch
+   flips under the finger, so a double-tap on a running PC used to send off,
+   then on: mains cut and restored — a hard power-cycle. And for a few seconds
+   after cutting power, "on" is refused outright: two taps a second apart are
+   still a power-cycle. */
+const TAP_GUARD_MS = 800;
+const OFF_HOLD_MS = 5000;
 
 export function SamBoxStrip({ compact = false }) {
   const { entity: plug, status: plugStatus } = useEntityStatus(PLUG_ENTITY);
-  const { entity: session } = useEntityStatus(SESSION_SWITCH);
+  const { entity: session, status: sessionStatus } = useEntityStatus(SESSION_SWITCH);
   const { entity: health } = useEntityStatus(HEALTH_ENTITY);
 
   // "known" = HA has told us the plug's real state. Anything else (still
   // connecting, entity missing, entity unavailable) is not an "off".
   const known = plugStatus === "ready";
   const plugOn = known && plug.state === "on";
+  // The session switch is down, so a tap can only drive the plug (see header).
+  const sessionDown = sessionStatus === "unavailable" || sessionStatus === "not_found";
+  const powerOnly = known && sessionDown;
 
   const [on, setOnLocal] = useState(plugOn);
   const [turning, setTurning] = useState(false);
@@ -70,26 +93,39 @@ export function SamBoxStrip({ compact = false }) {
   // time — the resync effect above only fires on a *changed* state string.
   const plugOnRef = useRef(plugOn);
   plugOnRef.current = plugOn;
+  // Bumped by every tap, so a session start waiting on the plug call can tell
+  // the user has tapped off since — and doesn't wake the TV after "off".
+  const tapSeq = useRef(0);
+  const lastTapAt = useRef(0);
+  const lastOffAt = useRef(0);
 
   function powerOn() {
+    const seq = ++tapSeq.current;
+    const withSession = !sessionDown;
     setOnLocal(true);
     setTurning(true);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setTurning(false), BOOT_MS);
-    callService("switch", "turn_on", { entity_id: PLUG_ENTITY }).catch(() => {
-      clearTimeout(timer.current);
-      setTurning(false);
-      setOnLocal(plugOnRef.current); // revert to last-known state on failure
-    });
-    // Empty catch: the error log already has it, and the toggle's state is
-    // the plug, so a failed session start must not revert it.
-    callService("switch", "turn_on", { entity_id: SESSION_SWITCH }).catch(() => {});
+    callService("switch", "turn_on", { entity_id: PLUG_ENTITY }).then(
+      () => {
+        if (!withSession || seq !== tapSeq.current) return;
+        // Empty catch: the error log already has it, and the toggle's state
+        // is the plug, so a failed session start must not revert it.
+        callService("switch", "turn_on", { entity_id: SESSION_SWITCH }).catch(() => {});
+      },
+      () => {
+        clearTimeout(timer.current);
+        setTurning(false);
+        setOnLocal(plugOnRef.current); // revert to last-known state on failure
+      },
+    );
   }
   function powerOff() {
+    tapSeq.current += 1;
     clearTimeout(timer.current);
     setTurning(false);
     setOnLocal(false);
-    callService("switch", "turn_off", { entity_id: SESSION_SWITCH }).catch(() => {});
+    if (!sessionDown) callService("switch", "turn_off", { entity_id: SESSION_SWITCH }).catch(() => {});
     callService("switch", "turn_off", { entity_id: PLUG_ENTITY }).catch(() => setOnLocal(plugOnRef.current));
   }
 
@@ -137,10 +173,24 @@ export function SamBoxStrip({ compact = false }) {
             <div className="sambox-name">{DEVICE_NAME}</div>
             {/* The visible line names the plug — the entity whose state the
                 toggle shows. The session half rides in the tooltip and the
-                switch's accessible name. */}
-            <div className="sambox-out" title={`One tap drives both ${PLUG_ENTITY} (PC power) and ${SESSION_SWITCH} (game session)`}>
-              {PLUG_ENTITY}
-            </div>
+                switch's accessible name — unless the session can't be
+                reached, which is the one thing a tap here needs to know —
+                so that line wraps instead of ellipsising: on a phone the
+                ellipsis cut off exactly the fact, and a tooltip is out of
+                reach of a finger. */}
+            {powerOnly ? (
+              <div
+                className="sambox-out"
+                style={{ whiteSpace: "normal" }}
+                title={`${SESSION_SWITCH} is unavailable, so a tap only drives ${PLUG_ENTITY} (PC power)`}
+              >
+                Power only · session unavailable
+              </div>
+            ) : (
+              <div className="sambox-out" title={`One tap drives both ${PLUG_ENTITY} (PC power) and ${SESSION_SWITCH} (game session)`}>
+                {PLUG_ENTITY}
+              </div>
+            )}
           </div>
         </div>
 
@@ -158,13 +208,36 @@ export function SamBoxStrip({ compact = false }) {
                reported, aria-checked has to say false — which a screen reader
                announces as "off", the exact conflation this card was rewritten
                to remove. Put the real state in the accessible name instead. */
-            aria-label={known ? "SamBox360 power and game session" : `SamBox360 power and game session — ${pending ? "not reported yet" : "unavailable"}`}
+            aria-label={
+              !known
+                ? `SamBox360 power and game session — ${pending ? "not reported yet" : "unavailable"}`
+                : powerOnly
+                  ? "SamBox360 power — game session unavailable"
+                  : "SamBox360 power and game session"
+            }
             data-on={displayOn}
             data-turning={turning}
             disabled={!known}
-            title={known ? undefined : `${PLUG_ENTITY} ${pending ? "has not reported yet" : "is unavailable"}`}
+            title={
+              !known
+                ? `${PLUG_ENTITY} ${pending ? "has not reported yet" : "is unavailable"}`
+                : powerOnly
+                  ? `${SESSION_SWITCH} is unavailable — this switch only powers the PC`
+                  : undefined
+            }
             style={known ? undefined : { opacity: 0.45, cursor: "not-allowed" }}
-            onClick={displayOn || turning ? powerOff : powerOn}
+            onClick={() => {
+              const now = Date.now();
+              const sinceLast = now - lastTapAt.current;
+              lastTapAt.current = now;
+              if (sinceLast < TAP_GUARD_MS) return;
+              if (displayOn || turning) {
+                lastOffAt.current = now;
+                powerOff();
+              } else if (now - lastOffAt.current >= OFF_HOLD_MS) {
+                powerOn();
+              }
+            }}
           >
             <span className="sambox-knob" />
           </button>

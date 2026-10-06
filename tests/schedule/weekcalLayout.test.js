@@ -161,6 +161,65 @@ describe("toGridEvents", () => {
   it("returns nothing for an empty calendar", () => {
     expect(toGridEvents([], WEEK_START)).toEqual([]);
   });
+
+  /* HA hands back every instance of a recurring series with the same uid and
+     a different recurrence_id. Keyed on uid alone, a week of standups counted
+     as one event and two same-day repeats shared a React key. */
+  describe("recurring events", () => {
+    const instance = (uid, summary, day, hour) => ({
+      uid,
+      recurrence_id: `2026080${3 + day}T${String(hour).padStart(2, "0")}0000`,
+      summary,
+      cal_entity_id: "calendar.work",
+      ...timed(local(2026, 7, 3 + day, hour, 0), local(2026, 7, 3 + day, hour, 30)),
+    });
+    const week = [
+      ...[0, 1, 2, 3, 4].map((d) => instance("standup", "Standup", d, 9)),
+      instance("meds", "Meds", 1, 8),
+      instance("meds", "Meds", 1, 20),
+    ];
+
+    it("counts each instance of a recurring series as its own event", () => {
+      const out = toGridEvents(week, WEEK_START);
+      expect(out).toHaveLength(7);
+      expect(new Set(out.map((e) => e.evId)).size).toBe(7);
+    });
+
+    it("gives two same-day instances different React keys", () => {
+      const ids = toGridEvents(week, WEEK_START).map((e) => e.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it("keeps an instance's id stable across refetches", () => {
+      const a = toGridEvents(week, WEEK_START).map((e) => e.id);
+      const b = toGridEvents(week.map((ev) => ({ ...ev })), WEEK_START).map((e) => e.id);
+      expect(b).toEqual(a);
+    });
+
+    it("tells instances apart by start time when a feed sends no recurrence_id", () => {
+      const bare = week.map(({ recurrence_id: _r, ...ev }) => ev);
+      const out = toGridEvents(bare, WEEK_START);
+      expect(new Set(out.map((e) => e.evId)).size).toBe(7);
+    });
+  });
+
+  it("does not merge one uid sitting on two calendars into one event", () => {
+    // The grid draws both, so the count has to say two.
+    const shared = { uid: "invite-1", summary: "Dinner", ...timed(local(2026, 7, 6, 19, 0), local(2026, 7, 6, 21, 0)) };
+    const out = toGridEvents(
+      [{ ...shared, cal_entity_id: "calendar.personal" }, { ...shared, cal_entity_id: "calendar.family" }],
+      WEEK_START,
+    );
+    expect(new Set(out.map((e) => e.evId)).size).toBe(2);
+    expect(new Set(out.map((e) => e.id)).size).toBe(2);
+  });
+
+  it("never hands two rows the same key, even when a feed repeats one verbatim", () => {
+    const ev = { summary: "Standup", cal_entity_id: "calendar.work", ...timed(local(2026, 7, 4, 9, 0), local(2026, 7, 4, 9, 30)) };
+    const ids = toGridEvents([ev, { ...ev }], WEEK_START).map((e) => e.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
 });
 
 describe("time labels", () => {

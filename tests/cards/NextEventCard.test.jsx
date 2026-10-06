@@ -162,9 +162,9 @@ describe("NextEventCard content", () => {
     expect(screen.getByText("Nothing scheduled this week")).toBeInTheDocument();
   });
 
-  it.skip("BUG: drops an event whose start time cannot be read, instead of printing Invalid Date", () => {
-    // `start < now` is false when `start` is an Invalid Date, so the event
-    // survives the filter and its label renders as the literal string
+  it("drops an event whose start time cannot be read, instead of printing Invalid Date (roadmap I16)", () => {
+    // `start < now` is false when `start` is an Invalid Date, so the event used
+    // to survive the filter and its label rendered as the literal string
     // "Invalid Date" on the Overview tab (LESSONS.md pattern 4).
     // Expected: the event is skipped, exactly like one with no start at all.
     calendarResult.current = {
@@ -176,5 +176,104 @@ describe("NextEventCard content", () => {
     render(<NextEventCard />);
     expect(screen.queryByText(/Invalid Date/)).not.toBeInTheDocument();
     expect(screen.getByText("Nothing scheduled this week")).toBeInTheDocument();
+  });
+});
+
+/* All-day events come from HA as a bare { date: "YYYY-MM-DD" }. Parsed with
+   `new Date(str)` that is UTC midnight — 01:00 in BST — so today's all-day
+   event vanished an hour into the day and the card said the week was empty.
+   Every time here is built with local constructors, so the tests mean the same
+   thing on a BST laptop and a UTC runner. */
+describe("NextEventCard all-day events and the count", () => {
+  const day = (start, end) => ({ start: { date: start }, end: { date: end } });
+  const withEvents = (events) => {
+    calendarResult.current = { events, loading: false, error: null, refresh: () => {} };
+  };
+
+  beforeEach(() => {
+    vi.setSystemTime(new Date(2026, 9, 6, 10, 0)); // Tue 6 Oct 2026, 10:00 local
+  });
+
+  it("keeps today's all-day event on screen all day, labelled Today", () => {
+    withEvents([{ uid: "a", summary: "Bin day", cal_entity_id: "calendar.personal", ...day("2026-10-06", "2026-10-07") }]);
+    render(<NextEventCard />);
+    expect(screen.getByText("Bin day")).toBeInTheDocument();
+    expect(screen.getByText("Today")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing scheduled this week")).not.toBeInTheDocument();
+  });
+
+  it("still shows it at 23:30 — the last half hour of the day it covers", () => {
+    vi.setSystemTime(new Date(2026, 9, 6, 23, 30));
+    withEvents([{ uid: "a", summary: "Bin day", cal_entity_id: "calendar.personal", ...day("2026-10-06", "2026-10-07") }]);
+    render(<NextEventCard />);
+    expect(screen.getByText("Bin day")).toBeInTheDocument();
+  });
+
+  it("keeps a multi-day event that began yesterday, and labels it Today rather than its start date", () => {
+    withEvents([{ uid: "a", summary: "Half term", cal_entity_id: "calendar.personal", ...day("2026-10-05", "2026-10-10") }]);
+    render(<NextEventCard />);
+    expect(screen.getByText("Half term")).toBeInTheDocument();
+    expect(screen.getByText("Today")).toBeInTheDocument();
+  });
+
+  it("drops an all-day event that finished yesterday (HA's end date is exclusive)", () => {
+    withEvents([{ uid: "a", summary: "Over", cal_entity_id: "calendar.personal", ...day("2026-10-05", "2026-10-06") }]);
+    render(<NextEventCard />);
+    expect(screen.queryByText("Over")).not.toBeInTheDocument();
+    expect(screen.getByText("Nothing scheduled this week")).toBeInTheDocument();
+  });
+
+  it("treats a missing end date as a single day", () => {
+    withEvents([{ uid: "a", summary: "Bin day", cal_entity_id: "calendar.personal", start: { date: "2026-10-06" } }]);
+    render(<NextEventCard />);
+    expect(screen.getByText("Bin day")).toBeInTheDocument();
+  });
+
+  it("drops an all-day event whose date cannot be read, rather than guessing one", () => {
+    withEvents([
+      { uid: "a", summary: "Rolled over", cal_entity_id: "calendar.personal", ...day("2026-02-31", "2026-03-01") },
+      { uid: "b", summary: "Garbage", cal_entity_id: "calendar.personal", ...day("soon", "later") },
+    ]);
+    render(<NextEventCard />);
+    expect(screen.queryByText("Rolled over")).not.toBeInTheDocument();
+    expect(screen.queryByText("Garbage")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Invalid Date/)).not.toBeInTheDocument();
+  });
+
+  it("lists an all-day event later in the week by its own date, not as Today", () => {
+    withEvents([{ uid: "a", summary: "Dentist", cal_entity_id: "calendar.personal", ...day("2026-10-09", "2026-10-10") }]);
+    render(<NextEventCard />);
+    expect(screen.getByText("Dentist")).toBeInTheDocument();
+    expect(screen.queryByText("Today")).not.toBeInTheDocument();
+  });
+
+  it("puts today's all-day event ahead of a timed event later today", () => {
+    withEvents([
+      { uid: "t", summary: "Standup", cal_entity_id: "calendar.personal", start: { dateTime: new Date(2026, 9, 6, 15, 0).toISOString() } },
+      { uid: "a", summary: "Bin day", cal_entity_id: "calendar.personal", ...day("2026-10-06", "2026-10-07") },
+    ]);
+    render(<NextEventCard />);
+    const rows = screen.getAllByText(/^(Standup|Bin day)$/).map((el) => el.textContent);
+    expect(rows).toEqual(["Bin day", "Standup"]);
+  });
+
+  it("counts the whole week in the meta line, not just the three rows that fit", () => {
+    withEvents(
+      Array.from({ length: 10 }, (_, i) => ({
+        uid: `e${i}`,
+        summary: `Event ${i}`,
+        cal_entity_id: "calendar.personal",
+        start: { dateTime: new Date(2026, 9, 7, 9 + i, 0).toISOString() },
+      })),
+    );
+    render(<NextEventCard />);
+    expect(screen.getByText("10 events")).toBeInTheDocument();
+    expect(screen.getAllByText(/^Event \d$/)).toHaveLength(3);
+  });
+
+  it("says '1 event', not '1 events'", () => {
+    withEvents([{ uid: "a", summary: "Bin day", cal_entity_id: "calendar.personal", ...day("2026-10-06", "2026-10-07") }]);
+    render(<NextEventCard />);
+    expect(screen.getByText("1 event")).toBeInTheDocument();
   });
 });

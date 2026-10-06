@@ -110,12 +110,22 @@ export function haEventToGridPositions(ev, weekStartLocal) {
 
 /* HA's calendar payload → grid-positioned events the renderer expects.
    A multi-day event yields one entry per day, all sharing an `evId` so the
-   header count still reads as events rather than day-slices. */
+   header count still reads as events rather than day-slices.
+
+   `uid` alone is not an event: every instance of a recurring series shares
+   it (local, Google and CalDAV calendars all do this) and only
+   `recurrence_id` tells them apart. Keyed on uid alone, a week of standups
+   counted as one event and two same-day repeats shared a React key. The
+   calendar is part of the id because one invite can sit on two calendars,
+   and the grid draws it twice. */
 export function toGridEvents(haEvents, weekStart) {
   const out = [];
+  const seen = new Map(); // evId → times used, so a duplicate row can't share a key
   for (const ev of haEvents) {
-    const evId =
-      ev.uid || `${ev.cal_entity_id}-${ev.summary}-${ev.start?.dateTime || ev.start?.date}`;
+    const base = `${ev.cal_entity_id}|${ev.uid || ev.summary}|${ev.recurrence_id || ev.start?.dateTime || ev.start?.date}`;
+    const n = seen.get(base) || 0;
+    seen.set(base, n + 1);
+    const evId = n ? `${base}#${n}` : base;
     for (const pos of haEventToGridPositions(ev, weekStart)) {
       out.push({
         id: `${evId}-d${pos.day}`,

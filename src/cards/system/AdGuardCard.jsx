@@ -7,6 +7,12 @@ import { useOptimisticToggle } from "../../hooks/useOptimistic.js";
 const numOr = (v, d) => (v != null && v !== "unavailable" && v !== "unknown" && !Number.isNaN(+v) ? +v : d);
 const count = (n) => (n != null ? n.toLocaleString() : "—");
 
+/* A switch HA can't reach. HA skips an unavailable target and still reports
+   success, so a live toggle here used to flip to "Protected" over an AdGuard
+   that was down. Loading is left alone: it is what mock mode and the
+   screenshot harness render. */
+const isDown = (status) => status === "unavailable" || status === "not_found";
+
 /* ----------------------------------------------------------------
    AdGuard — full card (with ring + filtering toggle)
    ----------------------------------------------------------------*/
@@ -14,8 +20,10 @@ export function AdGuardCard({ index = 0 }) {
   const { entity: liveRatio, status: adgStatus } = useEntityStatus("sensor.adguard_home_dns_queries_blocked_ratio");
   const liveTotal = useEntity("sensor.adguard_home_dns_queries");
   const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
-  const { on: prot, toggle: toggleProt } = useOptimisticToggle("switch.adguard_home_protection");
-  const { on: filt, toggle: toggleFilt } = useOptimisticToggle("switch.adguard_home_filtering");
+  const { on: prot, status: protStatus, toggle: toggleProt } = useOptimisticToggle("switch.adguard_home_protection");
+  const { on: filt, status: filtStatus, toggle: toggleFilt } = useOptimisticToggle("switch.adguard_home_filtering");
+  const protDown = isDown(protStatus);
+  const filtDown = isDown(filtStatus);
   const ratio = numOr(liveRatio?.state, null);
   const total = numOr(liveTotal?.state, null);
   const blocked = numOr(liveBlocked?.state, null);
@@ -28,8 +36,10 @@ export function AdGuardCard({ index = 0 }) {
       index={index}
       eyebrow="Network · AdGuard Home"
       title="Filtering"
-      meta={prot ? "Protected" : "Disabled"}
-      headRight={<ToggleSwitch on={prot} onToggle={toggleProt} label="AdGuard protection" />}
+      meta={protDown ? "Unavailable" : prot ? "Protected" : "Disabled"}
+      headRight={
+        <ToggleSwitch on={prot && !protDown} onToggle={toggleProt} disabled={protDown} label="AdGuard protection" />
+      }
     >
       <EntityGuard status={adgStatus} entityId="sensor.adguard_home_dns_queries_blocked_ratio">
       <div className="adg-body">
@@ -69,10 +79,10 @@ export function AdGuardCard({ index = 0 }) {
             <div>
               <div className="k">Filtering</div>
               <div className="v good" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {filt ? "Active" : "Off"}
+                {filtDown ? "—" : filt ? "Active" : "Off"}
                 {/* Was scale(0.85) — dropped, a 36x20 switch is under the
                     24x24 minimum target size and the row has room for both. */}
-                <ToggleSwitch on={filt} onToggle={toggleFilt} label="AdGuard filtering" />
+                <ToggleSwitch on={filt && !filtDown} onToggle={toggleFilt} disabled={filtDown} label="AdGuard filtering" />
               </div>
             </div>
           </div>
@@ -107,13 +117,15 @@ export function AdGuardSimpleCard({ index = 0 }) {
   const { entity: liveTotal, status: adgStatus } = useEntityStatus("sensor.adguard_home_dns_queries");
   const liveBlocked = useEntity("sensor.adguard_home_dns_queries_blocked");
   const liveRatio = useEntity("sensor.adguard_home_dns_queries_blocked_ratio");
-  const { on: prot, toggle: toggleProt } = useOptimisticToggle("switch.adguard_home_protection");
+  const { on: prot, status: protStatus, toggle: toggleProt } = useOptimisticToggle("switch.adguard_home_protection");
+  const protDown = isDown(protStatus);
+  const live = prot && !protDown;
   const total = numOr(liveTotal?.state, null);
   const blocked = numOr(liveBlocked?.state, null);
   const ratio = numOr(liveRatio?.state, null);
 
   return (
-    <Card index={index} eyebrow="Network · AdGuard" title="AdGuard" meta={prot ? "Live" : "Off"}>
+    <Card index={index} eyebrow="Network · AdGuard" title="AdGuard" meta={protDown ? "Unavailable" : live ? "Live" : "Off"}>
       <EntityGuard status={adgStatus} entityId="sensor.adguard_home_dns_queries">
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -122,14 +134,14 @@ export function AdGuardSimpleCard({ index = 0 }) {
               width: 12,
               height: 12,
               borderRadius: "50%",
-              background: prot ? "var(--good)" : "var(--ink-4)",
-              boxShadow: prot ? "0 0 0 4px rgba(50, 160, 100, 0.18)" : "none",
+              background: live ? "var(--good)" : "var(--ink-4)",
+              boxShadow: live ? "0 0 0 4px rgba(50, 160, 100, 0.18)" : "none",
               transition: "background 0.3s, box-shadow 0.3s",
             }}
           />
           <div>
             <div style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 500, letterSpacing: "-0.01em" }}>
-              {prot ? "Protected" : "Disabled"}
+              {protDown ? "Unavailable" : live ? "Protected" : "Disabled"}
             </div>
             <div
               style={{
@@ -145,7 +157,7 @@ export function AdGuardSimpleCard({ index = 0 }) {
             </div>
           </div>
         </div>
-        <ToggleSwitch on={prot} onToggle={toggleProt} label="AdGuard protection" />
+        <ToggleSwitch on={live} onToggle={toggleProt} disabled={protDown} label="AdGuard protection" />
       </div>
       </EntityGuard>
     </Card>

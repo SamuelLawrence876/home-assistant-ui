@@ -1,5 +1,5 @@
 import { useState, useEffect, useSyncExternalStore } from "react";
-import { isSpotifyConnected, clearSpotifyToken, callbackReady, playUri } from "../../ha/spotify.js";
+import { isSpotifyConnected, clearSpotifyToken, onSpotifyTokenCleared, callbackReady, playUri } from "../../ha/spotify.js";
 
 /* ----------------------------------------------------------------
    Spotify auth — one module-level store, not per-component state.
@@ -7,12 +7,13 @@ import { isSpotifyConnected, clearSpotifyToken, callbackReady, playUri } from ".
    The token lives in localStorage and ha/spotify.js drops it from several
    places (Disconnect, a failed refresh, a 401 mid-session). A useState copy
    per card means only the card that noticed re-gates; Search / Playlists /
-   Queue / Recent carry on rendering against a token that is already gone.
-   Every consumer subscribes here instead, and the snapshot is re-read from
-   the token itself rather than mirrored, so it can't drift from the truth.
+   Queue carry on rendering against a token that is already gone. Every
+   consumer subscribes here instead, and the snapshot is re-read from the
+   token itself rather than mirrored, so it can't drift from the truth.
 
-   This properly belongs beside the token in ha/spotify.js; it sits here
-   because cards/ owns this file.
+   The trigger is spotify.js itself: clearSpotifyToken() notifies, so a token
+   dropped inside *any* call re-gates every card — not just calls that
+   remembered to re-check afterwards (only play() ever did).
    ----------------------------------------------------------------*/
 const authListeners = new Set();
 let authSnapshot = isSpotifyConnected();
@@ -38,6 +39,8 @@ export function setSpotifyConnected(next) {
 
 // Another tab connecting or disconnecting writes the same key.
 window.addEventListener("storage", syncSpotifyAuth);
+// This tab dropping it, from wherever.
+onSpotifyTokenCleared(syncSpotifyAuth);
 
 export function useSpotifyConnect() {
   const connected = useSyncExternalStore(subscribeSpotifyAuth, () => authSnapshot);
@@ -101,9 +104,8 @@ export function useSpotifyPlay() {
     setError(null);
     try { await playUri(uri); }
     catch (e) {
-      // A 401 or a failed refresh inside spotify.js has already binned the
-      // token — re-read it so every card re-gates, not just this one.
-      syncSpotifyAuth();
+      // No re-gating needed here: if spotify.js binned the token, its
+      // clearSpotifyToken() has already told every card.
       if (e.message?.includes("expired")) setError("Session expired");
       else setError("Open Spotify on a device first");
     }

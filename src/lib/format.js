@@ -28,9 +28,29 @@ export function formatRelativeIso(iso) {
   return `${day} · ${time}`;
 }
 
+/* A sensor state as a number, or `fallback` when it isn't one. HA states are
+   strings, and "unavailable", "unknown" and "" all have to land on the
+   fallback. Number() alone gets two cases wrong: Number("") and Number(null)
+   are both 0, which is how a sensor with nothing to say renders as a confident
+   zero. Pass `null` as the fallback and render an em-dash for it. */
+export function numOr(v, fallback) {
+  if (v == null || typeof v === "boolean") return fallback;
+  if (typeof v === "string" && v.trim() === "") return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/* WHO / EPA-ish PM2.5 bands (µg/m³), so a readout can't call 90 "excellent".
+   null in, null out: the caller decides how to say "unknown". */
+export function pmBand(v) {
+  if (v == null || !Number.isFinite(v)) return null;
+  return v <= 12 ? "excellent" : v <= 35 ? "good" : v <= 55 ? "moderate" : "poor";
+}
+
+// null and "" are "no reading", not zero bytes (roadmap I16).
 export function formatMiB(mib) {
-  const n = Number(mib);
-  if (!Number.isFinite(n)) return "—";
+  const n = numOr(mib, null);
+  if (n == null) return "—";
   if (n >= 1024) return `${(n / 1024).toFixed(2)} GiB`;
   return `${n.toFixed(0)} MiB`;
 }

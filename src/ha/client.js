@@ -7,6 +7,7 @@
    tokens automatically — callers always get a fresh one. */
 
 import { getEntity, getFreshAccessToken, getHaUrl, sendWsMessage, waitForConnection } from "./socket.js";
+import { describeHaError } from "./errors.js";
 import { logError } from "../lib/errorLog.js";
 
 /* Is the app pointed at a real HA instance? (mock-mode builds set VITE_HA_URL="") */
@@ -51,14 +52,17 @@ export const callService = async (domain, service, data = {}, target = undefined
     });
   } catch (e) {
     /* Only the entity id goes in, not the whole service_data payload —
-       service data is arbitrary and a caller could put anything in it. */
+       service data is arbitrary and a caller could put anything in it.
+       describeHaError, not `e.message || String(e)`: with the socket down
+       that read "3", or "[object Object]" (ha/errors.js). */
+    const message = describeHaError(e);
     logError({
       source: "service",
       message: `${domain}.${service} failed`,
-      detail: [data?.entity_id, e?.message || String(e)].filter(Boolean).join(" · "),
+      detail: [data?.entity_id, message].filter(Boolean).join(" · "),
       stack: e?.stack || null,
     });
-    errorListeners.forEach((cb) => cb({ domain, service, data, error: e }));
+    errorListeners.forEach((cb) => cb({ domain, service, data, error: e, message }));
     throw e;
   }
 };
@@ -94,6 +98,12 @@ export async function getForecast(entityId, type = "daily") {
   return res?.response?.[entityId]?.forecast || [];
 }
 
+/* Rejects unless Home Assistant really answered for this list. HA skips an
+   unavailable entity instead of failing the call, so a list that is
+   unavailable or gone comes back missing from the response — and that used to
+   read as `[]`. "Empty" is a claim nobody checked: the Kanban showed a dead
+   list as a 0 column and offered it as a move target. Missing is a failed
+   read. */
 export async function getTodoItems(entityId, status) {
   const data = { entity_id: entityId };
   if (status) data.status = status;
@@ -104,7 +114,9 @@ export async function getTodoItems(entityId, status) {
     service_data: data,
     return_response: true,
   });
-  return res?.response?.[entityId]?.items || [];
+  const items = res?.response?.[entityId]?.items;
+  if (!Array.isArray(items)) throw new Error(`todo.get_items: no answer for ${entityId}`);
+  return items;
 }
 
 export async function browseMedia(entityId, mediaContentType, mediaContentId) {

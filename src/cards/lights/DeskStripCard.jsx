@@ -1,26 +1,25 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useEntity } from "../../ha/useEntity.js";
+import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
+import { EntityGuard } from "../../components/EntityGuard.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
+import { useRangeCommit } from "../../hooks/useRangeCommit.js";
 import { rgbStr, kelvinToRgb } from "../../cards/lights/colorUtils.js";
 import { PresetSwatches } from "./presets.jsx";
+import { parseGoveeProps } from "./goveeUtils.js";
 
 /* ----------------------------------------------------------------
    Desk strip — Govee H6159 (cloud API via rest_command)
    State synced from sensor.desk_strip_state (REST polling).
+
+   Until that sensor has reported (still connecting, sensor missing, the
+   Govee poll failed) the card has no strip state to show — and a
+   confident "Off" beside a live switch is the dead-plug-looks-off
+   conflation SamBoxStrip was rewritten to remove. So: em-dash or
+   "Unavailable", every control disabled, nothing sent.
    ----------------------------------------------------------------*/
-function parseGoveeProps(attrs) {
-  const props = attrs?.properties;
-  if (!Array.isArray(props)) return {};
-  const out = {};
-  for (const p of props) {
-    if (p.powerState !== undefined) out.power = p.powerState;
-    if (p.brightness !== undefined) out.brightness = p.brightness;
-    if (p.color !== undefined) out.color = [p.color.r, p.color.g, p.color.b];
-  }
-  return out;
-}
+const ENTITY = "sensor.desk_strip_state";
 
 const GOVEE_GAP = 2000;
 // After sending a command, ask HA to re-poll the Govee cloud so the card can
@@ -34,13 +33,6 @@ const RESYNC_FREEZE = 8000;
 // supersede each other; brightness and power are independent.
 const CMD_KIND = { color: "color", color_temp: "color", brightness: "brightness", turn: "turn" };
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-// The only keys that move a range input's value. Commit on keyup so a held
-// arrow key sends one command, but filter on the key — keyup fires for every
-// key, and focus moves on keydown, so an unfiltered handler treats the Tab
-// that lands on the slider as an edit and fires a real command at the strip.
-const VALUE_KEYS = new Set([
-  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown",
-]);
 
 const GOVEE_PRESETS = [
   { id: "warm", label: "Warm 2200K", rgb: [255, 170, 110], kelvin: 2200 },
@@ -56,13 +48,16 @@ const GOVEE_PRESETS = [
 ];
 
 export function DeskStripCard({ index = 0 }) {
-  const live = useEntity("sensor.desk_strip_state");
+  const { entity: live, status } = useEntityStatus(ENTITY);
+  const known = status === "ready";
   const hw = useMemo(() => parseGoveeProps(live?.attributes), [live?.attributes?.properties]);
 
   const [on, setOn] = useState(false);
-  const [bright, setB] = useState(100);
+  // null = the strip hasn't reported it and nobody has set it here, so the
+  // readout is an em-dash rather than a made-up 100% / 2700K.
+  const [bright, setB] = useState(null);
   const [rgb, setRgb] = useState([255, 198, 130]);
-  const [kelvin, setKelvin] = useState(2700);
+  const [kelvin, setKelvin] = useState(null);
   const userActedAt = useRef(0);
   const lastCmdTime = useRef(0);
   const cmdQueue = useRef(Promise.resolve());
@@ -76,13 +71,25 @@ export function DeskStripCard({ index = 0 }) {
   // rate-limited, so an earlier command's verify timer can come due while a
   // later one is still waiting out the gap or in flight.
   const inFlight = useRef(0);
+  // Bumped when the verify refresh comes back. Without it the effect below
+  // re-runs only when a reported value *changes*, so a refresh that returned
+  // what the strip already had (the command didn't take) — or a poll that
+  // landed inside the freeze and was skipped — never corrected the optimistic
+  // value, and the card went on showing a brightness the strip wasn't at.
+  const [resyncTick, setResyncTick] = useState(0);
+  useEffect(() => () => clearTimeout(verifyTimer.current), []);
 
   useEffect(() => {
+    if (!known) return;
     if (Date.now() - userActedAt.current < RESYNC_FREEZE) return;
-    if (live) setOn(live.state === "on");
+    setOn(hw.power ? hw.power === "on" : live.state === "on");
     if (hw.brightness != null) setB(hw.brightness);
     if (hw.color) setRgb(hw.color);
-  }, [live?.state, hw.brightness, hw.color?.join(",")]);
+    if (hw.kelvin != null) {
+      setKelvin(hw.kelvin);
+      if (!hw.color) setRgb(kelvinToRgb(hw.kelvin));
+    }
+  }, [known, live?.state, hw.power, hw.brightness, hw.color?.join(","), hw.kelvin, resyncTick]);
 
   function scheduleVerify() {
     clearTimeout(verifyTimer.current);
@@ -95,7 +102,11 @@ export function DeskStripCard({ index = 0 }) {
       // lands inside it and gets thrown away — leaving the card stuck on the
       // optimistic value until the next slow poll.
       userActedAt.current = 0;
-      callService("homeassistant", "update_entity", { entity_id: "sensor.desk_strip_state" }).catch(() => {});
+      // Then re-apply whatever HA holds once the refresh is back, changed or
+      // not — "unchanged" is exactly the case where the card is wrong.
+      callService("homeassistant", "update_entity", { entity_id: ENTITY })
+        .catch(() => {})
+        .finally(() => setResyncTick((t) => t + 1));
     }, VERIFY_DELAY);
   }
 
@@ -126,18 +137,21 @@ export function DeskStripCard({ index = 0 }) {
   }
 
   function toggle() {
+    if (!known) return;
     const next = !on;
     setOn(next);
     govee("turn", { value: next ? "on" : "off" }).catch(() => setOn(!next));
   }
 
   function commitBrightness(v) {
+    if (!known) return;
     setB(v);
     if (!on) return;
     govee("brightness", { value: v }).catch(() => {});
   }
 
   function pickColor(p) {
+    if (!known) return;
     const wasOff = !on;
     if (wasOff) setOn(true);
     if (p.kelvin) {
@@ -153,13 +167,28 @@ export function DeskStripCard({ index = 0 }) {
   }
 
   function commitKelvin(v) {
+    if (!known) return;
     setKelvin(v);
     setRgb(kelvinToRgb(v));
     if (!on) return;
     govee("color_temp", { value: v }).catch(() => {});
   }
+  // Both sliders send through useRangeCommit: the native change event, which
+  // pointer release, a keyboard step and an assistive-tech adjust all fire.
+  const brightRef = useRangeCommit(commitBrightness);
+  const kelvinRef = useRangeCommit(commitKelvin);
 
-  const glow = on
+  // What the strip is doing, as far as anyone knows. Local `on` survives a
+  // dropout, but nothing on screen may claim it while the sensor is down.
+  const lit = known && on;
+  const pending = status === "loading";
+  const shownBright = known ? bright : null;
+  const shownKelvin = known ? kelvin : null;
+  const meta = !known
+    ? pending ? "—" : "Unavailable"
+    : on ? (bright != null ? `On · ${bright}%` : "On") : "Off";
+
+  const glow = lit
     ? `0 0 24px ${rgbStr(rgb)}33, 0 0 80px ${rgbStr(rgb)}1f`
     : "none";
 
@@ -168,9 +197,18 @@ export function DeskStripCard({ index = 0 }) {
       index={index}
       eyebrow="Light · Govee H6159"
       title="Desk strip"
-      meta={on ? `On · ${bright}%` : "Off"}
-      headRight={<ToggleSwitch on={on} onToggle={toggle} label="Desk strip" />}
+      meta={meta}
+      headRight={
+        <ToggleSwitch
+          on={lit}
+          onToggle={toggle}
+          disabled={!known}
+          // role="switch" has no "unknown", so the real state goes in the name.
+          label={known ? "Desk strip" : `Desk strip — ${pending ? "not reported yet" : "unavailable"}`}
+        />
+      }
     >
+      <EntityGuard status={status} entityId={ENTITY}>
       <div
         style={{
           display: "grid",
@@ -185,7 +223,7 @@ export function DeskStripCard({ index = 0 }) {
             width: 72,
             height: 72,
             borderRadius: "50%",
-            background: on
+            background: lit
               ? `radial-gradient(circle at 32% 32%, white 0%, ${rgbStr(rgb)} 55%, ${rgbStr([
                   Math.max(0, rgb[0] - 60),
                   Math.max(0, rgb[1] - 60),
@@ -201,22 +239,24 @@ export function DeskStripCard({ index = 0 }) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
             <span className="eyebrow" style={{ fontSize: 9 }}>Brightness</span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
-              {bright}%
+              {shownBright != null ? `${shownBright}%` : "—"}
             </span>
           </div>
           <input
+            ref={brightRef}
             type="range"
             min="0"
             max="100"
             step="1"
-            value={bright}
-            disabled={!on}
+            value={shownBright ?? 0}
+            disabled={!lit}
             onChange={(ev) => setB(Number(ev.target.value))}
-            onPointerUp={(ev) => commitBrightness(Number(ev.target.value))}
-            onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitBrightness(Number(ev.target.value)); }}
             aria-label="Desk strip brightness"
+            // A range input always holds some number; when the strip hasn't
+            // reported one, say so rather than announce the parked thumb.
+            aria-valuetext={shownBright != null ? `${shownBright}%` : "unknown"}
             className="gh-slider"
-            style={{ width: "100%", accentColor: on ? rgbStr(rgb) : "var(--ink-4)" }}
+            style={{ width: "100%", accentColor: lit ? rgbStr(rgb) : "var(--ink-4)" }}
           />
         </div>
       </div>
@@ -225,24 +265,24 @@ export function DeskStripCard({ index = 0 }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
           <span className="eyebrow" style={{ fontSize: 9 }}>Color temperature</span>
           <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-2)" }}>
-            {kelvin}K
+            {shownKelvin != null ? `${shownKelvin}K` : "—"}
           </span>
         </div>
         <input
+          ref={kelvinRef}
           type="range"
           min={2000}
           max={9000}
           step="100"
-          value={kelvin}
-          disabled={!on}
+          value={shownKelvin ?? 2000}
+          disabled={!lit}
           onChange={(ev) => { setKelvin(Number(ev.target.value)); setRgb(kelvinToRgb(Number(ev.target.value))); }}
-          onPointerUp={(ev) => commitKelvin(Number(ev.target.value))}
-          onKeyUp={(ev) => { if (VALUE_KEYS.has(ev.key)) commitKelvin(Number(ev.target.value)); }}
           aria-label="Desk strip color temperature"
+          aria-valuetext={shownKelvin != null ? `${shownKelvin}K` : "unknown"}
           className="gh-slider"
           style={{
             width: "100%",
-            background: on
+            background: lit
               ? `linear-gradient(to right, rgb(255,147,41), rgb(255,198,130), rgb(255,235,200), rgb(220,235,255))`
               : "var(--glass-bg-2)",
             borderRadius: 6,
@@ -253,9 +293,10 @@ export function DeskStripCard({ index = 0 }) {
       <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--rule)" }}>
         <div className="eyebrow" style={{ fontSize: 9, marginBottom: 8 }}>Color · curated</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <PresetSwatches presets={GOVEE_PRESETS} rgb={rgb} onPick={pickColor} targetName="Desk strip" />
+          <PresetSwatches presets={GOVEE_PRESETS} rgb={rgb} onPick={pickColor} targetName="Desk strip" disabled={!known} />
         </div>
       </div>
+      </EntityGuard>
     </Card>
   );
 }

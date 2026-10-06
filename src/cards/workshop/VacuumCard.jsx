@@ -135,9 +135,15 @@ export function VacuumCard({ index = 0 }) {
   const mainBrushLeft = toHours(mainBrushRaw);
   const sideBrushLeft = toHours(sideBrushRaw);
   const filterLeft = toHours(filterRaw);
-  const maxBrush = 300;
-  const brushPct = (v) => v == null ? 0 : Math.max(0, Math.min(100, (v / maxBrush) * 100));
-  const brushColor = (v) => brushPct(v) > 50 ? "var(--good)" : brushPct(v) > 20 ? "var(--warn)" : "var(--bad)";
+  // Each part has its own life (python-roborock's *_REPLACE_TIME, which the HA
+  // *_time_left sensors count down from), so each bar is a share of its own:
+  // on one 300h scale a brand-new 150h filter drew half-full and amber.
+  const brushPct = (v, max) => v == null ? 0 : Math.max(0, Math.min(100, (v / max) * 100));
+  const brushColor = (v, max) => {
+    if (v == null) return "var(--ink-4)";   // unread, not worn out
+    const p = brushPct(v, max);
+    return p > 50 ? "var(--good)" : p > 20 ? "var(--warn)" : "var(--bad)";
+  };
   const vacError = liveError?.state;
   const hasError = has(vacError) && vacError !== "none" && vacError !== "0";
   const mapImgSrc = liveMapImage ? imageUrl("image.roborock_s8_map_0", liveMapImage.last_updated) : null;
@@ -295,9 +301,11 @@ export function VacuumCard({ index = 0 }) {
         {mopIntensityOptions.length > 0 && (
           <div className="ws-control-row">
             <span className="k">Mop intensity</span>
-            <div className="seg">
+            {/* The "on" class is the only visual mark of the current option, so
+                aria-pressed says the same thing to a screen reader. */}
+            <div className="seg" role="group" aria-label="Mop intensity">
               {mopIntensityOptions.map((p) => (
-                <button key={p} className={currentMopIntensity === p ? "on" : ""} onClick={() => pickMopIntensity(p)} disabled={unavailable}>{p}</button>
+                <button key={p} className={currentMopIntensity === p ? "on" : ""} aria-pressed={currentMopIntensity === p} onClick={() => pickMopIntensity(p)} disabled={unavailable}>{p}</button>
               ))}
             </div>
           </div>
@@ -305,9 +313,9 @@ export function VacuumCard({ index = 0 }) {
         {mopModeOptions.length > 0 && (
           <div className="ws-control-row">
             <span className="k">Mop mode</span>
-            <div className="seg">
+            <div className="seg" role="group" aria-label="Mop mode">
               {mopModeOptions.map((p) => (
-                <button key={p} className={currentMopMode === p ? "on" : ""} onClick={() => pickMopMode(p)} disabled={unavailable}>{p}</button>
+                <button key={p} className={currentMopMode === p ? "on" : ""} aria-pressed={currentMopMode === p} onClick={() => pickMopMode(p)} disabled={unavailable}>{p}</button>
               ))}
             </div>
           </div>
@@ -316,9 +324,9 @@ export function VacuumCard({ index = 0 }) {
           {mapOptions.length > 0 && (
             <>
               <span className="k">Map</span>
-              <div className="seg compact">
+              <div className="seg compact" role="group" aria-label="Map">
                 {mapOptions.map((opt) => (
-                  <button key={opt} className={currentMap === opt ? "on" : ""} onClick={() => pickMap(opt)} disabled={unavailable}>{opt}</button>
+                  <button key={opt} className={currentMap === opt ? "on" : ""} aria-pressed={currentMap === opt} onClick={() => pickMap(opt)} disabled={unavailable}>{opt}</button>
                 ))}
               </div>
             </>
@@ -355,14 +363,14 @@ export function VacuumCard({ index = 0 }) {
       {/* Brushes / filter wear */}
       <div className="ws-wear">
         {[
-          { lbl: "Main brush", v: mainBrushLeft },
-          { lbl: "Side brush", v: sideBrushLeft },
-          { lbl: "Filter", v: filterLeft },
-        ].map(({ lbl, v }) => (
+          { lbl: "Main brush", v: mainBrushLeft, max: 300 },
+          { lbl: "Side brush", v: sideBrushLeft, max: 200 },
+          { lbl: "Filter", v: filterLeft, max: 150 },
+        ].map(({ lbl, v, max }) => (
           <div className="ws-wear-row" key={lbl}>
             <span className="lbl">{lbl}</span>
             <span className="bar">
-              <span style={{ "--p": `${brushPct(v)}%`, "--c": brushColor(v) }} />
+              <span style={{ "--p": `${brushPct(v, max)}%`, "--c": brushColor(v, max) }} />
             </span>
             <span className="val">
               {v ?? "—"}<i>h left</i>

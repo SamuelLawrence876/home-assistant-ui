@@ -1,28 +1,21 @@
 /* Minimal lint: catch undefined identifiers (the failure mode of file splits)
-   and stop files regrowing past 400 lines (REFACTOR_PLAN.md phase 5).
+   and stop files regrowing past 400 lines.
 
    Inline suppressions
    -------------------
-   `noInlineConfig` makes every `// eslint-disable*` comment in src/ and
-   scripts/ inert, and ESLint reports each one it finds. That is deliberate,
-   and it is not a way of hiding warnings — it is the opposite.
+   `// eslint-disable*` comments work, for the rules this config loads. They
+   used to be inert: `noInlineConfig` was set, on purpose, until the last of
+   the old ones was gone. The only directives this repo ever held named
+   `react-hooks/exhaustive-deps`, from `eslint-plugin-react-hooks`, which is
+   not a dependency and never has been — so they suppressed nothing while
+   reading like they did, and without the setting each was a hard error
+   ("Definition for rule ... was not found"). They have all been deleted, and
+   the setting went with them.
 
-   The only inline directives this repo has ever contained name
-   `react-hooks/exhaustive-deps`, a rule from `eslint-plugin-react-hooks`.
-   That plugin is not a dependency and never has been, so the rule has never
-   run: every one of those comments suppressed nothing while reading like it
-   did. Worse, without `noInlineConfig` a directive naming an unloaded rule is
-   a hard ESLint *error* ("Definition for rule ... was not found"), so the
-   setting is also what keeps `npm run lint` from failing outright on them.
-
-   The fix is to delete the comments, not to make them work: a dependency array
-   that deviates from the exhaustive set should say why in prose, next to the
-   deviation. Each remaining directive is reported as a warning naming its file
-   and line — that list is the to-do list.
-
-   When the last one is gone, delete `noInlineConfig` below so that genuine
-   suppressions of rules this config *does* load start working again. Do not
-   add the setting back to silence a warning. */
+   Before adding one: a dependency array that deviates from the exhaustive set
+   says why in prose, next to the deviation — that is the house pattern, not a
+   directive. A directive naming a rule this config doesn't load fails lint,
+   and one that suppresses nothing is reported as a warning. */
 import js from "@eslint/js";
 import globals from "globals";
 
@@ -36,7 +29,6 @@ export default [
       globals: { ...globals.browser, ...globals.node },
     },
     linterOptions: {
-      noInlineConfig: true,
       reportUnusedDisableDirectives: "warn",
     },
     rules: {

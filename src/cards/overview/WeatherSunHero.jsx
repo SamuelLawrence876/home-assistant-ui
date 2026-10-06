@@ -1,10 +1,9 @@
-import { nowFractionalHour } from "../../theme.js";
 import { fmtTime } from "../../lib/format.js";
 import { useEntityStatus, combineStatuses } from "../../ha/useEntity.js";
 import { useForecast } from "../../ha/useForecast.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
-import { WeatherIcon } from "../../components/WeatherIcon.jsx";
+import { WeatherIcon, weatherLabel } from "../../components/WeatherIcon.jsx";
 
 const WEATHER_ENTITY = "weather.forecast_home";
 const DASH = "—";
@@ -14,28 +13,42 @@ const DASH = "—";
 const num = (v, suffix = "") =>
   v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? DASH : `${v}${suffix}`;
 
-export function WeatherSunHero({ index = 0, sky, compact }) {
+/* Every HA condition (the labels live with the glyphs in WeatherIcon). */
+const CONDITION_DESCRIPTIONS = {
+  "clear-night": "Clear sky, no cloud cover. Dry.",
+  cloudy: "Overcast with full cloud cover. No precipitation.",
+  exceptional: "Unusual conditions reported.",
+  fog: "Fog — visibility is reduced.",
+  hail: "Hail.",
+  lightning: "Thunder and lightning.",
+  "lightning-rainy": "Thunderstorms with rain.",
+  partlycloudy: "Mixed sun and cloud. Light cover but mostly bright.",
+  pouring: "Heavy rain.",
+  rainy: "Wet — light to moderate rain.",
+  snowy: "Snowing.",
+  "snowy-rainy": "Sleet — rain and snow mixed.",
+  sunny: "Clear sky, full sun. Bright and dry.",
+  windy: "Breezy with notable wind.",
+  "windy-variant": "Windy, with cloud cover.",
+};
+
+/* "unavailable" / "unknown" are HA saying it doesn't know: an em-dash, next
+   to the EntityGuard badge. A condition newer than this file is HA's own
+   word, so it is shown as-is rather than hidden. */
+const conditionLabel = (state) =>
+  weatherLabel(state) ?? (!state || state === "unavailable" || state === "unknown" ? DASH : state);
+const conditionDescription = (state) =>
+  typeof state === "string" && Object.hasOwn(CONDITION_DESCRIPTIONS, state) ? CONDITION_DESCRIPTIONS[state] : "";
+
+/* `sun` is App's sunReadout(): { hour, phase, isUp }, phase 0 at sunrise and
+   1 at sunset, null when sun.sun gave no usable window. It is the real sun,
+   never the Tweaks Mode — the palette follows the mode, this card doesn't. */
+export function WeatherSunHero({ index = 0, sun, compact }) {
   const { entity: w, status: wStatus } = useEntityStatus(WEATHER_ENTITY);
   const t = w?.attributes?.temperature;
   // Live via the weather.get_forecasts service on a deliberate hourly schedule —
   // the legacy `attributes.forecast` HA used to publish is empty post-2024.
   const { forecast: f, status: fStatus } = useForecast(WEATHER_ENTITY, "daily");
-  const condLabels = {
-    sunny: "Sunny",
-    partlycloudy: "Partly cloudy",
-    cloudy: "Cloudy",
-    rainy: "Rain",
-    snowy: "Snow",
-    windy: "Windy",
-  };
-  const condDescription = {
-    sunny: "Clear sky, full sun. Bright and dry.",
-    partlycloudy: "Mixed sun and cloud. Light cover but mostly bright.",
-    cloudy: "Overcast with full cloud cover. No precipitation.",
-    rainy: "Wet — light to moderate rain.",
-    snowy: "Snowing.",
-    windy: "Breezy with notable wind.",
-  };
 
   const W = 360,
     H = compact ? 110 : 130;
@@ -44,12 +57,15 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
   const r = compact ? 90 : 110;
   const arcPath = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
 
-  const phase = sky.phase;
-  const phaseDay = Math.max(0, Math.min(1, phase));
+  const phase = sun?.phase;
+  const sunKnown = Number.isFinite(phase);
+  const phaseDay = sunKnown ? Math.max(0, Math.min(1, phase)) : 0;
   const angle = Math.PI * (1 - phaseDay);
   const sunX = cx + r * Math.cos(angle);
   const sunY = cy - r * Math.sin(angle);
-  const sunOnArc = phase >= 0 && phase <= 1;
+  const sunOnArc = sunKnown && sun.isUp === true;
+  const sunBelow = sunKnown && !sunOnArc;
+  const clock = fmtTime(sun?.hour);
 
   const { entity: liveRising, status: rStatus } = useEntityStatus("sensor.sun_next_rising");
   const { entity: liveSetting, status: sStatus } = useEntityStatus("sensor.sun_next_setting");
@@ -81,7 +97,7 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
       className="weather-hero"
       eyebrow={`Weather · ${WEATHER_ENTITY}`}
       title="Outside, right now"
-      meta={`${sky.isDay ? "Sun" : "Night"} · ${fmtTime(nowFractionalHour())}`}
+      meta={sunKnown ? `${sunOnArc ? "Sun" : "Night"} · ${clock}` : clock}
     >
       <EntityGuard status={status} entityId={WEATHER_ENTITY}>
       <div className="weather-body">
@@ -115,7 +131,7 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
                   marginTop: 6,
                 }}
               >
-                {condLabels[w.state] || w.state}
+                {conditionLabel(w.state)}
               </div>
             </div>
           </div>
@@ -129,7 +145,7 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
               maxWidth: 420,
             }}
           >
-            {condDescription[w.state] || ""}{" "}
+            {conditionDescription(w.state)}{" "}
             Feels like <b style={{ color: "var(--ink)" }}>{num(w.attributes.apparent_temperature, "°")}</b>,
             humidity <b style={{ color: "var(--ink)" }}>{num(w.attributes.humidity, "%")}</b>, wind{" "}
             <b style={{ color: "var(--ink)" }}>{num(w.attributes.wind_speed, " km/h")}</b>.
@@ -181,23 +197,35 @@ export function WeatherSunHero({ index = 0, sky, compact }) {
               {sunset}
             </text>
 
-            {sunOnArc ? (
+            {/* Neither a sun nor a moon when sun.sun gave us nothing usable. */}
+            {sunOnArc && (
               <>
                 <circle cx={sunX} cy={sunY} r={10} className="sun-dot" />
                 <circle cx={sunX} cy={sunY} r={4} fill="#fff8e0" />
               </>
-            ) : (
-              <>
-                <circle cx={cx} cy={20} r={10} className="moon-dot" />
-                <circle cx={cx + 3} cy={18} r={8} fill="var(--sky-top, #111)" />
-              </>
+            )}
+            {/* One crescent path: a disc of r=10 at (cx, 20) less a disc of
+                r=8 offset (+3, -2), meeting at the two points below. It used
+                to be a second circle painted in var(--sky-top), which under
+                Mode: day turned the moon into a pale blue dot. */}
+            {sunBelow && (
+              <path
+                d={`M ${cx + 1.58} 10.13 A 10 10 0 1 0 ${cx + 9.72} 22.34 A 8 8 0 1 1 ${cx + 1.58} 10.13 Z`}
+                className="moon-dot"
+              />
             )}
           </svg>
           <div className="sun-info">
             <span>
               Rise <b>{sunrise}</b>
             </span>
-            <span>{sunOnArc ? `${Math.round(phaseDay * 100)}% through daylight` : "Below horizon"}</span>
+            <span>
+              {sunOnArc
+                ? `${Math.round(phaseDay * 100)}% through daylight`
+                : sunBelow
+                  ? "Below horizon"
+                  : DASH}
+            </span>
             <span>
               Set <b>{sunset}</b>
             </span>

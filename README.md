@@ -90,7 +90,7 @@ design (the Spotify flow is PKCE, so there is no secret to leak).
 
 ## Running it locally
 
-Node 22 — that's what CI runs. There's no `engines` pin, so older versions may well work; they
+Node 24 — that's what CI runs. There's no `engines` pin, so older versions may well work; they
 just aren't tested.
 
 ```bash
@@ -208,9 +208,9 @@ tests/               vitest, jsdom, no network
 Full conventions, the rule each directory has to keep, and a per-file audit of what is live versus
 what is fixture data live in **`CLAUDE.md`** — the cold-start brief for anyone (or anything)
 opening this codebase. It sits in the working directory *above* this repo, alongside `LESSONS.md`
-and `ROADMAP.md`, and is not checked in: it describes a specific house and a specific pair of AWS
-accounts, so it is kept out of a repo that is meant to be readable by strangers. Read it first if
-you have it.
+and the rest of the planning notes, and is not checked in: it describes a specific house and a
+specific pair of AWS accounts, so it is kept out of a repo that is meant to be readable by
+strangers. Read it first if you have it.
 
 ---
 

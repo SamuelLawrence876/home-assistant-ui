@@ -26,19 +26,26 @@ const SLOTS_PER_HOUR = 2;
 
    The distinction the old mock fallback blurred: "we could not read this
    week" and "this week is empty" are different facts and get different
-   words. Neither one gets filled in with invented events. */
-function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount }) {
+   words. Neither one gets filled in with invented events.
+
+   `failedLabels` is set when only some calendars could be read. Then the
+   gap is one named calendar, not the whole week, and saying "may be out of
+   date" left a dead Work calendar reading as a quiet one. */
+function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount, failedLabels = [], calendarCount = 0 }) {
   const connecting =
     connStatus === "connecting" ||
     connStatus === "authenticating" ||
     (connStatus === "ready" && !dashReady);
   const offline = connStatus !== "ready";
+  const partial = error && failedLabels.length > 0 && failedLabels.length < calendarCount;
+  const failedList = failedLabels.join(", ");
 
   /* Real events already on screen — a dropped socket doesn't make them
      untrue, so keep them visible and put the caveat in the meta line
      rather than covering the week with a notice. */
   if (eventCount > 0) {
     if (offline) return { meta: `${eventCount} events · not connected`, notice: null };
+    if (partial) return { meta: `${eventCount} events · ${failedList} unavailable`, notice: null };
     if (error) return { meta: `${eventCount} events · may be out of date`, notice: null };
     return { meta: `${eventCount} events`, notice: null };
   }
@@ -75,10 +82,12 @@ function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount
   }
   if (error) {
     return {
-      meta: "unavailable",
+      meta: partial ? `${failedList} unavailable` : "unavailable",
       notice: {
         title: "Calendar unavailable",
-        detail: "Home Assistant didn't answer for this week, so we don't know what's on.",
+        detail: partial
+          ? `Couldn't read ${failedList}, so this week may not be as empty as it looks.`
+          : "Home Assistant didn't answer for this week, so we don't know what's on.",
       },
     };
   }
@@ -154,11 +163,14 @@ export function WeeklyCalendarCard({ index = 0 }) {
   }, [calendarEntities]);
 
   /* Fetch this week's events from HA's REST calendar API. */
-  const { events: liveEventsRaw, loading, error, refresh } = useCalendarEvents(
+  const { events: liveEventsRaw, loading, error, failedIds = [], refresh } = useCalendarEvents(
     liveMode ? calendarIds : [],
     weekStart.toISOString(),
     weekEnd.toISOString(),
   );
+  // Only calendars still on the board: one HA just removed can sit in
+  // failedIds until the next run lands, and naming it would be noise.
+  const failedLabels = failedIds.filter((id) => calendars[id]).map((id) => calendars[id].label);
 
   const events = useMemo(
     () => (liveMode ? toGridEvents(liveEventsRaw, weekStart) : []),
@@ -175,7 +187,16 @@ export function WeeklyCalendarCard({ index = 0 }) {
     [calendars],
   );
 
-  const { meta, notice } = weekState({ connStatus, dashReady, liveMode, loading, error, eventCount });
+  const { meta, notice } = weekState({
+    connStatus,
+    dashReady,
+    liveMode,
+    loading,
+    error,
+    eventCount,
+    failedLabels,
+    calendarCount: calendarIds.length,
+  });
   const legend = Object.entries(calendars);
 
   return (
@@ -222,12 +243,23 @@ export function WeeklyCalendarCard({ index = 0 }) {
 
       {legend.length > 0 && (
         <div className="cal-legend">
-          {legend.map(([id, c]) => (
-            <span key={id} className="item">
-              <span className="sw" style={{ "--cal-color": c.color }} />
-              {c.label}
-            </span>
-          ))}
+          {/* A calendar we couldn't read says so where its colour is
+              explained, so none of the grid reads as "nothing on" for it.
+              Text rather than a style: schedule.css is not ours here. */}
+          {legend.map(([id, c]) => {
+            const failed = error && failedIds.includes(id);
+            return (
+              <span
+                key={id}
+                className="item"
+                title={failed ? "Couldn't read this calendar just now. Any of its events shown are the last ones we saw." : undefined}
+              >
+                <span className="sw" style={{ "--cal-color": c.color }} />
+                {c.label}
+                {failed ? " · unavailable" : ""}
+              </span>
+            );
+          })}
         </div>
       )}
     </Card>

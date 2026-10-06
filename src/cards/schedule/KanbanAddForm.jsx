@@ -1,8 +1,14 @@
 import { useState, useEffect, useRef } from "react";
+import { normaliseTag, tagDropsCharacters } from "./kanbanUtils.js";
 
 /* The inline "+ Add" form on a Kanban column. Owns nothing but its own draft:
    it hands (summary, tags, dueDate) back to KanbanBoardCard, which is the only
-   thing that talks to Home Assistant. */
+   thing that talks to Home Assistant.
+
+   `onSubmit` returns a promise. On success the board closes this form; on a
+   rejection the form stays exactly as it was, with a line saying the add
+   didn't land — the draft is the user's work and a failed call doesn't get to
+   throw it away. */
 
 const KANBAN_PRESET_TAGS = [
   { id: "ha",           label: "HA" },
@@ -20,7 +26,10 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
   const [selectedTags, setSelectedTags] = useState([]);
   const [customTag, setCustomTag] = useState("");
   const [showTagMenu, setShowTagMenu] = useState(false);
+  /* Why the last custom tag isn't stored exactly as typed, or "". */
+  const [tagHint, setTagHint] = useState("");
   const [due, setDue] = useState("");
+  const [send, setSend] = useState("idle"); // "idle" | "busy" | "failed"
   const ref = useRef(null);
   const menuRef = useRef(null);
   const toggleRef = useRef(null);
@@ -49,19 +58,58 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
   function toggleTag(id) {
     setSelectedTags((cur) => cur.includes(id) ? cur.filter((t) => t !== id) : [...cur, id]);
   }
+  function toggleMenu() {
+    setTagHint("");
+    setShowTagMenu((open) => !open);
+  }
+  /* The box is a pointer shortcut to the toggle, the way the whole box was
+     one button before the chips got their own remove buttons — chips can
+     fill its first row and wrap the toggle into a small corner. The real
+     <button> is still the keyboard and screen-reader way in, and a click on
+     any button inside the box is left to that button. */
+  /* A div with onClick, deliberately (LESSONS.md pattern 8 is about controls):
+     this is only a bigger mouse/touch target for the real toggle <button>,
+     which stays the keyboard and screen-reader way in. A click on a button
+     inside it (a chip's ×, the toggle itself) is that button's, not the box's. */
+  function onBoxClick(ev) {
+    if (ev.target.closest("button")) return;
+    toggleMenu();
+    toggleRef.current?.focus();
+  }
+  /* A tag is stored only as letters, marks, digits, - and _ (normaliseTag),
+     so "C++" becomes "c" and an emoji becomes nothing. Either way it is
+     said: the input used to just clear, with no chip and no reason. A tag
+     that can't be made keeps its text so it can be fixed. */
   function addCustomTag(ev) {
     ev.preventDefault();
-    const t = customTag.replace(/^#/, "").replace(/\s+/g, "-").toLowerCase().trim();
-    if (t && !selectedTags.includes(t)) setSelectedTags((cur) => [...cur, t]);
+    if (!customTag.trim()) { setCustomTag(""); return; }
+    const t = normaliseTag(customTag);
+    if (!t) {
+      setTagHint(`Can’t make a tag from “${customTag.trim()}” — use letters, numbers, - or _.`);
+      return;
+    }
+    if (!selectedTags.includes(t)) setSelectedTags((cur) => [...cur, t]);
+    setTagHint(tagDropsCharacters(customTag) ? `Added as #${t} — tags keep only letters, numbers, - and _.` : "");
     setCustomTag("");
   }
-  function removeTag(id) { setSelectedTags((cur) => cur.filter((t) => t !== id)); }
+  /* The chip's × is about to unmount under the focus it holds; hand focus
+     to the tag toggle so the keyboard isn't dropped back at <body>. */
+  function removeTag(id) {
+    setSelectedTags((cur) => cur.filter((t) => t !== id));
+    toggleRef.current?.focus();
+  }
 
-  function handle(ev) {
+  async function handle(ev) {
     ev.preventDefault();
     const s = summary.trim();
-    if (!s) return;
-    onSubmit(s, selectedTags, due || null);
+    if (!s || send === "busy") return;
+    setSend("busy");
+    try {
+      await onSubmit(s, selectedTags, due || null);
+      setSend("idle");
+    } catch {
+      setSend("failed");
+    }
   }
 
   const tagLabel = (id) => KANBAN_PRESET_TAGS.find((p) => p.id === id)?.label || id;
@@ -71,34 +119,36 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
       <input ref={ref} className="kanban-input" placeholder="What needs doing?" aria-label="Task summary" value={summary} onChange={(ev) => setSummary(ev.target.value)} />
       <div className="kanban-add-row">
         <div className="kanban-tag-picker" ref={menuRef}>
-          {/* The chips inside this button are the only place the current
-              selection is shown, and aria-label overrides them — so the
-              label has to carry the selection itself, or a screen reader
-              is told "Choose tags" and never which ones are chosen. */}
-          <button
-            type="button"
-            ref={toggleRef}
-            className="kanban-tag-toggle"
-            onClick={() => setShowTagMenu(!showTagMenu)}
-            aria-label={
-              selectedTags.length
-                ? `Tags: ${selectedTags.map(tagLabel).join(", ")}. Choose tags`
-                : "Choose tags"
-            }
-            aria-haspopup="true"
-            aria-expanded={showTagMenu}
-          >
-            {selectedTags.length ? selectedTags.map((t) => (
-              /* The × is a mouse shortcut layered on the button, not a
-                 control of its own — it cannot be one, because a button
-                 inside a button is not valid HTML. Hidden from assistive
-                 tech so it is not announced as something to press; the
-                 keyboard route to the same result is to reopen the menu
-                 and unpick the tag. See notesForOwner: that route does not
-                 exist yet for a custom tag. */
-              <span key={t} className={`tag tag-${t}`}>{tagLabel(t)} <span className="tag-rm" aria-hidden="true" onClick={(ev) => { ev.stopPropagation(); removeTag(t); }}>&times;</span></span>
-            )) : <span className="placeholder">+ Tags</span>}
-          </button>
+          {/* A box holding the chosen chips, each with its own remove
+              button, and the menu toggle filling the rest. The chips used to
+              sit inside the toggle, which left their × as an aria-hidden
+              mouse-only <span> — a button inside a button isn't valid HTML —
+              so a custom tag couldn't be removed from the keyboard at all. */}
+          <div className="kanban-tag-toggle" onClick={onBoxClick}>
+            {selectedTags.map((t) => (
+              <span key={t} className={`tag tag-${t}`}>
+                {tagLabel(t)}
+                <button type="button" className="tag-rm" onClick={() => removeTag(t)} aria-label={`Remove tag ${tagLabel(t)}`}>&times;</button>
+              </span>
+            ))}
+            {/* The label carries the selection too, so the toggle alone
+                still says which tags are chosen. */}
+            <button
+              type="button"
+              ref={toggleRef}
+              className="kanban-tag-open"
+              onClick={toggleMenu}
+              aria-label={
+                selectedTags.length
+                  ? `Tags: ${selectedTags.map(tagLabel).join(", ")}. Choose tags`
+                  : "Choose tags"
+              }
+              aria-haspopup="true"
+              aria-expanded={showTagMenu}
+            >
+              <span className="placeholder">{selectedTags.length ? "+" : "+ Tags"}</span>
+            </button>
+          </div>
           {showTagMenu && (
             <div className="kanban-tag-menu">
               {KANBAN_PRESET_TAGS.map(({ id, label }) => (
@@ -117,17 +167,27 @@ export function KanbanAddForm({ onSubmit, onCancel }) {
                   placeholder="Custom tag…"
                   aria-label="Custom tag"
                   value={customTag}
-                  onChange={(ev) => setCustomTag(ev.target.value)}
+                  onChange={(ev) => { setCustomTag(ev.target.value); setTagHint(""); }}
                   onKeyDown={(ev) => { if (ev.key === "Enter") addCustomTag(ev); }}
                 />
+                {/* Always in the DOM so the live region exists before it
+                    has anything to say; zero height while empty. */}
+                <p className="kanban-tag-hint" role="status">{tagHint}</p>
               </div>
             </div>
           )}
         </div>
         <input className="kanban-input kanban-input-sm kanban-date" type="date" aria-label="Due date" value={due} onChange={(ev) => setDue(ev.target.value)} />
       </div>
+      {send === "failed" && (
+        <p className="kanban-add-error" role="alert">
+          Couldn&apos;t add this — Home Assistant didn&apos;t take it. It&apos;s still here; try again.
+        </p>
+      )}
       <div className="kanban-add-row">
-        <button type="submit" className="kanban-add-btn">Add</button>
+        <button type="submit" className="kanban-add-btn" disabled={send === "busy"}>
+          {send === "busy" ? "Adding…" : "Add"}
+        </button>
         <button type="button" className="kanban-add-btn cancel" onClick={onCancel}>Cancel</button>
       </div>
     </form>

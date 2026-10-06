@@ -5,7 +5,7 @@
    when range / entity list changes (or when refresh() is called manually).
 
    Usage:
-     const { events, loading, error, refresh } =
+     const { events, loading, error, failedIds, refresh } =
        useCalendarEvents(["calendar.icloud_personal"], startISO, endISO);
 
    Each event in the returned list is augmented with:
@@ -19,6 +19,10 @@
    `error` is non-null when we could not read the range — the last known events
    stay on screen behind it. Cards should say so: an empty `events` with an
    error set is "we don't know", not "nothing is scheduled".
+
+   `failedIds` names which calendars that was, so one dead calendar can be
+   called out by name. Its last known events are kept too: dropping them made
+   "Work couldn't be read" look exactly like "nothing on Work this week".
 */
 
 import { useEffect, useState, useRef, useCallback } from "react";
@@ -74,10 +78,20 @@ function sameEvents(a, b) {
   );
 }
 
+/* Identity-preserving for the same reason as sameEvents: a fresh [] per run
+   would re-render every caller even when nothing changed. */
+function sameIds(a, b) {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 export function useCalendarEvents(entityIds, startISO, endISO) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [failedIds, setFailedIds] = useState([]);
+  const setFailed = useCallback((next) => {
+    setFailedIds((prev) => (sameIds(prev, next) ? prev : next));
+  }, []);
   const reqIdRef = useRef(0);
   const doneRef = useRef(null);      // runKey of the last run that SUCCEEDED
   const inFlightRef = useRef(null);  // runKey being fetched right now
@@ -131,6 +145,7 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
       // which calls us again — a synchronous loop with no network to slow it.
       setEvents((prev) => (prev.length ? [] : prev));
       setError(null);
+      setFailed([]);
       setLoading(false);
       return;
     }
@@ -156,12 +171,19 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
       );
       if (id !== reqIdRef.current) return; // a newer call superseded us
       const failed = results.filter((r) => r.err);
-      // Whatever did come back is still worth showing. All of them failing is
-      // not an empty week, though — keep the last known events under the error.
+      const failedNow = entityIds.filter((_, i) => results[i].err);
+      // Whatever did come back is still worth showing. A calendar that failed
+      // is not an empty calendar, though — it keeps its last known events,
+      // exactly as the all-failed case keeps everything under the error.
       if (failed.length < results.length) {
-        const next = results.flatMap((r) => r.list || []);
-        setEvents((prev) => (sameEvents(prev, next) ? prev : next));
+        setEvents((prev) => {
+          const next = results.flatMap((r, i) =>
+            r.err ? prev.filter((ev) => ev.cal_entity_id === entityIds[i]) : r.list,
+          );
+          return sameEvents(prev, next) ? prev : next;
+        });
       }
+      setFailed(failedNow);
       if (failed.length) {
         fail(failed[0].err);
         return;
@@ -172,6 +194,7 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
       setError(null);
     } catch (e) {
       if (id !== reqIdRef.current) return;
+      setFailed([...entityIds]);
       fail(e);
     } finally {
       if (id === reqIdRef.current) setLoading(false);
@@ -180,7 +203,7 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
     // caller builds a fresh array literal every render, so depending on the
     // array itself would refetch on every render — the request-storm bug.
     // The ids are recovered from the key inside the body.
-  }, [runKey, fail]);
+  }, [runKey, fail, setFailed]);
 
   useEffect(() => {
     run();
@@ -196,5 +219,5 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
     return run(true);
   }, [run]);
 
-  return { events, loading, error, refresh };
+  return { events, loading, error, failedIds, refresh };
 }

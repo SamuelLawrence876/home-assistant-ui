@@ -17,6 +17,38 @@ export const DIFFUSER = {
    pulses, on → continuous. */
 export const SPRAY_OPTIONS = ["off", "eco", "on"];
 
+/* The modes the spray select itself offers — what HA will accept and what its
+   state is one of — when it carries a usable list. HA strips `options` from an
+   unavailable entity, so fall back to the modes these cards were built for. */
+export function sprayOptions(entity) {
+  const o = entity?.attributes?.options;
+  return Array.isArray(o) && o.length > 0 && o.every((x) => typeof x === "string" && x !== "")
+    ? o
+    : SPRAY_OPTIONS;
+}
+
+/* What a mist mode means, for a state knownState() has already vouched for:
+   "off", "spraying" (any other mode the select offers) or "unrecognised".
+   Three-way, never two — a mode the card doesn't know is most likely one
+   meross_lan added, so folding it into "off" would call a misting diffuser
+   off, and folding it into "spraying" would claim what nobody said. */
+export function sprayPhase(mode, options = SPRAY_OPTIONS) {
+  if (mode === "off") return "off";
+  return options.includes(mode) ? "spraying" : "unrecognised";
+}
+
+/* Can a card trust this entity's state? `status` is useEntityStatus's;
+   `state` is the state string of the live entity, or of the GH_DATA mock when
+   there is no live one yet. Before HA has answered ("loading") the mock stands
+   in, so its state is what gets judged. After that, unavailable, unknown and
+   missing all mean "we don't know", which the cards must not render as a mist
+   mode or an LED that is off. meross_lan marks every entity of an offline
+   device unavailable, so this is the common case, not an edge one. */
+export function knownState(status, state) {
+  if (status === "not_found") return false;
+  return state != null && state !== "unavailable" && state !== "unknown";
+}
+
 /* Fallback LED colour when the light is in an effect mode (rgb_color is null). */
 export const DEFAULT_RGB = [96, 170, 255];
 

@@ -15,6 +15,15 @@
   min-width: 2px;
   transition: flex-basis 0.5s ease;
 }
+/* No disk reading: a hatched track, so "unknown" can't be mistaken for a
+   bar that is all Free (which is the colour a plain empty track would read as). */
+.storage-bar.unknown {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--glass-stroke) 0 4px,
+    transparent 4px 9px
+  );
+}
 .storage-legend {
   display: grid;
   grid-template-columns: 1fr 1fr;

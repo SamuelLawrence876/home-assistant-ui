@@ -107,6 +107,25 @@ describe("SamBoxStreamCard rendering", () => {
     expect(screen.getByRole("status").textContent).toMatch(/PC is off/);
   });
 
+  it("reads honestly when switch.sambox is unavailable because the SamBox Pi can't be reached", () => {
+    // switch.sambox now reports "unavailable" when the box is unreachable
+    // (2026-10-06). The session switch must read off and be locked, and the
+    // card must say the box is offline rather than "idle" or "starting…".
+    fixtures.entities = {
+      "sensor.sambox_dropped_frames": healthEntity("offline"),
+      "binary_sensor.sam_pc": { entity: { state: "off", attributes: {} }, status: "ready" },
+    };
+    fixtures.toggles = {
+      "switch.sambox": { entity: { state: "unavailable" }, status: "unavailable", on: false, setOn: () => {}, toggle: () => {} },
+    };
+    render(<SamBoxStreamCard />);
+    const session = screen.getByRole("switch", { name: "Game session" });
+    expect(session.disabled).toBe(true);
+    expect(session.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText("SamBox offline")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull(); // no PC warning without a wanted session
+  });
+
   it("disables both toggles until their switches have reported", () => {
     fixtures.entities = {
       "sensor.sambox_dropped_frames": healthEntity("online"),
