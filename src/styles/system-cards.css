@@ -243,3 +243,15 @@
   transition: color 0.2s, border-color 0.2s;
 }
 .sys-action-cancel:hover { color: var(--ink); border-color: var(--ink-3); }
+/* "Restarting… the dashboard will reconnect." Rendered empty the rest of the
+   time (it is the card's live region), so no margin until it has text. */
+.sys-action-note {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  color: var(--ink-2);
+  text-align: center;
+}
+.sys-action-note:not(:empty) { margin-top: 10px; }

@@ -9,9 +9,31 @@ const callService = vi.fn();
 vi.mock("../../src/ha/client.js", () => ({
   callService: (...args) => callService(...args),
 }));
+// The connection status, driven by each test: the restart notice clears once
+// the dashboard has dropped and come back.
+const conn = vi.hoisted(() => ({ status: "ready", listeners: new Set() }));
+vi.mock("../../src/ha/useEntity.js", async () => {
+  const { useState, useEffect } = await import("react");
+  return {
+    useConnectionStatus: () => {
+      const [s, set] = useState(conn.status);
+      useEffect(() => {
+        conn.listeners.add(set);
+        return () => conn.listeners.delete(set);
+      }, []);
+      return s;
+    },
+  };
+});
 
 import { SystemActionsCard } from "../../src/cards/system/SystemActionsCard.jsx";
 import { ARM_LOCK_MS, ARM_EXPIRE_MS } from "../../src/cards/system/useArmedConfirm.js";
+import { NOTICE_CAP_MS } from "../../src/cards/system/useReconnectNotice.js";
+
+const setStatus = (s) => {
+  conn.status = s;
+  act(() => conn.listeners.forEach((set) => set(s)));
+};
 
 const tile = (name) => screen.getByText(name).closest("button");
 
@@ -19,6 +41,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   callService.mockReset();
   callService.mockResolvedValue(undefined);
+  conn.status = "ready";
 });
 afterEach(() => vi.useRealTimers());
 
@@ -60,7 +83,7 @@ describe("SystemActionsCard confirm", () => {
     fireEvent.click(tile("Reboot Pi"));
     act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
     fireEvent.click(tile("Confirm?"));
-    expect(callService).toHaveBeenCalledWith("hassio", "host_reboot");
+    expect(callService).toHaveBeenCalledWith("hassio", "host_reboot", {}, undefined, { expectDisconnect: true });
   });
 
   it("an armed confirm disarms itself, so a much later tap only re-arms", () => {
@@ -89,5 +112,65 @@ describe("SystemActionsCard confirm", () => {
     fireEvent.click(tile("Reload Scripts"));
     expect(callService).toHaveBeenCalledWith("script", "reload");
     expect(screen.queryByText("Confirm?")).toBeNull();
+  });
+});
+
+/* Restart HA and Reboot Pi end with Home Assistant dropping the WebSocket
+   before it answers. The call used to be logged and toasted as a failure;
+   now it expects the disconnect (client.js) and the card says what is
+   actually happening, until the dashboard is back. */
+describe("SystemActionsCard after a restart has gone out", () => {
+  const flush = () => act(async () => {});
+  const note = () => screen.getByRole("status");
+  async function confirm(name) {
+    fireEvent.click(tile(name));
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
+    fireEvent.click(tile("Confirm?"));
+    await flush();
+  }
+
+  it("Restart HA expects the disconnect and says it is restarting until HA is back", async () => {
+    render(<SystemActionsCard />);
+    expect(note().textContent).toBe("");
+    callService.mockResolvedValueOnce({ connectionLost: true });
+    await confirm("Restart HA");
+    expect(callService).toHaveBeenCalledWith("homeassistant", "restart", {}, undefined, { expectDisconnect: true });
+    expect(note().textContent).toBe("Restarting… the dashboard will reconnect.");
+
+    setStatus("disconnected");
+    act(() => vi.advanceTimersByTime(90_000));
+    expect(note().textContent).toBe("Restarting… the dashboard will reconnect.");
+    setStatus("ready");
+    expect(note().textContent).toBe("");
+  });
+
+  it("Reboot Pi says it is rebooting", async () => {
+    render(<SystemActionsCard />);
+    await confirm("Reboot Pi");
+    expect(note().textContent).toBe("Rebooting… the dashboard will reconnect.");
+  });
+
+  it("says nothing when the call failed (callService has already toasted it)", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    callService.mockRejectedValueOnce(new Error("Not connected"));
+    render(<SystemActionsCard />);
+    await confirm("Restart HA");
+    expect(note().textContent).toBe("");
+  });
+
+  it("does not leave 'Restarting…' up for good if the connection never drops", async () => {
+    render(<SystemActionsCard />);
+    await confirm("Restart HA");
+    expect(note().textContent).not.toBe("");
+    act(() => vi.advanceTimersByTime(NOTICE_CAP_MS));
+    expect(note().textContent).toBe("");
+  });
+
+  it("reloads are ordinary calls: no option, no notice", async () => {
+    render(<SystemActionsCard />);
+    fireEvent.click(tile("Reload Automations"));
+    await flush();
+    expect(callService.mock.calls).toEqual([["automation", "reload"]]);
+    expect(note().textContent).toBe("");
   });
 });

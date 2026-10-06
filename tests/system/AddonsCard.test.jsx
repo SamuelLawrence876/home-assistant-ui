@@ -8,10 +8,22 @@ import { render, screen, fireEvent, act, within } from "@testing-library/react";
 
 const fixtures = { updates: [] };
 const callService = vi.fn();
+const conn = vi.hoisted(() => ({ status: "ready", listeners: new Set() }));
 
-vi.mock("../../src/ha/useEntity.js", () => ({
-  useEntitiesByDomain: () => fixtures.updates,
-}));
+vi.mock("../../src/ha/useEntity.js", async () => {
+  const { useState, useEffect } = await import("react");
+  return {
+    useEntitiesByDomain: () => fixtures.updates,
+    useConnectionStatus: () => {
+      const [s, set] = useState(conn.status);
+      useEffect(() => {
+        conn.listeners.add(set);
+        return () => conn.listeners.delete(set);
+      }, []);
+      return s;
+    },
+  };
+});
 vi.mock("../../src/ha/client.js", () => ({
   callService: (...args) => callService(...args),
 }));
@@ -44,6 +56,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   callService.mockReset();
   callService.mockResolvedValue(undefined);
+  conn.status = "ready";
 });
 afterEach(() => vi.useRealTimers());
 
@@ -94,7 +107,9 @@ describe("AddonsCard", () => {
     act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
     fireEvent.click(installIn("Home Assistant Core"));
     await flush();
-    expect(callService).toHaveBeenCalledWith("update", "install", { entity_id: CORE.entity_id, backup: true });
+    expect(callService).toHaveBeenCalledWith("update", "install", { entity_id: CORE.entity_id, backup: true }, undefined, {
+      expectDisconnect: true,
+    });
   });
 
   it("an add-on row installs on one tap", async () => {
@@ -102,7 +117,8 @@ describe("AddonsCard", () => {
     render(<AddonsCard />);
     fireEvent.click(installIn("ESPHome"));
     await flush();
-    expect(callService).toHaveBeenCalledWith("update", "install", { entity_id: ESPHOME.entity_id });
+    // A routine install is an ordinary call: a dropped connection is a failure.
+    expect(callService.mock.calls).toEqual([["update", "install", { entity_id: ESPHOME.entity_id }]]);
   });
 
   it("installing another row disarms a pending Core confirm", async () => {
@@ -178,5 +194,121 @@ describe("AddonsCard", () => {
     const btn = installIn("Tailscale");
     expect(btn.disabled).toBe(true);
     expect(btn.textContent).toBe("…");
+  });
+});
+
+/* M13. An update entity says "on" or "off"; unavailable or unknown is a
+   component nobody could check. It used to fall through to "current", so with
+   the Supervisor down the card read "All up to date ✓ current". */
+describe("AddonsCard when update status can't be read", () => {
+  const off = (u) => ({ ...u, state: "off" });
+  const as = (u, state) => ({ ...u, state });
+  const head = (container) => container.querySelector("h2").textContent;
+
+  it("every entity unavailable or unknown: says it can't tell and names them", () => {
+    fixtures.updates = [as(CORE, "unavailable"), as(TAILSCALE, "unknown"), as(ESPHOME, "unavailable")];
+    const { container } = render(<AddonsCard />);
+    expect(head(container)).toBe("3 can't be checked");
+    expect(container.textContent).not.toMatch(/up to date|current|latest version/i);
+    expect(screen.getByText("Can't be checked: Home Assistant Core, Tailscale, ESPHome")).toBeTruthy();
+    // No install control for a component whose state nobody knows.
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("one unavailable among current ones is named, not folded into 'current'", () => {
+    fixtures.updates = [as(CORE, "unavailable"), off(TAILSCALE), off(ESPHOME)];
+    const { container } = render(<AddonsCard />);
+    expect(head(container)).toBe("1 can't be checked");
+    expect(screen.getByText("Can't be checked: Home Assistant Core")).toBeTruthy();
+    expect(screen.getByText("The other 2 are at the latest version.")).toBeTruthy();
+    expect(container.textContent).not.toMatch(/✓ current|All up to date/);
+  });
+
+  it("an unreadable one is still named when others have updates waiting", () => {
+    fixtures.updates = [as(CORE, "unavailable"), TAILSCALE];
+    const { container } = render(<AddonsCard />);
+    expect(head(container)).toBe("1 update available");
+    expect(screen.getByText("Can't be checked: Home Assistant Core")).toBeTruthy();
+  });
+
+  it("no update entities at all is not 'all up to date' either", () => {
+    fixtures.updates = [];
+    const { container } = render(<AddonsCard />);
+    expect(head(container)).toBe("Can't tell yet");
+    expect(container.textContent).not.toMatch(/✓ current|All up to date/);
+    expect(screen.getByText("Waiting for update entities…")).toBeTruthy();
+  });
+
+  it("still says 'All up to date ✓ current' when every one answered 'off'", () => {
+    fixtures.updates = [off(CORE), off(TAILSCALE)];
+    const { container } = render(<AddonsCard />);
+    expect(head(container)).toBe("All up to date");
+    expect(screen.getByText("✓ current")).toBeTruthy();
+    expect(screen.getByText("All 2 tracked components are at the latest version.")).toBeTruthy();
+  });
+
+  it("doesn't call cached states 'current' while the socket is down", () => {
+    conn.status = "disconnected";
+    fixtures.updates = [off(CORE), off(TAILSCALE)];
+    const { container } = render(<AddonsCard />);
+    expect(head(container)).toBe("Can't tell yet");
+    expect(container.textContent).not.toMatch(/✓ current/);
+  });
+});
+
+/* I30. A Core / OS install ends with HA dropping the WebSocket before it
+   answers. The call expects that (client.js), and the row says what is
+   happening until the dashboard is back instead of offering Install again. */
+describe("AddonsCard after a system install has gone out", () => {
+  const setStatus = (s) => {
+    conn.status = s;
+    act(() => conn.listeners.forEach((set) => set(s)));
+  };
+
+  it("Core: says it is restarting, holds the row, and lets go once HA is back", async () => {
+    fixtures.updates = [CORE];
+    callService.mockResolvedValueOnce({ connectionLost: true });
+    render(<AddonsCard />);
+    fireEvent.click(installIn("Home Assistant Core"));
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
+    fireEvent.click(installIn("Home Assistant Core"));
+    await flush();
+    await flush();
+    expect(screen.getByText("Restarting Home Assistant… the dashboard will reconnect")).toBeTruthy();
+    expect(installIn("Home Assistant Core").disabled).toBe(true);
+
+    setStatus("disconnected");
+    expect(screen.getByText("Restarting Home Assistant… the dashboard will reconnect")).toBeTruthy();
+    setStatus("ready");
+    // Back, and the update still says "on" (it failed): the row is a row again.
+    expect(screen.queryByText(/Restarting Home Assistant/)).toBeNull();
+    expect(installIn("Home Assistant Core").textContent).toBe("Install");
+  });
+
+  it("OS expects the disconnect and says the Pi is rebooting", async () => {
+    fixtures.updates = [OS];
+    render(<AddonsCard />);
+    fireEvent.click(installIn("Home Assistant Operating System"));
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
+    fireEvent.click(installIn("Home Assistant Operating System"));
+    await flush();
+    await flush();
+    expect(callService).toHaveBeenCalledWith("update", "install", { entity_id: OS.entity_id }, undefined, {
+      expectDisconnect: true,
+    });
+    expect(screen.getByText("Rebooting the Pi… the dashboard will reconnect")).toBeTruthy();
+  });
+
+  it("a failed system install says nothing extra (callService has toasted it)", async () => {
+    fixtures.updates = [CORE];
+    callService.mockRejectedValueOnce(new Error("Not connected"));
+    render(<AddonsCard />);
+    fireEvent.click(installIn("Home Assistant Core"));
+    act(() => vi.advanceTimersByTime(ARM_LOCK_MS + 50));
+    fireEvent.click(installIn("Home Assistant Core"));
+    await flush();
+    await flush();
+    expect(screen.queryByText(/Restarting/)).toBeNull();
+    expect(installIn("Home Assistant Core").textContent).toBe("Install");
   });
 });

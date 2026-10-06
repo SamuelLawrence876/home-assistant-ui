@@ -6,7 +6,15 @@
    flow via home-assistant-js-websocket. The library refreshes access
    tokens automatically — callers always get a fresh one. */
 
-import { getEntity, getFreshAccessToken, getHaUrl, sendWsMessage, waitForConnection } from "./socket.js";
+import { ERR_CONNECTION_LOST } from "home-assistant-js-websocket";
+import {
+  getConnectionStatus,
+  getEntity,
+  getFreshAccessToken,
+  getHaUrl,
+  sendWsMessage,
+  waitForConnection,
+} from "./socket.js";
 import { describeHaError } from "./errors.js";
 import { logError } from "../lib/errorLog.js";
 
@@ -41,7 +49,39 @@ export const getAllStates = () => req(`/api/states`);
 const errorListeners = new Set();
 export function onServiceError(cb) { errorListeners.add(cb); return () => errorListeners.delete(cb); }
 
-export const callService = async (domain, service, data = {}, target = undefined) => {
+/* Did a call that failed with "connection lost" actually go out first?
+
+   The library rejects with ERR_CONNECTION_LOST in two situations that mean
+   opposite things: as a bare `3` when it refused to send because the socket
+   was already down, and as a failed result frame for a command that was in
+   flight when the socket closed. sendWsMessage folds both into one
+   Error{code: 3} (errors.js#toHaError), so for that shape the connection
+   status stands in: an in-flight command is rejected in the same tick the
+   library announces the drop, so the status has already left "ready" by the
+   time we get here, whereas a send refused into a socket that is closing but
+   not yet closed happens before that announcement. `wasReady` rules out a
+   call made while the socket was plainly down. When in doubt this answers
+   no: a false "failed" toast is the old behaviour, a false "restarting" is a
+   lie. */
+function sentBeforeDrop(e, wasReady) {
+  if (!wasReady || e === ERR_CONNECTION_LOST) return false;
+  if (e?.type === "result" && e.error?.code === ERR_CONNECTION_LOST) return true;
+  return e?.code === ERR_CONNECTION_LOST && getConnectionStatus() !== "ready";
+}
+
+/* `options.expectDisconnect`: for the calls whose job is to take Home
+   Assistant down — homeassistant.restart, hassio.host_reboot, and the Core /
+   OS / Supervisor update.install. HA drops the WebSocket before it answers,
+   so the call is rejected with "connection lost" when it almost certainly
+   worked; it used to land in the error log and toast "failed". With the
+   option, that one rejection resolves to `{ connectionLost: true }` instead
+   — sent, and Home Assistant went away — and is neither logged nor
+   broadcast (socket.js logs the disconnect itself). Every other failure,
+   including a call that never left because the socket was already down, is
+   logged and thrown exactly as without it. Never a default: on any other
+   call a dropped connection is a real failure. */
+export const callService = async (domain, service, data = {}, target = undefined, options = {}) => {
+  const wasReady = Boolean(options?.expectDisconnect) && getConnectionStatus() === "ready";
   try {
     const serviceData = target ? { ...data, ...target } : data;
     return await sendWsMessage({
@@ -51,6 +91,7 @@ export const callService = async (domain, service, data = {}, target = undefined
       service_data: serviceData,
     });
   } catch (e) {
+    if (sentBeforeDrop(e, wasReady)) return { connectionLost: true };
     /* Only the entity id goes in, not the whole service_data payload —
        service data is arbitrary and a caller could put anything in it.
        describeHaError, not `e.message || String(e)`: with the socket down
