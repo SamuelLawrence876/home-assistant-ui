@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { useEntities, useEntityStatus } from "../../ha/useEntity.js";
+import { useEntities, useEntityStatus, useConnectionStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 
@@ -27,6 +27,14 @@ import { Card } from "../../components/Card.jsx";
    of those are unreachable the tile says so instead of playing a confident
    animation for a scene that did half of nothing. Firing anyway is deliberate:
    the live half of a scene is still worth having.
+
+   A tile whose own state HA isn't vouching for right now takes no taps and
+   claims nothing — the lib/diffuser.js#knownState rule. "loading" covers
+   connecting, signed out and a dropped connection, and the socket keeps its
+   last states through a drop, so reading them lit Focus "On · tap to undo"
+   through an outage and sent its undo into a dead socket. A missing or
+   unavailable script / mode boolean is the same: the tile can't tell run
+   from undo, and HA reports success for a missing target anyway.
    ----------------------------------------------------------------*/
 
 const E = {
@@ -105,45 +113,61 @@ const ALL_DEPS = [...new Set(SCENES.flatMap((s) => s.deps))];
 
 const isDown = (e) => !e || e.state === "unavailable" || e.state === "unknown";
 
-function SceneTile({ s, firing, onFire }) {
+function SceneTile({ s, firing, busyWord, onFire }) {
   // Moments read their script entity ("on" while running); modes read their
   // bookkeeping boolean. Either way "on" means the tile is lit.
   const stateId = s.kind === "mode" ? s.mode : `script.${s.script}`;
   const { entity: live, status } = useEntityStatus(stateId);
   const depStates = useEntities(s.deps);
 
-  const active = live?.state === "on";
+  // Unknown (see the header) is neither lit nor unlit: no state, no taps.
+  const known = status === "ready";
+  const active = known && live.state === "on";
   // Before the WS snapshot lands every entity looks missing — don't accuse
   // the house of being offline while we're still connecting.
-  const offline = status === "loading" ? [] : s.deps.filter((id) => isDown(depStates[id]));
+  const offline = known ? s.deps.filter((id) => isDown(depStates[id])) : [];
   const degraded = offline.length > 0 && !active;
 
-  const sub = active
-    ? s.kind === "moment" ? "Running · tap to stop" : "On · tap to undo"
+  // A busy tile drops taps (see fire()), so it says what it is doing instead
+  // of inviting one with "tap to stop" / "tap to undo".
+  const sub = !known ? (status === "loading" ? "—" : "Unavailable")
+    : busyWord ? busyWord
+    : active ? s.kind === "moment" ? "Running · tap to stop" : "On · tap to undo"
     : degraded ? `${offline.length}/${s.deps.length} offline`
     : s.sub;
 
   const offlineNames = offline.map((id) => LABEL[id] || id).join(", ");
+  const label = !known ? `${s.nm} — ${status === "loading" ? "state unknown" : "unavailable"}`
+    : degraded && !busyWord ? `${s.nm} — ${offline.length} of ${s.deps.length} devices offline: ${offlineNames}`
+    : undefined;
 
   return (
     <button
+      type="button"
       className={`scene ${s.id} ${firing ? "firing" : ""} ${active ? "active" : ""} ${degraded ? "degraded" : ""}`}
-      onClick={() => onFire(s, active)}
-      aria-pressed={active}
+      onClick={() => { if (known) onFire(s, active); }}
+      aria-pressed={known ? active : undefined}
+      // aria-disabled, not disabled: a focused tile that turned disabled when
+      // the connection dropped would throw keyboard focus onto <body>.
+      aria-disabled={known ? undefined : true}
       title={degraded ? `Offline: ${offlineNames}` : undefined}
-      aria-label={degraded ? `${s.nm} — ${offline.length} of ${s.deps.length} devices offline: ${offlineNames}` : undefined}
+      aria-label={label}
     >
       <div className="scene-ic">{s.ic}</div>
       <div>
         <div className="scene-nm">{s.nm}</div>
         <div className="scene-sub">{sub}</div>
       </div>
-      {s.kind === "mode" && <span className={`scene-dot ${active ? "on" : ""}`} aria-hidden="true" />}
+      {s.kind === "mode" && known && <span className={`scene-dot ${active ? "on" : ""}`} aria-hidden="true" />}
     </button>
   );
 }
 
 const FIRING_MS = 1100;
+// A failed call drops the sweep at once, but the guard stays up until this
+// long after the tap: released at a fast rejection, it let the double-tap's
+// second half send the call — and raise the error toast — a second time.
+const DOUBLE_TAP_MS = 400;
 
 export function ScenesCard({ index = 0 }) {
   const [firing, setFiring] = useState(null);
@@ -152,8 +176,13 @@ export function ScenesCard({ index = 0 }) {
   // decision, so it is dropped. A ref, not state: the second click can land
   // before React has re-rendered with the first one's `firing`.
   const busy = useRef(new Set());
+  // What each busy tile says meanwhile. Under latency HA's "on" lands before
+  // the call returns, and the tile used to read "Running · tap to stop" for
+  // seconds while silently dropping exactly that tap.
+  const [busyWords, setBusyWords] = useState({});
   const allStates = useEntities(ALL_DEPS);
   const { status } = useEntityStatus(ALL_DEPS[0]);
+  const conn = useConnectionStatus();
   const downCount = status === "loading" ? 0 : ALL_DEPS.filter((id) => isDown(allStates[id])).length;
 
   // `active` is what the tile showed when it was tapped, so the call matches
@@ -161,33 +190,55 @@ export function ScenesCard({ index = 0 }) {
   function fire(s, active) {
     if (busy.current.has(s.id)) return;
     busy.current.add(s.id);
+    const say = (word) => setBusyWords((w) => {
+      const next = { ...w };
+      if (word) next[s.id] = word;
+      else delete next[s.id];
+      return next;
+    });
+    say(!active ? "Starting…" : s.kind === "moment" ? "Stopping…" : "Undoing…");
     setFiring(s.id);
+    // Only clear our own sweep — another tile may have fired since.
+    const unsweep = () => setFiring((f) => (f === s.id ? null : f));
     const release = () => {
       busy.current.delete(s.id);
-      // Only clear our own sweep — another tile may have fired since.
-      setFiring((f) => (f === s.id ? null : f));
+      say(null);
+      unsweep();
     };
+    let failed = false;
+    let tapWindow = true;
+    setTimeout(() => { tapWindow = false; if (failed) release(); }, DOUBLE_TAP_MS);
     const target = s.kind === "moment" ? s.script : active ? s.offScript : s.script;
     const service = s.kind === "moment" && active ? "turn_off" : "turn_on";
     callService("script", service, { entity_id: `script.${target}` }).then(
       () => setTimeout(release, FIRING_MS),
       // client.js broadcasts to onServiceError, which App.jsx turns into a
-      // toast — so drop the animation (and the guard, so a retry works)
-      // rather than implying it worked.
-      release,
+      // toast — so drop the animation rather than implying it worked, and
+      // free the tile for a retry once the double-tap window has closed.
+      () => {
+        failed = true;
+        unsweep();
+        if (tapWindow) say("Failed");
+        else release();
+      },
     );
   }
+
+  // "loading" is connecting, signed out or dropped: no tile knows its state,
+  // so the card doesn't claim "Idle" either.
+  const meta = status === "loading" ? (conn === "ready" ? "—" : "Not connected")
+    : firing ? "Running" : downCount ? `${downCount} devices offline` : "Idle";
 
   return (
     <Card
       index={index}
       eyebrow={`Scenes · ${SCENES.length} tiles`}
       title="Quick scenes"
-      meta={firing ? "Running" : downCount ? `${downCount} devices offline` : "Idle"}
+      meta={meta}
     >
       <div className="scenes-grid">
         {SCENES.map((s) => (
-          <SceneTile key={s.id} s={s} firing={firing === s.id} onFire={fire} />
+          <SceneTile key={s.id} s={s} firing={firing === s.id} busyWord={busyWords[s.id]} onFire={fire} />
         ))}
       </div>
     </Card>

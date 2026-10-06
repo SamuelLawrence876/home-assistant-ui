@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { useEntityStatus } from "../../ha/useEntity.js";
+import { useEntityStatus, useConnectionStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
 import { numOr } from "../../lib/format.js";
 import { useRangeCommit } from "../../hooks/useRangeCommit.js";
-import { DIFFUSER, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName, knownState, unknownWord, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
+import { DIFFUSER, DEFAULT_RGB, DIFFUSER_COLORS, rgbCss, nearestColorName, knownState, unknownWord, pendingWhy, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
 
 /* Mist particles rising off the device head — static deterministic set so the
    verify harness can freeze the animation. */
@@ -63,30 +63,38 @@ function Swatches({ rgb, onPick, disabled }) {
 
    There is no mock fallback. The data.js mock used to stand in until HA
    answered, so a signed-out or never-connected dashboard showed animated
-   mist, "Spraying on eco" and 77% / 27.7°C as if measured.
+   mist, "Spraying on eco" and 77% / 27.7°C as if measured. Its LED half
+   outlived it as the starting brightness (65%) and colour (Ocean), so an off
+   LED — HA reports null for both — read "65%" with Ocean pressed. Both now
+   start, and resync, as HA's value or null; the brightness and the pressed
+   swatch are shown only for a lit LED, as on LightCard. DEFAULT_RGB only
+   paints the glow.
    ----------------------------------------------------------------*/
 export function DiffuserCard({ index = 0 }) {
   const { entity: liveSpray, status: sprayStatus } = useEntityStatus(DIFFUSER.spray);
   const { entity: liveLed, status: ledStatus } = useEntityStatus(DIFFUSER.light);
   const { entity: liveHum, status: humStatus } = useEntityStatus(DIFFUSER.humidity);
   const { entity: liveTemp, status: tempStatus } = useEntityStatus(DIFFUSER.temperature);
+  const conn = useConnectionStatus();
 
   const sprayKnown = knownState(sprayStatus);
   const ledKnown = knownState(ledStatus);
-  // One connection behind all four entities, so "not answered yet" is shared.
+  // One connection behind all four entities, so "not answered" is shared.
   const pending = sprayStatus === "loading";
 
   const [mode, setMode] = useState(sprayKnown ? liveSpray.state : null);
-  const [bright, setBright] = useState(brightPct(liveLed, 65));
-  const [rgb, setRgb] = useState(liveLed?.attributes?.rgb_color || DEFAULT_RGB);
+  const [bright, setBright] = useState(brightPct(liveLed, null));
+  const [rgb, setRgb] = useState(liveLed?.attributes?.rgb_color || null);
   const [lightOn, setLightOn] = useState(ledKnown && liveLed.state === "on");
 
   // Resync from HA only. `*Known` is in the lists so a diffuser coming back
   // from a dropout re-reads its state even when nothing changed meanwhile.
+  // A null is HA's answer too (an off LED has no brightness or colour), so
+  // it is written through rather than leaving the last value behind.
   useEffect(() => { if (sprayKnown) setMode(liveSpray.state); }, [sprayKnown, liveSpray?.state]);
   useEffect(() => { if (ledKnown) setLightOn(liveLed.state === "on"); }, [ledKnown, liveLed?.state]);
-  useEffect(() => { if (liveLed?.attributes?.brightness != null) setBright(brightPct(liveLed, 65)); }, [liveLed?.attributes?.brightness]);
-  useEffect(() => { if (liveLed?.attributes?.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes?.rgb_color?.join()]);
+  useEffect(() => { if (ledKnown) setBright(brightPct(liveLed, null)); }, [ledKnown, liveLed?.attributes?.brightness]);
+  useEffect(() => { if (ledKnown) setRgb(liveLed.attributes?.rgb_color || null); }, [ledKnown, liveLed?.attributes?.rgb_color?.join()]);
 
   // Revert from HA's truth at failure time (see DiffuserMini): the resync
   // effects only fire on a *changed* value, so a stale revert would stick.
@@ -100,11 +108,14 @@ export function DiffuserCard({ index = 0 }) {
   const misting = phase === "spraying";
   const unrecognised = phase === "unrecognised";
   const ledOn = ledKnown && lightOn;
-  const led = ledOn ? rgbCss(rgb) : "var(--ink-4)";
+  const led = ledOn ? rgbCss(rgb || DEFAULT_RGB) : "var(--ink-4)";
   // A reading HA isn't vouching for right now is an em dash, not the last one.
   const humidity = humStatus === "ready" ? numOr(liveHum.state, null) : null;
   const temperature = tempStatus === "ready" ? numOr(liveTemp.state, null) : null;
-  const colorName = nearestColorName(rgb).toLowerCase();
+  // Only a lit LED has a brightness or colour to show (null when HA has none).
+  const shownBright = ledOn ? bright : null;
+  const shownRgb = ledOn ? rgb : null;
+  const colorName = shownRgb ? nearestColorName(shownRgb).toLowerCase() : null;
 
   function changeMode(m) {
     const prev = mode;
@@ -127,14 +138,14 @@ export function DiffuserCard({ index = 0 }) {
     setBright(v);
     if (!ledOn) return;
     callService("light", "turn_on", { entity_id: DIFFUSER.light, brightness_pct: v })
-      .catch(() => setBright((cur) => brightPct(ledRef.current, cur)));
+      .catch(() => setBright((cur) => (ledRef.current ? brightPct(ledRef.current, null) : cur)));
   }
   const brightRef = useRangeCommit(commitBright);
   function pickColor(c) {
     const prev = rgb;
     setRgb(c);
     callService("light", "turn_on", { entity_id: DIFFUSER.light, rgb_color: c })
-      .catch(() => setRgb(ledRef.current?.attributes?.rgb_color || prev));
+      .catch(() => setRgb(ledRef.current ? ledRef.current.attributes?.rgb_color || null : prev));
   }
 
   return (
@@ -165,13 +176,16 @@ export function DiffuserCard({ index = 0 }) {
         {/* Controls */}
         <div className="diff-a-controls">
           <div className="lede">
-            {pending ? <>Diffuser has <b>not reported yet</b>.</> : <>
+            {/* "loading" is first connect, signed out or a dropped connection —
+                so not "has not reported yet", which is false after it has. */}
+            {pending ? <>Diffuser state <b>unknown</b>{conn !== "ready" && " — not connected to Home Assistant"}.</> : <>
               {!sprayKnown ? <>Diffuser is <b>unavailable</b>.</>
                 : misting ? <>Spraying on <b>{mode}</b>.</>
                 : unrecognised ? <>Mist reports <b>{mode}</b>.</>
                 : <>Mist is off.</>}{" "}
               {!ledKnown ? <>LED is <b>unavailable</b>.</>
                 : !lightOn ? <>LED is <b>off</b>.</>
+                : !colorName ? <>LED is <b>on</b>.</>
                 : misting ? <>LED set to <b>{colorName}</b>.</>
                 : <>The LED stays <b>{colorName}</b> as a night light.</>}
             </>}
@@ -194,7 +208,7 @@ export function DiffuserCard({ index = 0 }) {
                 <span className={`w ${ledOn ? "lit" : ""}`}>{!ledKnown ? unknownWord(ledStatus) : lightOn ? "On" : "Off"}</span>
                 {/* role="switch" has no "unknown", so the real state goes in the name. */}
                 <ToggleSwitch on={ledOn} onToggle={toggleLight} disabled={!ledKnown}
-                  label={ledKnown ? "Diffuser LED light" : `Diffuser LED light — ${ledStatus === "loading" ? "not reported yet" : "unavailable"}`} />
+                  label={ledKnown ? "Diffuser LED light" : `Diffuser LED light — ${ledStatus === "loading" ? pendingWhy(conn) : "unavailable"}`} />
               </span>
             </span>
             {/* Dimmed when the LED is off. `disabled` is what actually blocks the
@@ -208,17 +222,17 @@ export function DiffuserCard({ index = 0 }) {
               <div className="diff-bright">
                 <input
                   ref={brightRef}
-                  type="range" min="1" max="100" value={bright} className="diff-range"
+                  type="range" min="1" max="100" value={shownBright ?? 1} className="diff-range"
                   aria-label="Diffuser LED brightness"
-                  aria-valuetext={ledKnown ? `${bright}%` : "unknown"}
+                  aria-valuetext={shownBright != null ? `${shownBright}%` : "unknown"}
                   disabled={!ledOn}
-                  style={{ "--bp": `${bright}%`, "--led": led }}
+                  style={{ "--bp": `${shownBright ?? 0}%`, "--led": led }}
                   onChange={(e) => setBright(+e.target.value)}
                 />
-                {/* An unavailable light reports no brightness; don't print the default as if it had. */}
-                <span className="val">{ledKnown ? `${bright}%` : "—"}</span>
+                {/* An off or unavailable LED reports no brightness; nothing to print. */}
+                <span className="val">{shownBright != null ? `${shownBright}%` : "—"}</span>
               </div>
-              <Swatches rgb={ledKnown ? rgb : null} onPick={pickColor} disabled={!ledOn} />
+              <Swatches rgb={shownRgb} onPick={pickColor} disabled={!ledOn} />
             </div>
           </div>
 

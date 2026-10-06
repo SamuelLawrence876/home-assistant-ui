@@ -105,7 +105,7 @@ describe("M1 — DiffuserMini never shows the mock, or a stale state, as fact", 
       expect(b).toBeDisabled();
       expect(b).toHaveAttribute("aria-pressed", "false");
     }
-    const sw = screen.getByRole("switch", { name: "Diffuser LED — not reported yet" });
+    const sw = screen.getByRole("switch", { name: "Diffuser LED — not connected" });
     expect(sw).toBeDisabled();
     expect(sw).toHaveAttribute("aria-checked", "false");
     fireEvent.click(mistButtons()[0]);
@@ -137,11 +137,11 @@ describe("M1 — DiffuserCard never shows the mock, or a stale state, as fact", 
     const { container } = render(<DiffuserCard />);
     expect(container.querySelector(".diff-mist")).toBeNull();
     expect(container.querySelector(".meta").textContent).toBe("—");
-    expect(container.querySelector(".lede").textContent).toBe("Diffuser has not reported yet.");
+    expect(container.querySelector(".lede").textContent).toBe("Diffuser state unknown — not connected to Home Assistant.");
     expect(container.textContent).not.toMatch(/Spraying|Misting|77|27\.7|ocean/);
     expect([...container.querySelectorAll(".diff-stat .v")].map((n) => n.textContent)).toEqual(["—%", "—°C"]);
     for (const b of mistButtons()) expect(b).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Diffuser LED light — not reported yet" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Diffuser LED light — not connected" })).toBeDisabled();
     for (const s of screen.getAllByRole("button", { name: /^LED colour/ })) {
       expect(s).toBeDisabled();
       expect(s).toHaveAttribute("aria-pressed", "false");
@@ -155,7 +155,7 @@ describe("M1 — DiffuserCard never shows the mock, or a stale state, as fact", 
 
     act(() => fake.setStatus("disconnected"));
     expect(container.querySelector(".diff-mist")).toBeNull();
-    expect(container.querySelector(".lede").textContent).toBe("Diffuser has not reported yet.");
+    expect(container.querySelector(".lede").textContent).toBe("Diffuser state unknown — not connected to Home Assistant.");
     expect([...container.querySelectorAll(".diff-stat .v")].map((n) => n.textContent)).toEqual(["—%", "—°C"]);
     for (const b of mistButtons()) expect(b).toBeDisabled();
 
@@ -247,7 +247,7 @@ describe("M10 — a purifier with no fan entity claims nothing and offers nothin
     render(<AirPurifierCard />);
     expect(screen.getByRole("switch", { name: "Air purifier" })).toHaveAttribute("aria-checked", "true");
     act(() => fake.setStatus("disconnected"));
-    const sw = screen.getByRole("switch", { name: "Air purifier — not reported yet" });
+    const sw = screen.getByRole("switch", { name: "Air purifier — state unknown" });
     expect(sw).toHaveAttribute("aria-checked", "false");
     expect(sw).toBeDisabled();
   });

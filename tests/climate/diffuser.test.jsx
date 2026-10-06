@@ -116,7 +116,7 @@ describe("DiffuserCard", () => {
     // pressed) as if HA had said so. See round3.test.jsx (M1).
     fake.status = "connecting";
     const { container } = render(<DiffuserCard />);
-    expect(container.querySelector(".lede").textContent).toBe("Diffuser has not reported yet.");
+    expect(container.querySelector(".lede").textContent).toBe("Diffuser state unknown — not connected to Home Assistant.");
     expect(container.querySelector(".diff-mist")).toBeNull();
     expect(screen.getByRole("button", { name: "eco" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "eco" })).toBeDisabled();

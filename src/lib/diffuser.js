@@ -61,7 +61,20 @@ export function unknownWord(status) {
   return status === "loading" ? "—" : "Unavailable";
 }
 
-/* Fallback LED colour when the light is in an effect mode (rgb_color is null). */
+/* Why a "loading" value is unknown, for the sentences and accessible names
+   that spell it out — in words true in every case "loading" covers. It used
+   to be "not reported yet", which is false after a dropped connection or a
+   sign-out, when the diffuser had reported seconds before. `conn` is
+   useConnectionStatus(): anything but "ready" means the socket is down,
+   signed out or still connecting; "ready" while an entity is still "loading"
+   is the first snapshot in flight. */
+export function pendingWhy(conn) {
+  return conn === "ready" ? "state unknown" : "not connected";
+}
+
+/* Paint for the LED glow when the light is on but HA reports no rgb_color
+   (an effect mode, or the state push hasn't landed). Drawing only: it is the
+   old mock's "Ocean", so it must never be named or shown as a pressed swatch. */
 export const DEFAULT_RGB = [96, 170, 255];
 
 

@@ -245,6 +245,8 @@
   text-transform: uppercase; color: var(--ink-3);
 }
 body.viewport-phone .dmini-led .w { display: none; }
+/* …except "—" / "Unavailable": without it a disabled, unlit switch reads as "off". */
+body.viewport-phone .dmini-led .w.unknown { display: inline; }
 
 /* ============================================================
    Phone / narrow — stack the climate hero body

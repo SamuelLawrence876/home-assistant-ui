@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { useEntityStatus } from "../../ha/useEntity.js";
+import { useEntityStatus, useConnectionStatus } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { ToggleSwitch } from "../../components/ToggleSwitch.jsx";
-import { DIFFUSER, DEFAULT_RGB, rgbCss, nearestColorName, knownState, unknownWord, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
+import { DIFFUSER, DEFAULT_RGB, rgbCss, nearestColorName, knownState, unknownWord, pendingWhy, sprayOptions, sprayPhase } from "../../lib/diffuser.js";
 
 /* ----------------------------------------------------------------
    Overview quick-control strip — glanceable mist + LED. Compact
@@ -28,28 +28,33 @@ import { DIFFUSER, DEFAULT_RGB, rgbCss, nearestColorName, knownState, unknownWor
    "On · Spraying · eco · ocean" with live buttons. Before HA answers, and
    through a dropped connection, both halves read "—" and their controls are
    disabled.
+
+   DEFAULT_RGB is the old mock's "Ocean", so it only paints the glow: an LED
+   that is on with no rgb_color reads "LED on", never "ocean".
    ----------------------------------------------------------------*/
 export function DiffuserMini({ index = 0 }) {
   const { entity: liveSpray, status: sprayStatus } = useEntityStatus(DIFFUSER.spray);
   const { entity: liveLed, status: ledStatus } = useEntityStatus(DIFFUSER.light);
+  const conn = useConnectionStatus();
   const sprayKnown = knownState(sprayStatus);
   const ledKnown = knownState(ledStatus);
 
   const [mode, setMode] = useState(sprayKnown ? liveSpray.state : null);
-  const [rgb, setRgb] = useState(liveLed?.attributes?.rgb_color || DEFAULT_RGB);
+  const [rgb, setRgb] = useState(liveLed?.attributes?.rgb_color || null);
   const [lightOn, setLightOn] = useState(ledKnown && liveLed.state === "on");
 
   // Resync from HA only. `*Known` is in the lists so a diffuser coming back
   // from a dropout re-reads its state even when nothing changed meanwhile.
+  // HA's null colour is written through: an off LED has no colour to name.
   useEffect(() => { if (sprayKnown) setMode(liveSpray.state); }, [sprayKnown, liveSpray?.state]);
   useEffect(() => { if (ledKnown) setLightOn(liveLed.state === "on"); }, [ledKnown, liveLed?.state]);
-  useEffect(() => { if (liveLed?.attributes?.rgb_color) setRgb(liveLed.attributes.rgb_color); }, [liveLed?.attributes?.rgb_color?.join()]);
+  useEffect(() => { if (ledKnown) setRgb(liveLed.attributes?.rgb_color || null); }, [ledKnown, liveLed?.attributes?.rgb_color?.join()]);
 
   const options = sprayOptions(liveSpray);
   const phase = sprayKnown ? sprayPhase(mode, options) : null;
   const misting = phase === "spraying";
   const ledOn = ledKnown && lightOn;
-  const led = ledOn ? rgbCss(rgb) : "var(--ink-4)";
+  const led = ledOn ? rgbCss(rgb || DEFAULT_RGB) : "var(--ink-4)";
   const statusColor = misting ? "var(--good)" : "var(--ink-4)";
   const ledPending = ledStatus === "loading";
   // An unrecognised mode is shown as HA reported it — neither Off nor On.
@@ -59,7 +64,7 @@ export function DiffuserMini({ index = 0 }) {
     : "Standby";
   const sub = !sprayKnown && !ledKnown ? unknownWord(sprayStatus)
     : mistText
-      + `${!ledKnown ? ` · LED ${ledPending ? "—" : "unavailable"}` : lightOn ? ` · ${nearestColorName(rgb).toLowerCase()}` : " · LED off"}`;
+      + `${!ledKnown ? ` · LED ${ledPending ? "—" : "unavailable"}` : !lightOn ? " · LED off" : rgb ? ` · ${nearestColorName(rgb).toLowerCase()}` : " · LED on"}`;
 
   // Revert from HA's truth at failure time rather than the value captured at
   // click time: the resync effects above only fire on a *changed* state, so a
@@ -116,10 +121,12 @@ export function DiffuserMini({ index = 0 }) {
         <div className="dmini-ledrow">
           <span className="k">LED light</span>
           <span className="dmini-led">
-            <span className={`w ${ledOn ? "lit" : ""}`}>{!ledKnown ? unknownWord(ledStatus) : lightOn ? "On" : "Off"}</span>
+            {/* Phone hides the On/Off word but keeps "—" / "Unavailable" (.unknown):
+                a disabled switch with no word beside it reads as "off". */}
+            <span className={`w ${ledOn ? "lit" : ""} ${ledKnown ? "" : "unknown"}`}>{!ledKnown ? unknownWord(ledStatus) : lightOn ? "On" : "Off"}</span>
             {/* role="switch" has no "unknown", so the real state goes in the name. */}
             <ToggleSwitch on={ledOn} onToggle={toggleLight} disabled={!ledKnown}
-              label={ledKnown ? "Diffuser LED" : `Diffuser LED — ${ledPending ? "not reported yet" : "unavailable"}`} />
+              label={ledKnown ? "Diffuser LED" : `Diffuser LED — ${ledPending ? pendingWhy(conn) : "unavailable"}`} />
           </span>
         </div>
       </div>
