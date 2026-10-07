@@ -208,7 +208,13 @@ export default function App() {
   // RBAC (display layer — HA groups are the enforcement layer, see lib/roles.js)
   const connectionStatus = useConnectionStatus();
   const currentUser = useCurrentUser();
-  const role = deriveRole(currentUser, connectionStatus === "ready");
+  // Signing out closes the socket a few seconds before the reload, and "not
+  // connected" is the all-tabs fallback: a guest's nav opened every tab for
+  // that wait. The session's own role holds until the reload instead — the
+  // last user stays known (useCurrentUser) — and fails closed to pending
+  // when there wasn't one. isSigningOut() is true before the status change
+  // that re-renders this (socket.js#closeForSignOut).
+  const role = deriveRole(currentUser, connectionStatus === "ready" || isSigningOut());
   const rolePending = role === ROLE_PENDING;
   const visibleTabs = useMemo(() => TABS.filter((t) => canSeeTab(role, t.id)), [role]);
 

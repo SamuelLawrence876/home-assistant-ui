@@ -10,6 +10,18 @@ import { clearErrors, lockErrorLog } from "../lib/errorLog.js";
    browser. */
 export const TOKENS_KEY = "ha_tokens";
 
+/* The stored session, as getAuth's loadTokens option takes it (async;
+   undefined for none or unreadable). */
+export const loadTokens = async () => storedSession() ?? undefined;
+
+function storedSession() {
+  try {
+    return JSON.parse(localStorage.getItem(TOKENS_KEY));
+  } catch {
+    return null;
+  }
+}
+
 /* ERR_INVALID_AUTH from createConnection only means the socket refused the
    access token it was handed — not that the session is dead. When that token
    has expired, the library starts a refresh before the socket opens and, if
@@ -72,6 +84,20 @@ export function clearDevice() {
   try { clearErrors(); } catch {}
 }
 
+/* Sign out's second pass, once HA has answered the revoke or the wait ran
+   out. This tab can't have written since (latched); this is for what another
+   tab wrote meanwhile — but only while the stored session is still the one
+   signed out, or none. A tab that heard the Sign out can reload and sign in
+   again inside the wait, and the second clear used to remove that newer
+   session (never revoked), re-stamp the marker and so sign that tab out a
+   second time, onto a rate-limited "Signed out". That session, its Spotify
+   token and its log are left alone (D11). */
+export function clearDeviceAgain(refreshToken) {
+  const stored = storedSession();
+  if (stored && stored.refresh_token !== refreshToken) return;
+  clearDevice();
+}
+
 /* Spotify's token writes and the error log stand down until the reload (the
    HA tokens' own writes are socket.js's signingOut). A Spotify refresh in
    flight, or a call the closing socket rejects, could otherwise land after the
@@ -86,7 +112,14 @@ export function lockDevice() {
    tokens (its Sign out, or its dropSession for a session HA ended), or
    cleared the whole of localStorage. Storage events fire in every tab but the
    one that made the change. */
-export const sessionRemovedElsewhere = (e) => e.newValue === null && (e.key === TOKENS_KEY || e.key === null);
+const sessionRemovedElsewhere = (e) => e.newValue === null && (e.key === TOKENS_KEY || e.key === null);
+
+/* Whether this tab follows that event. One that holds a session ends it
+   either way. One that doesn't — on "Signed out · sign in", or still signing
+   in — follows a Sign out only (a session HA ended keeps the log): it used to
+   ignore both, and its next error log entry wrote the previous session's log
+   back, entry for entry, from memory (D8). */
+export const followsElsewhere = (e, hasSession) => sessionRemovedElsewhere(e) && (hasSession || signedOutJustNow());
 
 /* For a tab that hears another tab took the session away — a Sign out, or HA
    ending it. A Sign out has cleared everything already; this catches what this
@@ -95,8 +128,7 @@ export const sessionRemovedElsewhere = (e) => e.newValue === null && (e.key === 
    removing their tokens would sign them out. */
 export function clearAfterSignOutElsewhere(refreshToken) {
   try {
-    const stored = JSON.parse(localStorage.getItem(TOKENS_KEY));
-    if (refreshToken && stored?.refresh_token === refreshToken) localStorage.removeItem(TOKENS_KEY);
+    if (refreshToken && storedSession()?.refresh_token === refreshToken) localStorage.removeItem(TOKENS_KEY);
   } catch {}
   try { clearSpotifyToken(); } catch {}
   // Only a Sign out clears the log. A session HA ended (another tab's

@@ -139,6 +139,22 @@ let inLogError = false;
 /* Sign out's latch — see lockErrorLog(). */
 let locked = false;
 
+/* Another tab removed the stored log — its Sign out, or its Clear. This tab
+   holds the same history in memory, and its next entry used to write all of
+   it straight back. socket.js reloads a tab that hears of a Sign out, but a
+   background tab can hear of it too late to tell it from HA ending a session;
+   following the removal here doesn't depend on that. Must never throw. */
+try {
+  window.addEventListener("storage", (e) => {
+    try {
+      if ((e.key === STORAGE_KEY || e.key === null) && e.newValue == null && entries.length) {
+        entries = [];
+        notify();
+      }
+    } catch {}
+  });
+} catch {}
+
 function notify() {
   for (const cb of Array.from(listeners)) {
     try {

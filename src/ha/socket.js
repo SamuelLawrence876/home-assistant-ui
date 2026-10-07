@@ -48,7 +48,7 @@ import {
 } from "./loginRedirect.js";
 import { logError } from "../lib/errorLog.js";
 import { createHeldBack } from "./heldBack.js";
-import { TOKENS_KEY, checkSession, clearAfterSignOutElsewhere, clearDevice, lockDevice, sessionRemovedElsewhere } from "./session.js";
+import { TOKENS_KEY, checkSession, clearAfterSignOutElsewhere, clearDevice, clearDeviceAgain, followsElsewhere, loadTokens, lockDevice } from "./session.js";
 
 const HA_URL = import.meta.env.VITE_HA_URL || "";
 // getAuth strips one trailing slash before comparing stored tokens' hassUrl.
@@ -131,15 +131,6 @@ const saveTokens = (data) => {
     else localStorage.removeItem(TOKENS_KEY);
   } catch (e) {
     console.warn("[ha-ws] saveTokens failed", e);
-  }
-};
-
-const loadTokens = async () => {
-  try {
-    const raw = localStorage.getItem(TOKENS_KEY);
-    return raw ? JSON.parse(raw) : undefined;
-  } catch {
-    return undefined;
   }
 };
 
@@ -299,14 +290,26 @@ async function connectOnce() {
     if (err === SIGNED_OUT) return "signed_out";
     return connectFailed("Home Assistant sign-in failed", err);
   }
+  /* Sign out (here or in another tab) while authenticate() above or
+     openConnection() below was in flight: what came back belongs to the
+     session that ended. It used to land anyway — the session back in memory,
+     the connection kept and "ready" over the "Signing out…" chip (D7). Closed
+     and dropped instead, and setup() stands down too. */
+  if (signingOut) { auth = null; return "stopped"; }
 
   if (retryAttempt === 0) setStatus("authenticating");
   const conn = await openConnection();
+  if (signingOut) { if (typeof conn !== "string") conn.close(); return "stopped"; }
   if (typeof conn === "string") return conn;
 
   connection = conn;
   retryAttempt = 0;
-  conn.addEventListener("ready", () => setStatus("ready"));
+  /* The library's own reconnect doesn't look at close() once its new socket
+     is opening: one that finished after Sign out closed this connection
+     resubscribed and fired "ready" — the chip read live, every card had live
+     controls, over the old session's open socket (D7). Not ours any more:
+     closed again, for good this time, and never "ready". */
+  conn.addEventListener("ready", () => (conn === connection ? setStatus("ready") : conn.close()));
   /* Drops are recorded, not announced. The chip in the topbar is the live
      signal; this is the record you read afterwards to find out that the Pi
      dropped eleven times at 3am. errorLog dedupes a burst of identical
@@ -364,6 +367,7 @@ async function setup({ afterRelogin = false } = {}) {
     setupRunning = false;
   }
 
+  if (signingOut) return; // signed out while it ran: nothing to retry, end or redo
   if (outcome === "retry") {
     scheduleRetry();
   } else if (outcome === "signed_out" || (outcome === "relogin" && afterRelogin)) {
@@ -409,7 +413,8 @@ export function onConnectionChange(callback) {
 /* Fires once per applyEntities batch — listeners use this to recompute
    aggregates (e.g. the topbar's available/total count) without subscribing
    to every entity individually — and once more when a held-back entity's
-   wait runs out (heldBack.js), with no entity changed. */
+   wait runs out (heldBack.js), or Sign out closes the socket (closeForSignOut),
+   with no entity changed. */
 export function onStatesChanged(callback) {
   statesListeners.add(callback);
   return () => statesListeners.delete(callback);
@@ -510,7 +515,9 @@ function latchSignOut() {
 /* Closing it ourselves, the library fires no "disconnected": the status read
    "ready" and the snapshot stayed in for the whole revoke wait, so every card
    showed live controls over a closed socket. Marked the way a drop is —
-   snapshot first, see applyEntities — until the reload. */
+   snapshot first, see applyEntities — until the reload. The states listeners
+   hear it too: mid-reconnect the status is "disconnected" already, so
+   setStatus tells nobody, and the chip kept reading "Pi offline" (D7). */
 function closeForSignOut() {
   clearTimeout(retryTimer);
   retryTimer = null;
@@ -520,11 +527,13 @@ function closeForSignOut() {
   }
   snapshotReceived = false;
   setStatus("disconnected");
+  statesListeners.forEach((cb) => cb());
 }
 
 /* True from Sign out (here or in another tab) until the reload — for the
    chip, which would otherwise read "Pi offline" over the closed socket. It
-   changes only with the status ("disconnected", above), so read it then. */
+   changes only with the status or a states tick (both above), so read it
+   on either. */
 export const isSigningOut = () => signingOut;
 
 /* Resolves once the reload has been asked for; never rejects. */
@@ -542,8 +551,9 @@ export function signOut() {
   // Bounded (loginRedirect.js): the reload goes ahead whatever HA says.
   signOutDone = revokeRefreshToken(session?.hassUrl, session?.refresh_token).then(() => {
     // Again, belt and braces: with the locks above nothing should have
-    // written since, but this is the last chance to make sure.
-    clearDevice();
+    // written since, but this is the last chance to make sure — sparing a
+    // session another tab has signed into since (session.js#clearDeviceAgain).
+    clearDeviceAgain(session?.refresh_token);
     reloadPage();
   });
   return signOutDone;
@@ -555,12 +565,14 @@ export function signOut() {
    written back on its next entry, and its own Spotify refresh. The other tab
    removing ha_tokens is the signal (storage events fire in every tab but the
    one that made the change), and this tab does what Sign out does here, bar
-   the revoke, which that tab has sent: latch, clear, reload. Only a tab that
-   holds a session acts; the clear spares a newer session than this tab's
+   the revoke, which that tab has sent: latch, clear, reload. A tab with no
+   session does the same for a Sign out — its log and Spotify module are still
+   live, and only the reload ends their lock (session.js#followsElsewhere) —
+   and the clear spares a newer session than this tab's
    (session.js#clearAfterSignOutElsewhere). */
 function onStorage(e) {
-  if (!sessionRemovedElsewhere(e) || !auth || signingOut) return;
-  const mine = auth.data?.refresh_token;
+  if (signingOut || !followsElsewhere(e, Boolean(auth))) return;
+  const mine = auth?.data?.refresh_token;
   latchSignOut();
   auth = null;
   clearAfterSignOutElsewhere(mine);

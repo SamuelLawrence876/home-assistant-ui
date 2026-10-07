@@ -360,7 +360,27 @@ describe("R4C-1 — a reader of a whole domain or set knows what HA may still be
     expect(screen.queryByText(/Waiting for/)).toBeNull();
   });
 
-  it("scenes: a held-back device is not 'offline', and the header speaks for the whole set", async () => {
+  /* D2 (round 4d): back on a new connection, before HA's first batch, the
+     cache is the pre-drop set — and Updates read it as "All up to date". */
+  it("updates: between the reconnect and HA's first batch, nothing cached reads as current", async () => {
+    const upd = (title, s) => ({ s, a: { title, installed_version: "1.0", latest_version: s === "on" ? "1.1" : "1.0" } });
+    await connected({ "update.esphome": upd("ESPHome", "off"), "update.tailscale": upd("Tailscale", "off") });
+    const { AddonsCard } = await import("../../src/cards/system/AddonsCard.jsx");
+    const { container } = render(<AddonsCard />);
+    expect(screen.getByRole("heading")).toHaveTextContent("All up to date");
+
+    act(() => lib.ha.drop());
+    lib.ha.entities["update.esphome"] = { s: "on", a: { title: "ESPHome", installed_version: "1.0", latest_version: "1.1" }, lc: 1 };
+    await reconnect(); // "ready", HA's answer not in yet
+    expect(container.textContent).not.toMatch(/✓ current|All up to date|are at the latest version|Not connected/);
+    expect(screen.getByRole("heading")).toHaveTextContent("Can't tell yet");
+
+    act(() => lib.ha.answer());
+    expect(screen.getByRole("heading")).toHaveTextContent("1 update available");
+    expect(within(container).getByRole("button", { name: "Install" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("scenes: a held-back device is 'loading' — neither 'offline' nor all clear — and the header speaks for the whole set", async () => {
     const BULB = "light.smartbulb_5c_h";
     const deps = {
       [BULB]: "on",
@@ -381,15 +401,24 @@ describe("R4C-1 — a reader of a whole domain or set knows what HA may still be
     expect(meta(container)).toBe("Idle");
 
     // The bulb's integration is slow to load (and the bulb is the first dep,
-    // the header's old stand-in for the whole set).
+    // the header's old stand-in for the whole set). Round 4d (D3): this read
+    // "Colour flow" / "Idle" for the whole wait, as if every device were up.
     await restartWithout(BULB);
+    expect(workDone()).toBe("1/2 loading");
+    expect(container.querySelector(".scene.work_done")).not.toHaveClass("degraded");
+    expect(container.querySelector(".scene.work_done")).toHaveAccessibleName("Work Done! — 1 of 2 devices loading: Bedroom bulb");
+    expect(meta(container)).toBe("1 device loading");
+
+    // Sent back: all clear again.
+    act(() => lib.ha.add(BULB, "on"));
     expect(workDone()).toBe("Colour flow");
     expect(meta(container)).toBe("Idle");
 
-    // Still not sent once the wait is over: now it is offline.
+    // Never sent this time: once the wait is over it is offline.
+    await restartWithout(BULB);
     await act(() => vi.advanceTimersByTimeAsync(HELD_BACK_WAIT_MS));
     expect(workDone()).toBe("1/2 offline");
-    expect(meta(container)).toBe("1 devices offline");
+    expect(meta(container)).toBe("1 device offline");
   });
 });
 
@@ -562,7 +591,8 @@ describe("R4C-4 — Sign out in another tab signs this one out too", () => {
     expect(socket.getConnectionStatus()).toBe("ready");
   });
 
-  it("a tab already signed out ('Signed out · sign in') has nothing to end", async () => {
+  // A Sign out elsewhere is another matter: round4d-session.test.jsx, D8.
+  it("a tab already signed out ('Signed out · sign in') has nothing to end when HA ends a session elsewhere", async () => {
     sessionStorage.setItem("gh_ha_login_redirect_at", String(Date.now() - 10_000));
     const { socket } = await loadPage(); // no tokens, and the trip to login used up
     await flush();
