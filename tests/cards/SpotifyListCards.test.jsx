@@ -172,3 +172,21 @@ describe("SpotifyQueueCard", () => {
     expect(screen.queryByText("Older")).toBeNull();
   });
 });
+
+describe("SpotifyPlaylistsCard — track counts", () => {
+  // getPlaylists hands back null for a count Spotify didn't send (a playlist
+  // the user doesn't own, under the 2026 Development Mode shape). That is an
+  // unknown, not an empty playlist.
+  const pl = (name, tracks) => ({ id: name, name, uri: `spotify:playlist:${name}`, image: null, tracks, owner: "Sam" });
+
+  it("an absent count reads '—', not '0 tracks'", async () => {
+    h.playlists = () => Promise.resolve([pl("Borrowed", null), pl("Mine", 12), pl("Empty", 0)]);
+    render(<SpotifyPlaylistsCard />);
+    await flush();
+    expect(screen.getByText("— tracks · Sam")).toBeInTheDocument();
+    expect(screen.getByText("12 tracks · Sam")).toBeInTheDocument();
+    // A real zero is still a zero.
+    expect(screen.getByText("0 tracks · Sam")).toBeInTheDocument();
+    expect(screen.queryByText(/null|undefined|NaN/)).toBeNull();
+  });
+});

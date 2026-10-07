@@ -34,7 +34,8 @@ export function SpotifyPlaylistsCard({ index = 0 }) {
       {error && <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "#e55", marginBottom: 8 }}>{error}</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
         {playlists.map((item) => (
-          <SpotifyTrackRow key={item.uri} item={item} playing={playing} onPlay={play} subtitle={`${item.tracks} tracks · ${item.owner}`} />
+          // A count Spotify didn't send is unknown, not zero (spotify.js#playlistCount).
+          <SpotifyTrackRow key={item.uri} item={item} playing={playing} onPlay={play} subtitle={`${item.tracks ?? "—"} tracks · ${item.owner}`} />
         ))}
       </div>
       {!loading && playlists.length === 0 &&

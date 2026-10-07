@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { callService } from "../../ha/client.js";
 import { useEntityStatus } from "../../ha/useEntity.js";
+import { SETTLE_MS } from "../../hooks/useOptimistic.js";
 import { Card } from "../../components/Card.jsx";
 
 /* ----------------------------------------------------------------
@@ -70,12 +71,27 @@ export function SamBoxStrip({ compact = false }) {
   const [on, setOnLocal] = useState(plugOn);
   const [turning, setTurning] = useState(false);
   const timer = useRef(null);
-  useEffect(() => () => clearTimeout(timer.current), []);
+  /* A resolved plug call is not proof the plug moved (see SETTLE_MS): HA skips
+     a target it can't act on and still reports success, and a cloud plug can
+     drop a command. Without this the optimistic value stuck — the switch lit
+     beside an unpowered PC, or "Off" beside a running one — until the plug
+     next changed for some other reason. Any plug state event cancels it. */
+  const settleRef = useRef(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      clearTimeout(timer.current);
+      clearTimeout(settleRef.current);
+    };
+  }, []);
 
   // Re-sync to live plug state on every change (canonical pattern). A real
   // "off" from HA cancels any in-flight boot transient; losing the entity
   // altogether cancels it too, because we no longer know what is happening.
   useEffect(() => {
+    clearTimeout(settleRef.current); // HA answered; nothing left to settle
     if (!known) {
       clearTimeout(timer.current);
       setTurning(false);
@@ -99,16 +115,31 @@ export function SamBoxStrip({ compact = false }) {
   const lastTapAt = useRef(0);
   const lastOffAt = useRef(0);
 
+  // After a plug call resolves: if the plug hasn't reported a new state within
+  // SETTLE_MS (the resync effect cancels this), show what HA says it is.
+  function settleToPlug(seq) {
+    if (seq !== tapSeq.current || !mounted.current) return;
+    clearTimeout(settleRef.current);
+    settleRef.current = setTimeout(() => {
+      clearTimeout(timer.current);
+      setTurning(false);
+      setOnLocal(plugOnRef.current);
+    }, SETTLE_MS);
+  }
+
   function powerOn() {
     const seq = ++tapSeq.current;
     const withSession = !sessionDown;
     setOnLocal(true);
     setTurning(true);
     clearTimeout(timer.current);
+    clearTimeout(settleRef.current);
     timer.current = setTimeout(() => setTurning(false), BOOT_MS);
     callService("switch", "turn_on", { entity_id: PLUG_ENTITY }).then(
       () => {
-        if (!withSession || seq !== tapSeq.current) return;
+        if (seq !== tapSeq.current) return;
+        settleToPlug(seq);
+        if (!withSession) return;
         // Empty catch: the error log already has it, and the toggle's state
         // is the plug, so a failed session start must not revert it.
         callService("switch", "turn_on", { entity_id: SESSION_SWITCH }).catch(() => {});
@@ -121,12 +152,16 @@ export function SamBoxStrip({ compact = false }) {
     );
   }
   function powerOff() {
-    tapSeq.current += 1;
+    const seq = ++tapSeq.current;
     clearTimeout(timer.current);
+    clearTimeout(settleRef.current);
     setTurning(false);
     setOnLocal(false);
     if (!sessionDown) callService("switch", "turn_off", { entity_id: SESSION_SWITCH }).catch(() => {});
-    callService("switch", "turn_off", { entity_id: PLUG_ENTITY }).catch(() => setOnLocal(plugOnRef.current));
+    callService("switch", "turn_off", { entity_id: PLUG_ENTITY }).then(
+      () => settleToPlug(seq),
+      () => setOnLocal(plugOnRef.current),
+    );
   }
 
   // Real session telemetry (System tab has the numbers). The health sensor's

@@ -87,6 +87,62 @@ describe("VacuumCard wear bars", () => {
   });
 });
 
+/* Round 4c (R4C-7): each consumable is read in its own unit_of_measurement,
+   through durationToMinutes — not the main brush's unit for all three, and
+   not "a number over 10000 must be seconds". The unit is whatever HA
+   registered that entity with, so it can differ between the three. */
+describe("VacuumCard wear bars, each in its own unit", () => {
+  const u = (state, unit) => ({ state, attributes: unit ? { unit_of_measurement: unit } : {} });
+  const withParts = (main, side, filter) => {
+    states = {
+      ...base(),
+      "sensor.roborock_s8_main_brush_time_left": main,
+      "sensor.roborock_s8_side_brush_time_left": side,
+      "sensor.roborock_s8_filter_time_left": filter,
+    };
+    return wear(render(<VacuumCard />).container);
+  };
+
+  it("a filter in minutes is read as minutes: 4500 min is 75h, half of 150h, not 4500h", () => {
+    const w = withParts(h("300"), h("200"), u("4500", "min"));
+    expect(w.Filter.val).toBe("75h left");
+    expect(w.Filter.p).toBe("50%");
+    expect(w.Filter.c).toBe("var(--warn)");
+  });
+
+  it("a filter in days is read as days: 3 d is 72h, not 3h and red", () => {
+    const w = withParts(h("300"), h("200"), u("3", "d"));
+    expect(w.Filter.val).toBe("72h left");
+    expect(w.Filter.c).toBe("var(--warn)");
+  });
+
+  it("uses each sensor's own unit, not the main brush's", () => {
+    const w = withParts(u("1080000", "s"), u("12000", "min"), h("150"));
+    expect(w["Main brush"].val).toBe("300h left");
+    expect(w["Side brush"].val).toBe("200h left");
+    expect(w.Filter.val).toBe("150h left");
+    for (const lbl of ["Main brush", "Side brush", "Filter"]) {
+      expect(w[lbl].p).toBe("100%");
+      expect(w[lbl].c).toBe("var(--good)");
+    }
+  });
+
+  it("a small seconds reading is still seconds, not hours", () => {
+    const w = withParts(h("300"), u("7200", "s"), h("150"));
+    expect(w["Side brush"].val).toBe("2h left");
+    expect(w["Side brush"].c).toBe("var(--bad)");
+  });
+
+  it("a unit it doesn't know, or none, is the grey unread bar — not a guess", () => {
+    const w = withParts(u("300", "fortnight"), u("200"), u("20000"));
+    for (const lbl of ["Main brush", "Side brush", "Filter"]) {
+      expect(w[lbl].p).toBe("0%");
+      expect(w[lbl].c).toBe("var(--ink-4)");
+      expect(w[lbl].val).toContain("—");
+    }
+  });
+});
+
 describe("VacuumCard segmented controls", () => {
   it("each group is labelled and its current option is aria-pressed", () => {
     states = base();
@@ -104,5 +160,50 @@ describe("VacuumCard segmented controls", () => {
         expect(b.getAttribute("aria-pressed")).toBe(String(b.textContent === current));
       }
     }
+  });
+});
+
+/* Round 4: the Time readout assumed minutes, but this Pi's Roborock entities
+   were registered before HA 2025.11 and report cleaning_time in seconds — a
+   20-minute clean read "1200 min". The unit now comes from the entity. */
+describe("VacuumCard cleaning time", () => {
+  const timeCell = (time) => {
+    states = {
+      ...base(),
+      "vacuum.roborock_s8": { state: "cleaning", attributes: {} },
+      "sensor.roborock_s8_cleaning_time": time,
+    };
+    const { container } = render(<VacuumCard />);
+    const cell = [...container.querySelectorAll(".ws-therm")].find((n) => n.querySelector(".k").textContent === "Time");
+    return cell.querySelector(".v").textContent;
+  };
+  const t = (state, unit) => ({ state, attributes: unit ? { unit_of_measurement: unit } : {} });
+
+  it("reads a seconds sensor as seconds: 1200 s is 20 min, not 1200", () => {
+    expect(timeCell(t("1200", "s"))).toBe("20min");
+  });
+
+  it("rounds a part-minute rather than printing a fraction", () => {
+    expect(timeCell(t("1250", "s"))).toBe("21min");
+  });
+
+  it("passes a minutes sensor through", () => {
+    expect(timeCell(t("35", "min"))).toBe("35min");
+  });
+
+  it("converts an hours sensor", () => {
+    expect(timeCell(t("1.5", "h"))).toBe("90min");
+  });
+
+  it("says — for a unit it doesn't know, rather than guessing", () => {
+    expect(timeCell(t("1200", "fortnight"))).toBe("—min");
+  });
+
+  it("says — with no unit at all", () => {
+    expect(timeCell(t("1200"))).toBe("—min");
+  });
+
+  it("says — for an unavailable sensor", () => {
+    expect(timeCell(t("unavailable", "s"))).toBe("—min");
   });
 });

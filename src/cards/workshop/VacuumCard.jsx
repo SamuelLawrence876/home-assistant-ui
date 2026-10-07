@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useId } from "react";
-import { formatRelativeIso } from "../../lib/format.js";
+import { formatRelativeIso, durationToMinutes } from "../../lib/format.js";
 import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
 import { callService, imageUrl } from "../../ha/client.js";
 import { SETTLE_MS } from "../../hooks/useOptimistic.js";
@@ -123,20 +123,28 @@ export function VacuumCard({ index = 0 }) {
   // liveRoom subscription above if the room readout isn't wanted.
   const _currentRoom = liveRoom?.state;
   const cleanArea = numOr(liveArea?.state, null);
-  const cleanTime = numOr(liveTime?.state, null);
+  // In the sensor's own unit: registered before HA 2025.11 (as this Pi's Roborock
+  // entities appear to be) it reports seconds, which this used to print as minutes.
+  const cleanMin = durationToMinutes(liveTime?.state, liveTime?.attributes?.unit_of_measurement);
+  const cleanTime = cleanMin == null ? null : Math.round(cleanMin);
   const cleanProgress = numOr(liveProgress?.state, null);
   const dndOn = liveDnd?.state === "on";
   const charging = liveCharging?.state === "on";
   const mopAttached = liveMopAttached?.state === "on";
   const waterShortage = liveWaterShortage?.state === "on";
-  const mainBrushRaw = numOr(liveMainBrush?.state, null);
-  const sideBrushRaw = numOr(liveSideBrush?.state, null);
-  const filterRaw = numOr(liveFilter?.state, null);
-  const consumableUnit = liveMainBrush?.attributes?.unit_of_measurement || "";
-  const toHours = (v) => v == null ? null : consumableUnit === "s" || v > 10000 ? Math.round(v / 3600) : v;
-  const mainBrushLeft = toHours(mainBrushRaw);
-  const sideBrushLeft = toHours(sideBrushRaw);
-  const filterLeft = toHours(filterRaw);
+  // Hours left, each sensor read in its own unit — like cleaning_time above, the
+  // unit is whatever HA registered that entity with. These used to take the main
+  // brush's unit for all three, or guess seconds from a big number, so a 150h
+  // filter in "min" (9000) read as 9000h and full, and one in "d" (6) as 6h and
+  // red. An unread state or a unit durationToMinutes doesn't know is null: the
+  // grey unread bar, not a guess.
+  const hoursLeft = (e) => {
+    const m = durationToMinutes(e?.state, e?.attributes?.unit_of_measurement);
+    return m == null ? null : Math.round(m / 60);
+  };
+  const mainBrushLeft = hoursLeft(liveMainBrush);
+  const sideBrushLeft = hoursLeft(liveSideBrush);
+  const filterLeft = hoursLeft(liveFilter);
   // Each part has its own life (python-roborock's *_REPLACE_TIME, which the HA
   // *_time_left sensors count down from), so each bar is a share of its own:
   // on one 300h scale a brand-new 150h filter drew half-full and amber.

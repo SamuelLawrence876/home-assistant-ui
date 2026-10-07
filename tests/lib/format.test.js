@@ -5,7 +5,7 @@
    reaches the screen. The rule these tests hold to is that an unknown value
    renders as an em-dash — never a calculation, never a plausible-looking zero. */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { fmtTime, formatRelativeIso, formatMiB, numOr, pmBand } from "../../src/lib/format.js";
+import { fmtTime, formatRelativeIso, formatMiB, numOr, pmBand, durationToMinutes } from "../../src/lib/format.js";
 
 describe("fmtTime", () => {
   it("writes a fractional hour as a wall clock", () => {
@@ -134,6 +134,37 @@ describe("numOr", () => {
       expect(numOr(v, null)).toBeNull();
     }
     expect(numOr("unavailable", 20)).toBe(20);
+  });
+});
+
+/* Round 4: VacuumCard printed Roborock's cleaning_time seconds as minutes
+   ("1200 min" for a 20-minute clean), and PrinterCard would print an hours
+   remaining_time as minutes ("2m" for 2h15m). The unit comes from the entity. */
+describe("durationToMinutes", () => {
+  it("converts each listed unit to minutes", () => {
+    expect(durationToMinutes("1200", "s")).toBe(20);
+    expect(durationToMinutes("35", "min")).toBe(35);
+    expect(durationToMinutes("2.25", "h")).toBe(135);
+    expect(durationToMinutes("1", "d")).toBe(1440);
+    expect(durationToMinutes(90, "s")).toBe(1.5);
+  });
+
+  it("reads a real zero as zero", () => {
+    expect(durationToMinutes("0", "s")).toBe(0);
+    expect(durationToMinutes("0", "h")).toBe(0);
+  });
+
+  it("refuses to guess a unit it doesn't know, or one that isn't there", () => {
+    for (const unit of [undefined, null, "", "ms", "w", "m", "MIN", "hours", "constructor", "toString"]) {
+      expect(durationToMinutes("20", unit)).toBeNull();
+    }
+  });
+
+  it("is null for every way a sensor says nothing, and for a negative duration", () => {
+    for (const v of [null, undefined, "", "unavailable", "unknown", "NaN", "12 min", true]) {
+      expect(durationToMinutes(v, "min")).toBeNull();
+    }
+    expect(durationToMinutes("-5", "min")).toBeNull();
   });
 });
 

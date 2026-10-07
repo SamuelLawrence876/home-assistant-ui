@@ -40,6 +40,26 @@ export function numOr(v, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/* A duration sensor's state in minutes, read in the entity's own
+   unit_of_measurement. The unit is not a property of the integration: HA
+   stores a suggested unit once, at first registration, and the user can
+   override it — so Roborock's cleaning_time reads seconds on an install that
+   predates HA 2025.11 and minutes on a newer one, and ha-bambulab's
+   remaining_time reads minutes or hours depending on when the printer was
+   added. Assuming either is a 60x error shown as fact. An unread state, a
+   negative one, or a unit not listed here is null — the caller's em-dash. */
+export function durationToMinutes(state, unit) {
+  const n = numOr(state, null);
+  if (n == null || n < 0) return null;
+  switch (unit) {
+    case "s": return n / 60;
+    case "min": return n;
+    case "h": return n * 60;
+    case "d": return n * 1440;
+    default: return null;
+  }
+}
+
 /* WHO / EPA-ish PM2.5 bands (µg/m³), so a readout can't call 90 "excellent".
    null in, null out: the caller decides how to say "unknown". */
 export function pmBand(v) {
