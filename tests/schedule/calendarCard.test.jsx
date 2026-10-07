@@ -8,15 +8,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-const calendarEntities = [
-  { entity_id: "calendar.personal", state: "off", attributes: { friendly_name: "Personal" } },
-  { entity_id: "calendar.work", state: "off", attributes: { friendly_name: "Work" } },
-];
+const PERSONAL = { entity_id: "calendar.personal", state: "off", attributes: { friendly_name: "Personal" } };
+const WORK = { entity_id: "calendar.work", state: "off", attributes: { friendly_name: "Work" } };
+const cal = { entities: [PERSONAL, WORK] };
 const hook = { current: null };
 const conn = { status: "ready", dashReady: true };
 
 vi.mock("../../src/ha/useEntity.js", () => ({
-  useEntitiesByDomain: () => calendarEntities,
+  useEntitiesByDomain: () => cal.entities,
   useConnectionStatus: () => conn.status,
 }));
 vi.mock("../../src/hooks/useDashReady.js", () => ({ useDashReady: () => conn.dashReady }));
@@ -46,6 +45,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date(2026, 7, 5, 12, 0));
   conn.status = "ready";
   conn.dashReady = true;
+  cal.entities = [PERSONAL, WORK];
   hook.current = result();
   // jsdom has no ResizeObserver; WeekGrid only uses it to re-read --col-h.
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -114,5 +114,42 @@ describe("WeeklyCalendarCard with one calendar unreadable", () => {
     hook.current = { events: [gym], loading: false, error: null, refresh: () => {} };
     render(<WeeklyCalendarCard />);
     expect(screen.getByText("1 events")).toBeInTheDocument();
+  });
+});
+
+/* Round 4d (D1). After a Restart HA with every calendar still loading, the
+   week read "This week · UNAVAILABLE — Home Assistant didn't answer for this
+   week" (HA's 400 for a calendar it hadn't loaded), and a calendar HA had
+   dropped kept its events on the grid until the next fetch landed. */
+describe("WeeklyCalendarCard while Home Assistant is still sending its calendars back", () => {
+  const listing = (entities, loadingIds = []) => {
+    cal.entities = Object.assign([...entities], { loadingIds });
+  };
+  const meta = () => document.querySelector(".meta")?.textContent;
+
+  it("says 'Loading this week…', not 'unavailable', when every calendar is loading and a read failed", () => {
+    listing([], ["calendar.personal", "calendar.work"]);
+    hook.current = result({ error: new Error("400"), failedIds: ["calendar.personal", "calendar.work"] });
+    render(<WeeklyCalendarCard />);
+    expect(screen.getByText("Loading this week…")).toBeInTheDocument();
+    expect(meta()).toBe("loading…");
+    expect(screen.queryByText(/didn't answer/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a calendar HA no longer lists off the grid and out of the count", () => {
+    listing([PERSONAL], ["calendar.work"]);
+    hook.current = result({ events: [gym, standup] });
+    render(<WeeklyCalendarCard />);
+    expect(screen.getByText("Gym")).toBeInTheDocument();
+    expect(screen.queryByText("Standup")).not.toBeInTheDocument();
+    expect(meta()).toBe("1 events · some calendars loading");
+  });
+
+  it("says 'No calendars' once none is loading either, with nothing left on the grid", () => {
+    listing([]);
+    hook.current = result({ events: [gym, standup] });
+    render(<WeeklyCalendarCard />);
+    expect(meta()).toBe("no calendars");
+    expect(screen.queryByText("Gym")).not.toBeInTheDocument();
   });
 });

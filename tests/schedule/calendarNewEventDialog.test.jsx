@@ -272,3 +272,81 @@ describe("NewEventDialog when the chosen calendar leaves the list", () => {
     expect(calls[0][3]).toEqual({ entity_id: "calendar.icloud" });
   });
 });
+
+/* Round 4d (D4, D18). The refusal was stored when Create was pressed, so it
+   went stale: it kept saying "iCloud is unavailable…" with Personal picked,
+   and "Work hasn't loaded yet" after Work had loaded — or under a select that
+   by then read "Work (not found)". It now follows the calendar chosen. */
+describe("NewEventDialog's refusal follows the chosen calendar", () => {
+  const live = (entity_id, label) => ({ entity_id, label, dead: false, creatable: true });
+  const work = live("calendar.work", "Work");
+  const personal = live("calendar.personal", "Personal");
+  const icloud = live("calendar.icloud", "iCloud");
+  function openOn(list, chosen, loadingIds = []) {
+    const props = {
+      onClose: vi.fn(),
+      onCreated: vi.fn(),
+      defaultCalendarId: chosen,
+      initial: { date: "2026-08-05", startTime: "10:00", endTime: "11:00" },
+    };
+    const view = render(<NewEventDialog {...props} calendars={list} loadingIds={loadingIds} />);
+    fireEvent.change(screen.getByLabelText("Event title"), { target: { value: "Dentist" } });
+    return { ...props, update: (next, ids = []) => view.rerender(<NewEventDialog {...props} calendars={next} loadingIds={ids} />) };
+  }
+  const refusalText = () => document.querySelector(".modal-error")?.textContent ?? null;
+  const shown = () => screen.getByLabelText("Calendar").selectedOptions[0]?.textContent;
+
+  it("goes when another calendar is picked, rather than naming the refused one", async () => {
+    openOn([{ ...icloud, dead: true }, personal], "calendar.icloud");
+    await submit();
+    expect(refusalText()).toMatch(/^iCloud is unavailable/);
+
+    fireEvent.change(screen.getByLabelText("Calendar"), { target: { value: "calendar.personal" } });
+    expect(shown()).toBe("Personal");
+    expect(refusalText()).toBe(null);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("goes once the calendar that hadn't loaded is back, and Create then goes through", async () => {
+    const { update } = openOn([work, personal], "calendar.work");
+    update([personal], ["calendar.work"]);
+    await submit();
+    expect(refusalText()).toMatch(/^Work hasn't loaded yet/);
+
+    update([work, personal]);
+    expect(shown()).toBe("Work");
+    expect(refusalText()).toBe(null);
+    await submit();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][3]).toEqual({ entity_id: "calendar.work" });
+  });
+
+  it("says it's gone, not 'hasn't loaded yet', once the wait for it is over", async () => {
+    const { update } = openOn([work, personal], "calendar.work");
+    update([personal], ["calendar.work"]);
+    await submit();
+    update([personal]);
+    expect(shown()).toBe("Work (not found)");
+    expect(refusalText()).toMatch(/no longer in Home Assistant/);
+    expect(refusalText()).not.toMatch(/hasn't loaded/);
+  });
+
+  it("goes once a dead calendar is live again", async () => {
+    const { update } = openOn([{ ...icloud, dead: true }, personal], "calendar.icloud");
+    await submit();
+    expect(refusalText()).toMatch(/^iCloud is unavailable/);
+    update([icloud, personal]);
+    expect(refusalText()).toBe(null);
+  });
+
+  it("names the calendar now chosen if that one dies too, and only after a refused Create", async () => {
+    const { update } = openOn([{ ...icloud, dead: true }, personal], "calendar.icloud");
+    await submit();
+    fireEvent.change(screen.getByLabelText("Calendar"), { target: { value: "calendar.personal" } });
+    update([{ ...icloud, dead: true }, { ...personal, dead: true }]);
+    expect(refusalText()).toBe(null); // nothing refused for Personal yet
+    await submit();
+    expect(refusalText()).toMatch(/^Personal is unavailable/);
+    expect(calls).toHaveLength(0);
+  });
+});

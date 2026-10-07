@@ -13,15 +13,22 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 
 let connectionStatus = "ready";
+let snapshot = true; // HA has sent its set on this connection
 const connectionListeners = new Set();
+const statesListeners = new Set();
 
 vi.mock("../../src/ha/socket.js", () => ({
   getHaUrl: () => "https://ha.example.invalid",
   getFreshAccessToken: async () => "test-token",
   getConnectionStatus: () => connectionStatus,
+  hasSnapshot: () => snapshot,
   onConnectionChange: (cb) => {
     connectionListeners.add(cb);
     return () => connectionListeners.delete(cb);
+  },
+  onStatesChanged: (cb) => {
+    statesListeners.add(cb);
+    return () => statesListeners.delete(cb);
   },
 }));
 
@@ -41,7 +48,9 @@ let fetchMock;
 
 beforeEach(() => {
   connectionStatus = "ready";
+  snapshot = true;
   connectionListeners.clear();
+  statesListeners.clear();
   fetchMock = vi.fn(async () => ({
     ok: true,
     status: 200,
@@ -348,5 +357,105 @@ describe("useCalendarEvents", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).not.toContain("test-token");
     expect(init.headers.Authorization).toBe("Bearer test-token");
+  });
+
+  /* Round 4d (D1). The reconnect fetch fired at "ready", which lands before
+     HA's first batch — so it asked for the calendar list from before the
+     drop — and an answer to "nothing to fetch" never superseded it. After a
+     Restart HA with every calendar still loading, it landed last: a removed
+     calendar's events under a plain count, or HA's 400 for a calendar it
+     hadn't loaded as "Calendar unavailable". */
+  describe("after a reconnect", () => {
+    const ok = (list) => ({ ok: true, status: 200, json: async () => list, text: async () => "" });
+    const refuse = { ok: false, status: 400, json: async () => [], text: async () => "Bad Request" };
+    const held = () => {
+      const calls = [];
+      fetchMock.mockImplementation((url) => new Promise((resolve) => calls.push({ url: String(url), resolve })));
+      return calls;
+    };
+    // The socket's order: the drop shuts the snapshot, "ready" comes back
+    // before HA has sent anything, and the first batch opens it again.
+    const drop = () => {
+      connectionStatus = "disconnected";
+      snapshot = false;
+      connectionListeners.forEach((cb) => cb("disconnected"));
+    };
+    const back = () => {
+      connectionStatus = "ready";
+      connectionListeners.forEach((cb) => cb("ready"));
+    };
+    const firstBatch = () => {
+      snapshot = true;
+      statesListeners.forEach((cb) => cb());
+    };
+    const withIds = (ids) =>
+      renderHook(({ ids: list }) => useCalendarEvents(list, START, END), { initialProps: { ids } });
+
+    it("a run for the old list doesn't land its events after the list has emptied", async () => {
+      const calls = held();
+      const { result, rerender } = withIds(["calendar.work"]);
+      await waitFor(() => expect(calls).toHaveLength(1));
+
+      rerender({ ids: [] });
+      await act(async () => calls[0].resolve(ok([{ ...EVENT }])));
+
+      expect(result.current.events).toEqual([]);
+      expect(result.current.error).toBe(null);
+      expect(result.current.loading).toBe(false);
+    });
+
+    it("nor its error", async () => {
+      const calls = held();
+      const { result, rerender } = withIds(["calendar.work"]);
+      await waitFor(() => expect(calls).toHaveLength(1));
+
+      rerender({ ids: [] });
+      await act(async () => calls[0].resolve(refuse));
+
+      expect(result.current.error).toBe(null);
+      expect(result.current.failedIds).toEqual([]);
+      expect(result.current.loading).toBe(false);
+    });
+
+    it("asks nothing at 'ready' with the pre-drop list, and asks for HA's list once it is in", async () => {
+      const { result, rerender } = withIds(["calendar.home", "calendar.work"]);
+      await waitFor(() => expect(result.current.events).toHaveLength(2));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      act(() => drop());
+      await act(async () => back());
+      expect(fetchMock).toHaveBeenCalledTimes(2); // nothing for calendar.work, which HA no longer has
+
+      await act(async () => {
+        firstBatch(); // ...and the caller's list moves with the same batch
+        rerender({ ids: ["calendar.home"] });
+      });
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      expect(calendarUrls()[2]).toContain("/api/calendars/calendar.home");
+    });
+
+    it("doesn't fetch while connected but before HA's first batch, and does once it lands", async () => {
+      snapshot = false;
+      const { result } = withIds(["calendar.home"]);
+      await act(async () => {});
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      await act(async () => firstBatch());
+      await waitFor(() => expect(result.current.events).toHaveLength(1));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("refetches once per reconnect, not on every batch after it", async () => {
+      const { result } = withIds(["calendar.home"]);
+      await waitFor(() => expect(result.current.events).toHaveLength(1));
+
+      act(() => drop());
+      await act(async () => back());
+      await act(async () => firstBatch());
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+      for (let i = 0; i < 5; i++) await act(async () => statesListeners.forEach((cb) => cb()));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
   });
 });

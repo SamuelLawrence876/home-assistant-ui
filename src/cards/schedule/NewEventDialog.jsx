@@ -32,6 +32,7 @@ export function NewEventDialog({ onClose, calendars, loadingIds = [], defaultCal
   const [location, setLocation] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [refusedId, setRefusedId] = useState(null); // the calendar a submit was refused for
 
   const headingId = useId();
   const formRef = useRef(null);
@@ -96,7 +97,10 @@ export function NewEventDialog({ onClose, calendars, loadingIds = [], defaultCal
      a service call aimed at an unavailable entity and still answers success,
      so without this the dialog closed as if the event existed. The chosen
      calendar can die while the dialog is open, so this is asked at submit
-     time — Create stays enabled (and focused) and says why instead. */
+     time — Create stays enabled (and focused) and says why instead. The
+     words are then worked out again on every render, for the calendar chosen
+     now: a stored message kept naming the one refused after another was
+     picked, and said "hasn't loaded yet" after it loaded or was found gone. */
   function refusal(id) {
     const c = calendars.find((x) => x.entity_id === id);
     if (!c && loadingIds.includes(id)) return `${nameOf(id)} hasn't loaded yet. Try again in a moment, or pick another calendar.`;
@@ -105,15 +109,17 @@ export function NewEventDialog({ onClose, calendars, loadingIds = [], defaultCal
     if (c.creatable === false) return `${c.label} doesn't take new events. Pick another calendar.`;
     return null;
   }
+  const refused = refusedId && refusedId === calendarId ? refusal(calendarId) : null;
 
   async function handleSubmit(e) {
     e.preventDefault();
     if (!canSubmit) return;
-    const refused = refusal(calendarId);
-    if (refused) {
-      setError(refused);
+    if (refusal(calendarId)) {
+      setError(null);
+      setRefusedId(calendarId);
       return;
     }
+    setRefusedId(null);
     setSubmitting(true);
     setError(null);
     /* A cleared date or time field parses to an Invalid Date, and every
@@ -240,7 +246,7 @@ export function NewEventDialog({ onClose, calendars, loadingIds = [], defaultCal
           <input type="text" aria-label="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
         </div>
 
-        {error && <div className="modal-error">{error}</div>}
+        {(refused || error) && <div className="modal-error">{refused || error}</div>}
 
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose} disabled={submitting}>Cancel</button>

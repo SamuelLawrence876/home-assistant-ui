@@ -56,7 +56,8 @@ function pickDefaultCalendar(list) {
 
    `waiting`: HA may still be loading a calendar this page had before a
    reconnect (useEntity.js). After every Restart HA it read "No calendars",
-   or a plain count without that calendar's events. */
+   or a plain count without that calendar's events. With none listed at all,
+   `error` and `loading` can only be about calendars that aren't: first. */
 function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount, failedLabels = [], calendarCount = 0, waiting = false }) {
   const connecting =
     connStatus === "connecting" ||
@@ -96,7 +97,8 @@ function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount
       },
     };
   }
-  if (!liveMode && !waiting) {
+  if (!liveMode) {
+    if (waiting) return loadingWeek;
     return {
       meta: "no calendars",
       notice: {
@@ -200,10 +202,12 @@ export function WeeklyCalendarCard({ index = 0 }) {
   // failedIds until the next run lands, and naming it would be noise.
   const failedLabels = failedIds.filter((id) => calendars[id]).map((id) => calendars[id].label);
 
-  const events = useMemo(
-    () => (liveMode ? toGridEvents(liveEventsRaw, weekStart) : []),
-    [liveMode, liveEventsRaw, weekStart],
-  );
+  /* Only calendars HA lists now: one it removed, or hasn't sent back since a
+     reconnect, keeps its events in the hook until the new list's run lands. */
+  const events = useMemo(() => {
+    const listed = new Set(calendarIds);
+    return toGridEvents(liveEventsRaw.filter((ev) => listed.has(ev.cal_entity_id)), weekStart);
+  }, [calendarIds, liveEventsRaw, weekStart]);
   const eventCount = useMemo(() => new Set(events.map((e) => e.evId)).size, [events]);
 
   /* Dialog uses mount/unmount: `dialog === null` means closed.

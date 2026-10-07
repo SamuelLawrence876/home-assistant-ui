@@ -7,15 +7,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 
-const calendarEntities = [
-  { entity_id: "calendar.personal", state: "on", attributes: { friendly_name: "Personal" } },
-];
+const PERSONAL = { entity_id: "calendar.personal", state: "on", attributes: { friendly_name: "Personal" } };
+const cal = { entities: [PERSONAL] };
 const calendarResult = { current: { events: [], loading: false, error: null, refresh: () => {} } };
 const conn = { status: "ready", dashReady: true };
 const rangesAsked = [];
 
 vi.mock("../../src/ha/useEntity.js", () => ({
-  useEntitiesByDomain: () => calendarEntities,
+  useEntitiesByDomain: () => cal.entities,
   useConnectionStatus: () => conn.status,
 }));
 vi.mock("../../src/hooks/useDashReady.js", () => ({
@@ -34,6 +33,7 @@ const distinctRanges = () => [...new Set(rangesAsked)];
 
 beforeEach(() => {
   rangesAsked.length = 0;
+  cal.entities = [PERSONAL];
   calendarResult.current = { events: [], loading: false, error: null, refresh: () => {} };
   conn.status = "ready";
   conn.dashReady = true;
@@ -275,5 +275,53 @@ describe("NextEventCard all-day events and the count", () => {
     withEvents([{ uid: "a", summary: "Bin day", cal_entity_id: "calendar.personal", ...day("2026-10-06", "2026-10-07") }]);
     render(<NextEventCard />);
     expect(screen.getByText("1 event")).toBeInTheDocument();
+  });
+});
+
+/* Round 4d (D1). After a Restart HA, with every calendar still loading, the
+   card read "Calendar unavailable — Home Assistant didn't answer." (HA's 400
+   for a calendar it hadn't loaded yet) or kept the pre-restart events under
+   a plain count, while the Schedule tab said "No calendars". */
+describe("NextEventCard while Home Assistant is still sending its calendars back", () => {
+  const standup = { uid: "s", summary: "Standup", cal_entity_id: "calendar.work", start: { dateTime: "2026-08-05T09:00:00.000Z" } };
+  const dentist = { uid: "d", summary: "Dentist", cal_entity_id: "calendar.personal", start: { dateTime: "2026-08-05T11:00:00.000Z" } };
+  const listing = (entities, loadingIds = []) => {
+    cal.entities = Object.assign([...entities], { loadingIds });
+  };
+  const result = (over) => ({ events: [], loading: false, error: null, refresh: () => {}, ...over });
+
+  it("says loading, not unavailable, when every calendar is loading and a read failed", () => {
+    listing([], ["calendar.personal", "calendar.work"]);
+    calendarResult.current = result({ error: new Error("HA GET /api/calendars/calendar.work → 400") });
+    render(<NextEventCard />);
+    expect(screen.getByText("Loading events…")).toBeInTheDocument();
+    expect(screen.getByText("loading")).toBeInTheDocument();
+    expect(screen.queryByText(/unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it("doesn't show events from a calendar HA no longer lists", () => {
+    listing([], ["calendar.work"]);
+    calendarResult.current = result({ events: [standup] });
+    render(<NextEventCard />);
+    expect(screen.queryByText("Standup")).not.toBeInTheDocument();
+    expect(screen.queryByText(/1 event/)).not.toBeInTheDocument();
+    expect(screen.getByText("Loading events…")).toBeInTheDocument();
+  });
+
+  it("says there are no calendars once none is loading either, rather than counting old events", () => {
+    listing([]);
+    calendarResult.current = result({ events: [standup] });
+    render(<NextEventCard />);
+    expect(screen.queryByText("Standup")).not.toBeInTheDocument();
+    expect(screen.getByText("No calendars are exposed to this dashboard.")).toBeInTheDocument();
+  });
+
+  it("keeps a listed calendar's events and drops only the gone one's, count included", () => {
+    listing([PERSONAL], ["calendar.work"]);
+    calendarResult.current = result({ events: [standup, dentist] });
+    render(<NextEventCard />);
+    expect(screen.getByText("Dentist")).toBeInTheDocument();
+    expect(screen.queryByText("Standup")).not.toBeInTheDocument();
+    expect(screen.getByText("1 event · some calendars loading")).toBeInTheDocument();
   });
 });

@@ -30,7 +30,9 @@ const nextDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
    is false and `events` is [] with no error at all. Printing "Nothing scheduled
    this week" in either case states a fact we don't have, next to a topbar chip
    already reading PI OFFLINE. Mirrors weekState() in WeeklyCalendarCard,
-   `waiting` included: a calendar HA may still be loading after a reconnect. */
+   `waiting` included: a calendar HA may still be loading after a reconnect.
+   With no calendar listed, `error` and `loading` can only be about calendars
+   that aren't, so that case is settled before either is looked at. */
 function nextState({ connStatus, dashReady, liveMode, loading, error, count, waiting = false }) {
   const connecting =
     connStatus === "connecting" ||
@@ -47,7 +49,7 @@ function nextState({ connStatus, dashReady, liveMode, loading, error, count, wai
   }
   if (connecting) return { meta: "connecting…", body: "Connecting to Home Assistant…" };
   if (offline) return { meta: "not connected", body: "Calendar unavailable — not connected to Home Assistant." };
-  if (!liveMode && !waiting) return { meta: "no calendars", body: "No calendars are exposed to this dashboard." };
+  if (!liveMode) return waiting ? loadingEvents : { meta: "no calendars", body: "No calendars are exposed to this dashboard." };
   if (loading) return loadingEvents;
   if (error) return { meta: "unavailable", body: "Calendar unavailable — Home Assistant didn't answer." };
   if (waiting) return loadingEvents;
@@ -88,7 +90,14 @@ export function NextEventCard({ index = 0 }) {
     return { startISO: from.toISOString(), endISO: to.toISOString() };
   }, [rangeHour]);
 
-  const { events, loading, error } = useCalendarEvents(calendarIds, startISO, endISO);
+  const { events: fetched, loading, error } = useCalendarEvents(calendarIds, startISO, endISO);
+  /* Only calendars HA lists now. One it has removed, or hasn't sent back
+     since a reconnect, keeps its events in the hook until the next run for
+     the new list lands — and they read as this week's, under a plain count. */
+  const events = useMemo(() => {
+    const listed = new Set(calendarIds);
+    return fetched.filter((ev) => listed.has(ev.cal_entity_id));
+  }, [fetched, calendarIds]);
 
   /* `shown` is the date the row is labelled with. An all-day event is kept
      while any of it is still to come — HA's end date is exclusive, so a
