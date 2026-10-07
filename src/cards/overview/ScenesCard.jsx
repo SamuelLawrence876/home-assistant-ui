@@ -121,8 +121,12 @@ const isDown = (e) => !e || e.state === "unavailable" || e.state === "unknown";
 
 /* The deps that are down — not ones HA may still be loading after a
    reconnect (useEntity.js): absent, but not known to be offline, and after
-   every Restart HA they read as "3/6 offline" for minutes. */
+   every Restart HA they read as "3/6 offline" for minutes. Those are counted
+   as loading instead: dropping them from every count read as all-clear
+   ("Idle", "5-min sunrise") for those minutes, which isn't known either. */
 const downAmong = (ids, states, loading) => ids.filter((id) => !loading.includes(id) && isDown(states[id]));
+const namesOf = (ids) => ids.map((id) => LABEL[id] || id).join(", ");
+const devices = (n) => `${n} device${n === 1 ? "" : "s"}`;
 
 function SceneTile({ s, firing, busyWord, onFire }) {
   // Moments read their script entity ("on" while running); modes read their
@@ -138,20 +142,34 @@ function SceneTile({ s, firing, busyWord, onFire }) {
   // Before the WS snapshot lands every entity looks missing — don't accuse
   // the house of being offline while we're still connecting.
   const offline = known ? downAmong(s.deps, depStates, depsLoading) : [];
+  // Held back after a reconnect (see downAmong): said as loading, in the
+  // neutral tone rather than .degraded's amber — neither accused nor cleared.
+  const loading = known ? depsLoading : [];
   const degraded = offline.length > 0 && !active;
+  const waiting = loading.length > 0 && !active;
+  const n = s.deps.length;
 
   // A busy tile drops taps (see fire()), so it says what it is doing instead
   // of inviting one with "tap to stop" / "tap to undo".
   const sub = !known ? (status === "loading" ? "—" : "Unavailable")
     : busyWord ? busyWord
     : active ? s.kind === "moment" ? "Running · tap to stop" : "On · tap to undo"
-    : degraded ? `${offline.length}/${s.deps.length} offline`
+    : degraded ? `${offline.length}/${n} offline`
+    : waiting ? `${loading.length}/${n} loading`
     : s.sub;
 
-  const offlineNames = offline.map((id) => LABEL[id] || id).join(", ");
+  const told = degraded || waiting;
+  const said = [
+    offline.length > 0 && `${offline.length} of ${n} devices offline: ${namesOf(offline)}`,
+    loading.length > 0 && `${loading.length} of ${n} devices loading: ${namesOf(loading)}`,
+  ].filter(Boolean);
   const label = !known ? `${s.nm} — ${status === "loading" ? "state unknown" : "unavailable"}`
-    : degraded && !busyWord ? `${s.nm} — ${offline.length} of ${s.deps.length} devices offline: ${offlineNames}`
+    : told && !busyWord ? `${s.nm} — ${said.join("; ")}`
     : undefined;
+  const title = !told ? undefined : [
+    offline.length > 0 && `Offline: ${namesOf(offline)}`,
+    loading.length > 0 && `Loading: ${namesOf(loading)}`,
+  ].filter(Boolean).join(" · ");
 
   return (
     <button
@@ -162,7 +180,7 @@ function SceneTile({ s, firing, busyWord, onFire }) {
       // aria-disabled, not disabled: a focused tile that turned disabled when
       // the connection dropped would throw keyboard focus onto <body>.
       aria-disabled={known ? undefined : true}
-      title={degraded ? `Offline: ${offlineNames}` : undefined}
+      title={title}
       aria-label={label}
     >
       <div className="scene-ic">{s.ic}</div>
@@ -201,6 +219,7 @@ export function ScenesCard({ index = 0 }) {
   const conn = useConnectionStatus();
   const unknown = conn !== "ready" || !snapshotReady;
   const downCount = unknown ? 0 : downAmong(ALL_DEPS, allStates, allLoading).length;
+  const loadingCount = unknown ? 0 : allLoading.length;
 
   // `active` is what the tile showed when it was tapped, so the call matches
   // the words on it: "Running · tap to stop" stops, anything else starts.
@@ -242,9 +261,13 @@ export function ScenesCard({ index = 0 }) {
   }
 
   // Unknown is connecting, signed out or dropped, or HA's set not in yet:
-  // no tile knows its state, so the card doesn't claim "Idle" either.
+  // no tile knows its state, so the card doesn't claim "Idle" either. Nor
+  // while HA is still sending some devices back: it says how many.
   const meta = unknown ? (conn === "ready" ? "—" : "Not connected")
-    : firing ? "Running" : downCount ? `${downCount} devices offline` : "Idle";
+    : firing ? "Running"
+    : downCount ? `${devices(downCount)} offline${loadingCount ? ` · ${loadingCount} loading` : ""}`
+    : loadingCount ? `${devices(loadingCount)} loading`
+    : "Idle";
 
   return (
     <Card

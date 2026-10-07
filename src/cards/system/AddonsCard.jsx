@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useConnectionStatus, useEntitiesByDomain } from "../../ha/useEntity.js";
+import { useConnectionStatus, useEntitiesByDomain, useSnapshotReady } from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { useArmedConfirm } from "./useArmedConfirm.js";
@@ -85,6 +85,8 @@ const NOTE_STYLE = {
 };
 
 const OFFLINE = "Not connected to Home Assistant";
+// Reconnected, and HA hasn't sent its set again yet.
+const RESENDING = "Waiting for Home Assistant to send its updates";
 
 function headline(pending, unreadable, total, loading) {
   if (pending) return `${pending} update${pending > 1 ? "s" : ""} available`;
@@ -103,14 +105,20 @@ export function AddonsCard({ index = 0 }) {
   // "✓ current" only when every tracked component said so — never for none,
   // never from the states cached before the socket dropped, and never while
   // HA may still be loading one after a reconnect: a pending update.* left
-  // out of a partial set read "✓ current" after every Restart HA.
-  const live = useConnectionStatus() === "ready";
+  // out of a partial set read "✓ current" after every Restart HA. Connected
+  // isn't enough for "now", either: until HA's first batch on a new
+  // connection the cache is still the pre-drop set, and it read "All up to
+  // date ✓ current" while every other card on the tab was a skeleton.
+  const connected = useConnectionStatus() === "ready";
+  const snapshotReady = useSnapshotReady();
+  const live = connected && snapshotReady;
   const loadingCount = live ? updates.loadingIds?.length || 0 : 0;
   const allCurrent = live && updates.length > 0 && current === updates.length && !loadingCount;
-  // Socket down: everything below is what HA said before it went, so it is
-  // worded as that and nothing in it can be installed — the heading already
-  // says it can't tell, and the body used to say "are at the latest version".
+  // Not live: everything below is what HA said before, so it is worded as
+  // that and nothing in it can be installed — the heading already says it
+  // can't tell, and the body used to say "are at the latest version".
   const lastKnown = !live && updates.length > 0;
+  const inertWhy = connected ? RESENDING : OFFLINE;
   const bulk = pending.filter((u) => !SYSTEM_UPDATES[u.entity_id]);
   const held = pending.length - bulk.length;
   const [installingId, setInstallingId] = useState(null);
@@ -171,14 +179,18 @@ export function AddonsCard({ index = 0 }) {
             aria-disabled={bulkInert || undefined}
             onClick={installAll}
             style={{ whiteSpace: "nowrap" }}
-            title={!live ? OFFLINE : held ? "Installs everything except Core, OS and Supervisor — they restart or reboot, so each installs from its own row" : undefined}
+            title={!live ? inertWhy : held ? "Installs everything except Core, OS and Supervisor — they restart or reboot, so each installs from its own row" : undefined}
           >
             {installingAll ? "Installing all…" : held ? "Install the rest" : "Install all"}
           </button>
         )
       }
     >
-      {lastKnown && <div style={NOTE_STYLE}>Not connected — showing what Home Assistant last reported.</div>}
+      {lastKnown && (
+        <div style={NOTE_STYLE}>
+          {`${connected ? "Reconnected, waiting for Home Assistant" : "Not connected"} — showing what Home Assistant last reported.`}
+        </div>
+      )}
       {pending.length > 0 && (
         <div className="domains" style={{ marginTop: 4 }}>
           {pending.map((u) => {
@@ -226,7 +238,7 @@ export function AddonsCard({ index = 0 }) {
                   aria-disabled={inert || undefined}
                   aria-label={running ? `Installing ${nameOf(u)}` : undefined}
                   onClick={() => !inert && pressInstall(u)}
-                  title={!live ? OFFLINE : consequence}
+                  title={!live ? inertWhy : consequence}
                 >
                   {running ? "…" : confirming ? "Confirm" : "Install"}
                 </button>

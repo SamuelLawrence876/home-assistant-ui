@@ -20,6 +20,8 @@ const states = {};
 // once "ready", each entity's own status is derived the way useEntity.js does.
 const status = { current: "ready" };
 const conn = { current: "ready" };
+// Deps HA may still be loading after a reconnect (useEntity.js#useLoadingIds).
+const loadingIds = new Set();
 const calls = [];
 const outcome = { next: () => Promise.resolve() };
 
@@ -34,9 +36,8 @@ vi.mock("../../src/ha/useEntity.js", () => ({
   },
   useEntities: (ids) => Object.fromEntries(ids.map((id) => [id, states[id]])),
   useConnectionStatus: () => conn.current,
-  // Nothing held back here: tests/ha/round4c-loading.test.jsx runs the card
-  // over the real socket for that.
-  useLoadingIds: () => [],
+  // tests/ha/round4c-socket.test.jsx also runs the card over the real socket.
+  useLoadingIds: (ids) => ids.filter((id) => loadingIds.has(id)).sort(),
   useSnapshotReady: () => status.current !== "loading",
 }));
 vi.mock("../../src/ha/client.js", () => ({
@@ -59,6 +60,7 @@ function deferred() {
 beforeEach(() => {
   vi.useFakeTimers();
   calls.length = 0;
+  loadingIds.clear();
   outcome.next = () => Promise.resolve();
   status.current = "ready";
   conn.current = "ready";
@@ -322,6 +324,65 @@ describe("ScenesCard — not connected, signed out, or a missing tile entity", (
     expect(calls).toEqual([]);
     // The others are unaffected.
     expect(tile("Movie")).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+/* D3 (round 4d). A device HA hasn't sent back yet after a reconnect (held
+   back, useEntity.js) was rightly no longer "offline" — but it dropped out of
+   every count, so for up to five minutes the card read "Idle" and each tile
+   its normal subtitle, as if every device were up. Now it says "loading", in
+   the neutral tone: neither accused nor cleared. */
+describe("ScenesCard — devices HA is still sending back", () => {
+  const BULB = "light.smartbulb_5c_h";
+  const PIXOO = "light.divoom_pixoo_64_light";
+  const holdBack = (...ids) => ids.forEach((id) => { delete states[id]; loadingIds.add(id); });
+
+  it("each affected tile says 'k/n loading' — not offline, not its all-clear subtitle — and still fires", async () => {
+    holdBack(BULB, PIXOO);
+    const { container } = render(<ScenesCard />);
+    const morning = tile("Good Morning");
+    expect(morning.querySelector(".scene-sub").textContent).toBe("2/4 loading");
+    expect(morning).not.toHaveClass("degraded");
+    expect(morning).toHaveAccessibleName("Good Morning — 2 of 4 devices loading: Pixoo 64, Bedroom bulb");
+    expect(morning).toHaveAttribute("title", "Loading: Pixoo 64, Bedroom bulb");
+    expect(tile("Work Done!").querySelector(".scene-sub").textContent).toBe("1/2 loading");
+    expect(container.textContent).not.toMatch(/offline|5-min sunrise|Colour flow/);
+    expect(container.querySelector(".meta").textContent).toBe("2 devices loading");
+    // The bulb is in every tile, Pixoo only in some.
+    expect(tile("Focus").querySelector(".scene-sub").textContent).toBe("1/5 loading");
+    expect(morning).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(morning);
+    await settle(0);
+    expect(calls).toEqual(["script.turn_on script.gh_good_morning"]);
+  });
+
+  it("offline and loading together: each named for what it is, and the header counts both", () => {
+    states[PIXOO] = { entity_id: PIXOO, state: "unavailable", attributes: {} };
+    holdBack(BULB);
+    const { container } = render(<ScenesCard />);
+    const morning = tile("Good Morning");
+    expect(morning.querySelector(".scene-sub").textContent).toBe("1/4 offline");
+    expect(morning).toHaveClass("degraded");
+    expect(morning).toHaveAccessibleName(
+      "Good Morning — 1 of 4 devices offline: Pixoo 64; 1 of 4 devices loading: Bedroom bulb",
+    );
+    expect(morning).toHaveAttribute("title", "Offline: Pixoo 64 · Loading: Bedroom bulb");
+    expect(container.querySelector(".meta").textContent).toBe("1 device offline · 1 loading");
+  });
+
+  it("a lit tile still says it is on", () => {
+    states["input_boolean.gh_mode_focus"] = { state: "on", attributes: {} };
+    holdBack(BULB);
+    render(<ScenesCard />);
+    expect(tile("Focus")).toHaveTextContent("On · tap to undo");
+  });
+
+  it("before HA's set is in, nothing is counted as loading either", () => {
+    status.current = "loading";
+    holdBack(BULB);
+    const { container } = render(<ScenesCard />);
+    expect(container.querySelector(".meta").textContent).toBe("—");
+    expect(container.textContent).not.toMatch(/loading/);
   });
 });
 

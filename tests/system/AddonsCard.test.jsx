@@ -13,7 +13,25 @@ const callService = vi.fn();
 vi.mock("../../src/ha/socket.js", async () => (await import("./fakeHa.js")).socketMock);
 vi.mock("../../src/ha/useEntity.js", async () => {
   const fake = await import("./fakeHa.js");
-  return { useEntitiesByDomain: fake.useEntitiesByDomain, useConnectionStatus: fake.useConnectionStatus };
+  const { useEffect, useState } = await import("react");
+  /* Whether HA has sent its set on this connection: connected, and not in
+     the window after a reconnect before its first batch (`ha.resending`,
+     which reconnectBeforeBatch() below opens and firstBatch() shuts). */
+  function useSnapshotReady() {
+    const read = () => fake.ha.status === "ready" && !fake.ha.resending;
+    const [ready, setReady] = useState(read);
+    useEffect(() => {
+      const sync = () => setReady(read());
+      fake.ha.statusListeners.add(sync);
+      fake.ha.statesListeners.add(sync);
+      return () => {
+        fake.ha.statusListeners.delete(sync);
+        fake.ha.statesListeners.delete(sync);
+      };
+    }, []);
+    return ready;
+  }
+  return { useEntitiesByDomain: fake.useEntitiesByDomain, useConnectionStatus: fake.useConnectionStatus, useSnapshotReady };
 });
 vi.mock("../../src/ha/client.js", () => ({
   callService: (...args) => callService(...args),
@@ -22,7 +40,7 @@ vi.mock("../../src/ha/client.js", () => ({
 import { AddonsCard, installData } from "../../src/cards/system/AddonsCard.jsx";
 import { ARM_LOCK_MS } from "../../src/cards/system/useArmedConfirm.js";
 import { RESTART_GRACE_MS, REPORT_CAP_MS, clearNotices } from "../../src/cards/system/useReconnectNotice.js";
-import { ha, setStatus, report, uptime, resetHa, dropMidCall } from "./fakeHa.js";
+import { ha, setStatus, report, snapshot, uptime, resetHa, dropMidCall } from "./fakeHa.js";
 import { getEntries, clearErrors } from "../../src/lib/errorLog.js";
 
 const T0 = "2026-10-01T08:00:00+00:00";
@@ -64,6 +82,7 @@ beforeEach(() => {
   callService.mockResolvedValue(undefined);
   clearNotices();
   resetHa();
+  ha.resending = false;
   clearErrors();
   ha.entities["sensor.uptime"] = uptime(T0);
 });
@@ -321,6 +340,64 @@ describe("AddonsCard while the socket is down", () => {
     setStatus("disconnected");
     expect(document.activeElement).toBe(installIn("Tailscale"));
     expect(installIn("Tailscale").disabled).toBe(false);
+  });
+});
+
+/* D2 (round 4d). Back on a new connection, before HA's first batch, the
+   cache is still the pre-drop set. The card took "ready" for "now": it read
+   "All up to date ✓ current — All 7 tracked components are at the latest
+   version" from it (with live Install buttons on cached rows) while every
+   other card on the tab was a skeleton, then flipped to "1 update available". */
+describe("AddonsCard between a reconnect and HA's first batch", () => {
+  const off = (u) => ({ ...u, state: "off" });
+  const head = (container) => container.querySelector("h2").textContent;
+  function reconnectBeforeBatch() {
+    setStatus("disconnected");
+    ha.resending = true;
+    setStatus("ready");
+  }
+  function firstBatch(...entities) {
+    ha.resending = false;
+    snapshot(...entities);
+  }
+
+  it("doesn't call the pre-drop states current, nor say it isn't connected", () => {
+    fixtures.updates = [off(CORE), off(TAILSCALE)];
+    const { container } = render(<AddonsCard />);
+    expect(head(container)).toBe("All up to date");
+
+    reconnectBeforeBatch();
+    expect(head(container)).toBe("Can't tell yet");
+    expect(container.querySelector(".meta")).toBeNull();
+    expect(container.textContent).not.toMatch(/✓ current|All up to date|are at the latest version|Not connected/);
+    expect(screen.getByText("Reconnected, waiting for Home Assistant — showing what Home Assistant last reported.")).toBeTruthy();
+    expect(screen.getByText("All 2 tracked components were at the latest version.")).toBeTruthy();
+
+    firstBatch(CORE, off(TAILSCALE)); // Core's update arrived while the page was away
+    expect(head(container)).toBe("1 update available");
+    expect(screen.queryByText(/Reconnected, waiting/)).toBeNull();
+  });
+
+  it("offers no Install on the cached rows meanwhile, and keeps focus where it was", () => {
+    fixtures.updates = [TAILSCALE, ESPHOME];
+    render(<AddonsCard />);
+    installIn("Tailscale").focus();
+
+    reconnectBeforeBatch();
+    for (const title of ["Tailscale", "ESPHome"]) {
+      expect(installIn(title).getAttribute("aria-disabled")).toBe("true");
+      expect(installIn(title).title).toBe("Waiting for Home Assistant to send its updates");
+      fireEvent.click(installIn(title));
+    }
+    const all = screen.getByRole("button", { name: "Install all" });
+    expect(all.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(all);
+    expect(callService).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(installIn("Tailscale"));
+
+    firstBatch(TAILSCALE, ESPHOME);
+    expect(installIn("Tailscale").getAttribute("aria-disabled")).toBeNull();
+    expect(screen.queryByText(/Reconnected, waiting/)).toBeNull();
   });
 });
 

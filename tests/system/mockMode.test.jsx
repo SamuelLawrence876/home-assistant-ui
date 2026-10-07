@@ -10,6 +10,7 @@ vi.mock("../../src/ha/useEntity.js", () => ({
   useEntity: () => undefined,
   useEntitiesByDomain: () => [],
   useConnectionStatus: () => "disconnected",
+  useSnapshotReady: () => false, // mock mode never has a snapshot
 }));
 // The restart notice watches the socket itself. Mock mode: no connection,
 // nothing reported.
