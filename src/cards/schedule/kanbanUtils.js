@@ -112,6 +112,46 @@ export function itemRef(card) {
    reports success, so nothing may be added to, moved into or out of it. */
 export const isDeadList = (status) => status === "unavailable" || status === "not_found";
 
+/* What moves when a list changes in Home Assistant. local_todo's state is the
+   list's open-item count, so an add, complete or delete made anywhere else
+   moves it; last_updated moves with every state write, so a count that goes
+   2 → 3 → 2 inside one render still reads as a change. A rename, or a
+   completed item deleted, moves neither — the board's slow heartbeat read is
+   what catches those. "" for a list with no entity (yet). */
+export const listStamp = (entity) => (entity ? `${entity.state}@${entity.last_updated}` : "");
+
+/* True when a list the board had already seen has changed since: `prev` and
+   `next` are listStamp()s joined by ",", in the same list order. A list seen
+   for the first time is not a change (it arrives with the entity snapshot,
+   and the read that is already running covers it), nor is one going away —
+   a list that goes or comes back is isDeadList's business. */
+export function listsMoved(prev, next) {
+  const was = String(prev ?? "").split(",");
+  return String(next ?? "").split(",").some((s, i) => Boolean(was[i] && s && s !== was[i]));
+}
+
+/* The lists that have just turned "ready" — in `next` and not in `prev`, both
+   list ids joined by "," — and whose last read failed (`failed`, a Set). Such
+   a list was still loading in Home Assistant when the board read it; now it
+   can be read. */
+export function listsBack(prev, next, failed) {
+  const was = new Set(String(prev ?? "").split(","));
+  return String(next ?? "").split(",").filter((id) => id && !was.has(id) && failed.has(id));
+}
+
+/* `promise`, or a rejection once `ms` pass without it settling. For a read
+   only: abandoning one changes nothing in Home Assistant. */
+export function withTimeout(promise, ms) {
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer in ${Math.round(ms / 1000)} s`)), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+/* The Done column's id. The other columns are Home Assistant to-do lists. */
+export const DONE = "__done__";
+
 /* The board's honest states, after weekState() in WeeklyCalendarCard.jsx.
 
    `reads` is { [columnId]: "unread" | "ok" | "error" | "partial" } — whether
