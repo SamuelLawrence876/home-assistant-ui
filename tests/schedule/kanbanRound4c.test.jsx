@@ -347,7 +347,8 @@ describe("R4C-3: a list HA was still loading on a reconnect is read when it arri
 
   it("after the retries are spent, its arrival reads it — once", async () => {
     await reconnectWithNextLoading({ readable: false });
-    expect(within(col("Next")).getByText("Couldn't refresh · may be out of date")).toBeInTheDocument();
+    // Still loading in HA, so a wait rather than a failure (D5/D21, kanbanRound4d.test.jsx).
+    expect(within(col("Next")).getByText("Loading… · may be out of date")).toBeInTheDocument();
     await advance(28_000 + 60_000);               // both retries fail; then nothing until the heartbeat
     expect(ha.reads).toBe(4 * ONE_READ);          // mount, reconnect, two retries
     act(() => { ha.lists["todo.next"].push(item("m", "Card M")); });   // added while HA was loading

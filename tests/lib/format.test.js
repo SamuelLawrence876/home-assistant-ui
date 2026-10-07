@@ -149,13 +149,34 @@ describe("durationToMinutes", () => {
     expect(durationToMinutes(90, "s")).toBe(1.5);
   });
 
+  /* D22: every unit HA's DurationConverter converts, not just the four the
+     integrations here register with. A user can pick any of them as a
+     sensor's display unit, and 1200000 ms read as "—" dropped a fact HA
+     reported in a standard unit. */
+  it("converts ms, both spellings of μs, and weeks", () => {
+    expect(durationToMinutes("1200000", "ms")).toBe(20);
+    expect(durationToMinutes("90000", "ms")).toBe(1.5);
+    expect(durationToMinutes("1200000000", "μs")).toBe(20);   // μs, Greek mu: what HA writes
+    expect(durationToMinutes("1200000000", "µs")).toBe(20);   // µs, the micro sign
+    expect(durationToMinutes("2", "w")).toBe(20160);
+    expect(durationToMinutes("0", "ms")).toBe(0);
+    expect(durationToMinutes("-1", "ms")).toBeNull();
+    expect(durationToMinutes("unavailable", "μs")).toBeNull();
+  });
+
+  it("agrees with HA's own factors for every unit it converts (1 h in each)", () => {
+    const oneHour = { "μs": 3.6e9, "µs": 3.6e9, ms: 3.6e6, s: 3600, min: 60, h: 1, d: 1 / 24, w: 1 / 168 };
+    for (const [unit, v] of Object.entries(oneHour)) expect(durationToMinutes(v, unit)).toBeCloseTo(60, 9);
+  });
+
   it("reads a real zero as zero", () => {
     expect(durationToMinutes("0", "s")).toBe(0);
     expect(durationToMinutes("0", "h")).toBe(0);
   });
 
   it("refuses to guess a unit it doesn't know, or one that isn't there", () => {
-    for (const unit of [undefined, null, "", "ms", "w", "m", "MIN", "hours", "constructor", "toString"]) {
+    // "m" and "y" are UnitOfTime's months and years: HA doesn't convert them, and neither does this.
+    for (const unit of [undefined, null, "", "m", "y", "us", "MS", "MIN", "hours", "constructor", "toString"]) {
       expect(durationToMinutes("20", unit)).toBeNull();
     }
   });

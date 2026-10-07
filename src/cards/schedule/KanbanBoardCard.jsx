@@ -168,18 +168,20 @@ export function KanbanBoardCard({ index = 0 }) {
            The card can be older than the list, though: one deleted (or
            completed, or moved) elsewhere since the last read is still drawn
            here, and adding it would bring it back. So the source has to still
-           hold it, by uid, in the state its column shows — or nothing is sent. */
+           hold it, by uid, in the state its column shows — or nothing is sent.
+           What is added is the item as that check read it, not the card, or
+           a rename, tag or due date changed elsewhere since would be lost. */
         const was = fromCol === DONE ? "completed" : "needs_action";
-        if (!(await getTodoItems(card._entity, was)).some((i) => i.uid === card.uid)) {
-          throw new Error(`item is no longer in ${card._entity} (changed or deleted elsewhere)`);
-        }
-        const uid = await addConfirmed(toCol, card);
+        const fresh = (await getTodoItems(card._entity, was)).find((i) => i.uid === card.uid);
+        if (!fresh) throw new Error(`item is no longer in ${card._entity} (changed or deleted elsewhere)`);
+        const now = { summary: fresh.summary, description: fresh.description, due: fresh.due };
+        const uid = await addConfirmed(toCol, now);
         await callService("todo", "remove_item", { entity_id: card._entity, item: itemRef(card) });
-        /* The card now IS the new item: give it that list and uid, so the
-           next move or delete before the re-read targets what exists. */
+        /* The card now IS the new item: give it that list, uid and content,
+           so the next move or delete before the re-read targets what exists. */
         setColumns((cur) => ({
           ...cur,
-          [toCol]: cur[toCol].map((c) => (cardKey(c) === key ? { ...c, uid, _entity: toCol, status: "needs_action" } : c)),
+          [toCol]: cur[toCol].map((c) => (cardKey(c) === key ? { ...c, ...now, uid, _entity: toCol, status: "needs_action" } : c)),
         }));
       }
       endWrite(500);
