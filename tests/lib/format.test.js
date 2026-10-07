@@ -5,7 +5,7 @@
    reaches the screen. The rule these tests hold to is that an unknown value
    renders as an em-dash — never a calculation, never a plausible-looking zero. */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { fmtTime, formatRelativeIso, formatMiB, numOr, pmBand } from "../../src/lib/format.js";
+import { fmtTime, formatRelativeIso, formatMiB, numOr, pmBand, durationToMinutes } from "../../src/lib/format.js";
 
 describe("fmtTime", () => {
   it("writes a fractional hour as a wall clock", () => {
@@ -134,6 +134,58 @@ describe("numOr", () => {
       expect(numOr(v, null)).toBeNull();
     }
     expect(numOr("unavailable", 20)).toBe(20);
+  });
+});
+
+/* Round 4: VacuumCard printed Roborock's cleaning_time seconds as minutes
+   ("1200 min" for a 20-minute clean), and PrinterCard would print an hours
+   remaining_time as minutes ("2m" for 2h15m). The unit comes from the entity. */
+describe("durationToMinutes", () => {
+  it("converts each listed unit to minutes", () => {
+    expect(durationToMinutes("1200", "s")).toBe(20);
+    expect(durationToMinutes("35", "min")).toBe(35);
+    expect(durationToMinutes("2.25", "h")).toBe(135);
+    expect(durationToMinutes("1", "d")).toBe(1440);
+    expect(durationToMinutes(90, "s")).toBe(1.5);
+  });
+
+  /* D22: every unit HA's DurationConverter converts, not just the four the
+     integrations here register with. A user can pick any of them as a
+     sensor's display unit, and 1200000 ms read as "—" dropped a fact HA
+     reported in a standard unit. */
+  it("converts ms, both spellings of μs, and weeks", () => {
+    expect(durationToMinutes("1200000", "ms")).toBe(20);
+    expect(durationToMinutes("90000", "ms")).toBe(1.5);
+    expect(durationToMinutes("1200000000", "μs")).toBe(20);   // μs, Greek mu: what HA writes
+    expect(durationToMinutes("1200000000", "µs")).toBe(20);   // µs, the micro sign
+    expect(durationToMinutes("2", "w")).toBe(20160);
+    expect(durationToMinutes("0", "ms")).toBe(0);
+    expect(durationToMinutes("-1", "ms")).toBeNull();
+    expect(durationToMinutes("unavailable", "μs")).toBeNull();
+  });
+
+  it("agrees with HA's own factors for every unit it converts (1 h in each)", () => {
+    const oneHour = { "μs": 3.6e9, "µs": 3.6e9, ms: 3.6e6, s: 3600, min: 60, h: 1, d: 1 / 24, w: 1 / 168 };
+    for (const [unit, v] of Object.entries(oneHour)) expect(durationToMinutes(v, unit)).toBeCloseTo(60, 9);
+  });
+
+  it("reads a real zero as zero", () => {
+    expect(durationToMinutes("0", "s")).toBe(0);
+    expect(durationToMinutes("0", "h")).toBe(0);
+  });
+
+  it("refuses to guess a unit it doesn't know, or one that isn't there", () => {
+    // "m" and "y" are UnitOfTime's months and years: HA doesn't convert them, and neither does this.
+    for (const unit of [undefined, null, "", "m", "y", "us", "MS", "MIN", "hours", "constructor", "toString"]) {
+      expect(durationToMinutes("20", unit)).toBeNull();
+    }
+  });
+
+  it("is null for every way a sensor says nothing, and for a negative duration", () => {
+    for (const v of [null, undefined, "", "unavailable", "unknown", "NaN", "12 min", true]) {
+      expect(durationToMinutes(v, "min")).toBeNull();
+    }
+    expect(durationToMinutes("-5", "min")).toBeNull();
   });
 });
 

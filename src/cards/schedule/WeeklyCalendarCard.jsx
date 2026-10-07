@@ -21,6 +21,28 @@ const START_HOUR = 8;
 const END_HOUR = 22;
 const SLOTS_PER_HOUR = 2;
 
+/* HA's CalendarEntityFeature.CREATE_EVENT. */
+const CREATE_EVENT = 1;
+const NONE = [];
+
+/* Whether calendar.create_event can land in this calendar: true / false when
+   supported_features says, null when the attribute isn't there to ask. */
+function canCreate(attributes) {
+  const f = attributes?.supported_features;
+  if (typeof f !== "number" || !Number.isFinite(f)) return null;
+  return (f & CREATE_EVENT) === CREATE_EVENT;
+}
+
+/* The dialog's starting calendar: the first live one that says it takes new
+   events, else the first live one that doesn't say either way. Never a dead
+   one — HA skips an unavailable target and still reports success, so the
+   old `calendarIds[0]` default could "create" an event nowhere. "" when no
+   calendar qualifies; the dialog then can't submit. */
+function pickDefaultCalendar(list) {
+  const live = list.filter((c) => !c.dead);
+  return (live.find((c) => c.creatable === true) || live.find((c) => c.creatable !== false))?.entity_id || "";
+}
+
 /* Which of the honest states we're in, as the card's meta line plus an
    optional notice drawn over the (still full-size) week grid.
 
@@ -30,8 +52,13 @@ const SLOTS_PER_HOUR = 2;
 
    `failedLabels` is set when only some calendars could be read. Then the
    gap is one named calendar, not the whole week, and saying "may be out of
-   date" left a dead Work calendar reading as a quiet one. */
-function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount, failedLabels = [], calendarCount = 0 }) {
+   date" left a dead Work calendar reading as a quiet one.
+
+   `waiting`: HA may still be loading a calendar this page had before a
+   reconnect (useEntity.js). After every Restart HA it read "No calendars",
+   or a plain count without that calendar's events. With none listed at all,
+   `error` and `loading` can only be about calendars that aren't: first. */
+function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount, failedLabels = [], calendarCount = 0, waiting = false }) {
   const connecting =
     connStatus === "connecting" ||
     connStatus === "authenticating" ||
@@ -47,8 +74,10 @@ function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount
     if (offline) return { meta: `${eventCount} events · not connected`, notice: null };
     if (partial) return { meta: `${eventCount} events · ${failedList} unavailable`, notice: null };
     if (error) return { meta: `${eventCount} events · may be out of date`, notice: null };
+    if (waiting) return { meta: `${eventCount} events · some calendars loading`, notice: null };
     return { meta: `${eventCount} events`, notice: null };
   }
+  const loadingWeek = { meta: "loading…", notice: { title: "Loading this week…", detail: null } };
 
   if (connecting) {
     return {
@@ -69,6 +98,7 @@ function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount
     };
   }
   if (!liveMode) {
+    if (waiting) return loadingWeek;
     return {
       meta: "no calendars",
       notice: {
@@ -77,9 +107,7 @@ function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount
       },
     };
   }
-  if (loading) {
-    return { meta: "loading…", notice: { title: "Loading this week…", detail: null } };
-  }
+  if (loading) return loadingWeek;
   if (error) {
     return {
       meta: partial ? `${failedList} unavailable` : "unavailable",
@@ -91,6 +119,7 @@ function weekState({ connStatus, dashReady, liveMode, loading, error, eventCount
       },
     };
   }
+  if (waiting) return loadingWeek; // "no events" would leave that calendar out
   return {
     meta: "no events",
     notice: { title: "No events this week", detail: "Nothing scheduled between Monday and Sunday." },
@@ -138,6 +167,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
   const connStatus = useConnectionStatus();
   const dashReady = useDashReady();
   const calendarEntities = useEntitiesByDomain("calendar");
+  const loadingIds = calendarEntities.loadingIds || NONE;
   /* Keyed on the *contents* of the entity list, not the array identity:
      `useEntitiesByDomain` hands back a fresh array on every state batch, and
      a new `calendarIds` array is a new fetch key downstream. */
@@ -172,19 +202,32 @@ export function WeeklyCalendarCard({ index = 0 }) {
   // failedIds until the next run lands, and naming it would be noise.
   const failedLabels = failedIds.filter((id) => calendars[id]).map((id) => calendars[id].label);
 
-  const events = useMemo(
-    () => (liveMode ? toGridEvents(liveEventsRaw, weekStart) : []),
-    [liveMode, liveEventsRaw, weekStart],
-  );
+  /* Only calendars HA lists now: one it removed, or hasn't sent back since a
+     reconnect, keeps its events in the hook until the new list's run lands. */
+  const events = useMemo(() => {
+    const listed = new Set(calendarIds);
+    return toGridEvents(liveEventsRaw.filter((ev) => listed.has(ev.cal_entity_id)), weekStart);
+  }, [calendarIds, liveEventsRaw, weekStart]);
   const eventCount = useMemo(() => new Set(events.map((e) => e.evId)).size, [events]);
 
   /* Dialog uses mount/unmount: `dialog === null` means closed.
      `{ initial: { date, startTime, endTime } | null }` means open with
      those pre-fills (null = today + next hour defaults). */
   const [dialog, setDialog] = useState(null);
+  /* Each calendar's current liveness travels with it, so the dialog can grey
+     out a dead one and refuse a create into it rather than report success. */
   const dialogCalendars = useMemo(
-    () => Object.entries(calendars).map(([entity_id, c]) => ({ entity_id, label: c.label })),
-    [calendars],
+    () =>
+      calendarEntities
+        .slice()
+        .sort((a, b) => a.entity_id.localeCompare(b.entity_id))
+        .map((e) => ({
+          entity_id: e.entity_id,
+          label: calendars[e.entity_id]?.label || e.entity_id.replace(/^calendar\./, ""),
+          dead: e.state === "unavailable" || e.state === "unknown",
+          creatable: canCreate(e.attributes),
+        })),
+    [calendarEntities, calendars],
   );
 
   const { meta, notice } = weekState({
@@ -196,6 +239,7 @@ export function WeeklyCalendarCard({ index = 0 }) {
     eventCount,
     failedLabels,
     calendarCount: calendarIds.length,
+    waiting: loadingIds.length > 0,
   });
   const legend = Object.entries(calendars);
 
@@ -221,7 +265,8 @@ export function WeeklyCalendarCard({ index = 0 }) {
         <NewEventDialog
           onClose={() => setDialog(null)}
           calendars={dialogCalendars}
-          defaultCalendarId={calendarIds[0]}
+          loadingIds={loadingIds}
+          defaultCalendarId={pickDefaultCalendar(dialogCalendars)}
           initial={dialog.initial}
           onCreated={refresh}
         />

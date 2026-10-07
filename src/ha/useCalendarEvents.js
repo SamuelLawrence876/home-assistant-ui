@@ -26,7 +26,12 @@
 */
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { getHaUrl, getFreshAccessToken, getConnectionStatus, onConnectionChange } from "./socket.js";
+import { getHaUrl, getFreshAccessToken, getConnectionStatus, onConnectionChange, onStatesChanged, hasSnapshot } from "./socket.js";
+
+/* Connected, and HA has sent its set on this connection. Until then the
+   caller's calendar list is the one from before the drop — a calendar HA
+   has since removed, or hasn't loaded yet, is still in it. */
+const isLive = () => getConnectionStatus() === "ready" && hasSnapshot();
 
 /* A failed run leaves no "done" marker, so the next range change / reconnect /
    refresh() refetches for real. These are the safety net for a caller whose
@@ -106,11 +111,25 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
   const rangeKey = `${key}|${connectionTick}`;
   const runKey = `${rangeKey}|${retryTick}`;
 
-  // Re-fetch once the WS becomes ready (we may have rendered before tokens existed).
+  /* Re-fetch each time the connection comes back live — not at "ready",
+     which lands before HA's first batch: that fetch asked for the pre-drop
+     list, and its answer (a removed calendar's events, or HA's 400 for one it
+     hasn't loaded) arrived after the real one. A states batch is the moment
+     the snapshot lands; only the change to live bumps, so the other batches
+     cost a comparison. */
   useEffect(() => {
-    return onConnectionChange((s) => {
-      if (s === "ready") setConnectionTick((t) => t + 1);
-    });
+    let live = isLive();
+    const sync = () => {
+      const now = isLive();
+      if (now && !live) setConnectionTick((t) => t + 1);
+      live = now;
+    };
+    const offStatus = onConnectionChange(sync);
+    const offStates = onStatesChanged(sync);
+    return () => {
+      offStatus();
+      offStates();
+    };
   }, []);
 
   // Fresh retry budget per range; drop any pending timer on unmount.
@@ -138,6 +157,9 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
   const run = useCallback(async (force = false) => {
     clearTimeout(retryRef.current);
     if (!entityIds || entityIds.length === 0 || !startISO || !endISO) {
+      // Supersedes a run still in flight for the old list: it must not land
+      // on top of this answer with that list's events or error.
+      reqIdRef.current += 1;
       doneRef.current = runKey;
       inFlightRef.current = null;
       // Identity-preserving: a plain setEvents([]) hands React a new array on
@@ -149,7 +171,7 @@ export function useCalendarEvents(entityIds, startISO, endISO) {
       setLoading(false);
       return;
     }
-    if (getConnectionStatus() !== "ready") return; // wait for socket-ready tick
+    if (!isLive()) return; // the live tick above brings it back
     // A caller with an unstable range (a fresh `new Date()` per render) would
     // otherwise hit every calendar on every render. No caller gets to storm the
     // Pi — but only a run that actually came back counts as done.

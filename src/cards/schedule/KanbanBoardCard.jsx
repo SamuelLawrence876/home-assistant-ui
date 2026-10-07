@@ -1,21 +1,24 @@
 import { useState, useEffect, useLayoutEffect, useRef, useId } from "react";
-import { useConnectionStatus, useEntityStatus } from "../../ha/useEntity.js";
+import { useEntityStatus } from "../../ha/useEntity.js";
 import { callService, getTodoItems } from "../../ha/client.js";
 import { describeHaError } from "../../ha/errors.js";
 import { logError } from "../../lib/errorLog.js";
 import { Card } from "../../components/Card.jsx";
 import { KanbanAddForm } from "./KanbanAddForm.jsx";
 import { KanbanTask } from "./KanbanTask.jsx";
+import { useKanbanItems } from "./useKanbanItems.js";
 import {
   buildDescription, dueFields, boardState, cardKey, itemRef, isTempCard, isDeadList, omit, TEMP_UID_PREFIX,
+  listStamp, DONE,
 } from "./kanbanUtils.js";
 
 /* ----------------------------------------------------------------
    Kanban — local todo lists stored on the Pi (local_todo integration).
    Columns: Backlog → Next → In Progress → Done.
    Tags stored as #tag in description. Due dates optional.
+   How the board reads its lists, and keeps those reads out of its own
+   writes' way: useKanbanItems.js.
    ----------------------------------------------------------------*/
-const DONE = "__done__";
 const KANBAN_COLS = [
   { id: "todo.backlog", label: "Backlog" },
   { id: "todo.next",    label: "Next" },
@@ -31,24 +34,17 @@ const ALL_COL_IDS = KANBAN_COLS.map((c) => c.id);
    this runs out, so Undo needs no compensating call. */
 const UNDO_MS = 5000;
 
-/* After a read that failed for a list Home Assistant says is there, read again
-   — twice, then stop and leave it to the column's Retry button. The same
-   delays as useCalendarEvents: one transient failure shouldn't strand a column
-   on "Couldn't read" until something unrelated re-reads it, and a list that
-   keeps failing mustn't become a loop at the Pi. A reconnect, Retry, or a read
-   that comes back clean starts the budget over. */
-const RETRY_DELAYS_MS = [8000, 20000];
-
 let tempSeq = 0;
 
 /* One useEntityStatus per list. The lists are fixed, so the hooks run in the
-   same order on every render. */
+   same order on every render. `changeKey` is every list's listStamp, joined. */
 const [BACKLOG, NEXT, DOING] = KANBAN_ENTITY_IDS;
 function useListStatuses() {
-  const backlog = useEntityStatus(BACKLOG).status;
-  const next = useEntityStatus(NEXT).status;
-  const doing = useEntityStatus(DOING).status;
-  return { [BACKLOG]: backlog, [NEXT]: next, [DOING]: doing };
+  const all = [useEntityStatus(BACKLOG), useEntityStatus(NEXT), useEntityStatus(DOING)];
+  return {
+    lists: Object.fromEntries(KANBAN_ENTITY_IDS.map((id, i) => [id, all[i].status])),
+    changeKey: all.map((s) => listStamp(s.entity)).join(","),
+  };
 }
 
 /* Adds `card` to `listId` and resolves with the new item's uid once a re-read
@@ -70,106 +66,13 @@ async function addConfirmed(listId, card) {
   return landed.uid;
 }
 
-function useKanbanItems(entityIds, deadKey) {
-  const connStatus = useConnectionStatus();
-  const [columns, setColumns] = useState(() => Object.fromEntries(ALL_COL_IDS.map((id) => [id, []])));
-  /* Per column: "unread" | "ok" | "error" | "partial". Done is "ok" only if
-     every list's completed items came back. See boardState() for what each
-     one says. */
-  const [reads, setReads] = useState(() => Object.fromEntries(ALL_COL_IDS.map((id) => [id, "unread"])));
-  const [fetchTick, setFetchTick] = useState(0);
-  /* A read is in flight — what Retry shows while it waits. The ref is why a
-     second press doesn't start a second read: the state only turns true after
-     the re-render the first press causes, so a double-click or Enter twice
-     both saw false and each started a full read. */
-  const [reading, setReading] = useState(false);
-  const readingRef = useRef(false);
-  const setInFlight = (v) => { readingRef.current = v; setReading(v); };
-  const attemptRef = useRef(0);
-  const retryRef = useRef(null);
-  /* Lists whose completed items have been read at least once. A failed list
-     keeps its old cards in Done, but one never read has none there — and then
-     Done's count is a subset passed off as the whole column. */
-  const doneRead = useRef(new Set());
-  /* The same for a list's own column: one never read holds only what this
-     board put there (an add, a move), so its count is "partial" too — "1"
-     for a list of 6 otherwise. */
-  const listRead = useRef(new Set());
-
-  useEffect(() => {
-    if (connStatus !== "ready") {
-      attemptRef.current = 0; // the reconnect gets a fresh retry budget
-      setInFlight(false);
-      return;
-    }
-    let cancelled = false;
-    setInFlight(true);
-    (async () => {
-      const results = await Promise.all(entityIds.map(async (id) => {
-        const [active, completed] = await Promise.allSettled([
-          getTodoItems(id, "needs_action"),
-          getTodoItems(id, "completed"),
-        ]);
-        return { id, active, completed };
-      }));
-      if (cancelled) return;
-      const own = (id) => (it) => ({ ...it, _entity: id });
-      /* A failed read keeps what that column already showed instead of
-         emptying it: an empty column is a claim, and we didn't check. */
-      setColumns((cur) => {
-        const next = { ...cur };
-        const done = [];
-        for (const { id, active, completed } of results) {
-          if (active.status === "fulfilled") next[id] = active.value.map(own(id));
-          if (completed.status === "fulfilled") done.push(...completed.value.map(own(id)));
-          else done.push(...(cur[DONE] || []).filter((c) => c._entity === id));
-        }
-        next[DONE] = done;
-        return next;
-      });
-      const hole = results.some((x) => x.completed.status !== "fulfilled" && !doneRead.current.has(x.id));
-      for (const { id, completed } of results) if (completed.status === "fulfilled") doneRead.current.add(id);
-      const r = { [DONE]: results.every((x) => x.completed.status === "fulfilled") ? "ok" : hole ? "partial" : "error" };
-      for (const { id, active } of results) {
-        if (active.status === "fulfilled") listRead.current.add(id);
-        r[id] = active.status === "fulfilled" ? "ok" : listRead.current.has(id) ? "error" : "partial";
-      }
-      setReads(r);
-      setInFlight(false);
-      /* A dead list can't be read and asking again won't change that; its
-         column recovers when the list comes back (deadKey, below). */
-      const dead = deadKey.split(",");
-      const failed = results.some((x) => !dead.includes(x.id)
-        && (x.active.status !== "fulfilled" || x.completed.status !== "fulfilled"));
-      if (!failed) { attemptRef.current = 0; return; }
-      const delay = RETRY_DELAYS_MS[attemptRef.current];
-      if (delay == null) return;
-      attemptRef.current += 1;
-      retryRef.current = setTimeout(() => setFetchTick((t) => t + 1), delay);
-    })();
-    /* Whatever re-runs this — a write's refresh, a reconnect, unmount — makes
-       a pending retry moot: the new run decides again. */
-    return () => { cancelled = true; clearTimeout(retryRef.current); };
-    /* deadKey (which lists are unavailable, as a string) is a reason to read
-       again: a list coming back is the only way its column recovers by itself. */
-  }, [connStatus, fetchTick, deadKey]);
-
-  const refresh = () => setFetchTick((t) => t + 1);
-  /* The person asked: the automatic retries are earned back too. */
-  const retry = () => {
-    if (readingRef.current) return;
-    readingRef.current = true;
-    attemptRef.current = 0;
-    refresh();
-  };
-
-  return { connStatus, columns, setColumns, reads, reading, refresh, retry };
-}
-
 export function KanbanBoardCard({ index = 0 }) {
-  const lists = useListStatuses();
+  const { lists, changeKey } = useListStatuses();
   const deadKey = KANBAN_ENTITY_IDS.filter((id) => isDeadList(lists[id])).join(",");
-  const { connStatus, columns, setColumns, reads, reading, refresh, retry } = useKanbanItems(KANBAN_ENTITY_IDS, deadKey);
+  const readyKey = KANBAN_ENTITY_IDS.filter((id) => lists[id] === "ready").join(",");
+  const { connStatus, columns, setColumns, reads, reading, retry, beginWrite } = useKanbanItems(
+    KANBAN_ENTITY_IDS, { deadKey, changeKey, readyKey },
+  );
   const canWrite = connStatus === "ready";
   /* A write is offered only into a list HA will act on. "loading" (no state
      snapshot yet) isn't proof the list exists, so it doesn't count either. */
@@ -250,6 +153,7 @@ export function KanbanBoardCard({ index = 0 }) {
     movingRef.current.add(key);
     setMoving((m) => ({ ...m, [key]: true }));
     optimisticMove(key, fromCol, toCol);
+    const endWrite = beginWrite();
     try {
       if (toCol === DONE) {
         await callService("todo", "update_item", { entity_id: card._entity, item: itemRef(card), status: "completed" });
@@ -260,28 +164,39 @@ export function KanbanBoardCard({ index = 0 }) {
            first and is CONFIRMED by re-reading the target (addConfirmed);
            only then is the source removed. Any failure leaves the task where
            it was or, at worst, in both lists — never in neither. The new item
-           lands as needs_action, so no status update is needed. */
-        const uid = await addConfirmed(toCol, card);
+           lands as needs_action, so no status update is needed.
+           The card can be older than the list, though: one deleted (or
+           completed, or moved) elsewhere since the last read is still drawn
+           here, and adding it would bring it back. So the source has to still
+           hold it, by uid, in the state its column shows — or nothing is sent.
+           What is added is the item as that check read it, not the card, or
+           a rename, tag or due date changed elsewhere since would be lost. */
+        const was = fromCol === DONE ? "completed" : "needs_action";
+        const fresh = (await getTodoItems(card._entity, was)).find((i) => i.uid === card.uid);
+        if (!fresh) throw new Error(`item is no longer in ${card._entity} (changed or deleted elsewhere)`);
+        const now = { summary: fresh.summary, description: fresh.description, due: fresh.due };
+        const uid = await addConfirmed(toCol, now);
         await callService("todo", "remove_item", { entity_id: card._entity, item: itemRef(card) });
-        /* The card now IS the new item: give it that list and uid, so the
-           next move or delete before the re-read targets what exists. */
+        /* The card now IS the new item: give it that list, uid and content,
+           so the next move or delete before the re-read targets what exists. */
         setColumns((cur) => ({
           ...cur,
-          [toCol]: cur[toCol].map((c) => (cardKey(c) === key ? { ...c, uid, _entity: toCol, status: "needs_action" } : c)),
+          [toCol]: cur[toCol].map((c) => (cardKey(c) === key ? { ...c, ...now, uid, _entity: toCol, status: "needs_action" } : c)),
         }));
       }
-      setTimeout(refresh, 500);
+      endWrite(500);
     } catch (err) {
       /* Most failures here never pass through callService — a list that
-         couldn't be read, an add HA silently skipped — so nothing else would
-         record them, and the card would just snap back without a word. */
+         couldn't be read, an add HA silently skipped, a task changed
+         elsewhere — so nothing else would record them, and the card would
+         just snap back without a word. */
       logError({ source: "service", message: "Kanban move didn't go through", detail: `${fromCol} → ${toCol} · ${describeHaError(err)}` });
       /* Put the card back, then re-read: half the move may have landed, and
          the re-read shows what really exists. Offline the re-read can't run,
          but then the first call is the one that failed, so nothing landed
          and the revert is the truth. */
       optimisticMove(key, toCol, fromCol);
-      refresh();
+      endWrite(0);
     } finally {
       movingRef.current.delete(key);
       setMoving((m) => omit(m, key));
@@ -296,16 +211,17 @@ export function KanbanBoardCard({ index = 0 }) {
        vanish on the next read. Refuse instead, so the form keeps the draft. */
     if (!listReady(colId)) throw new Error(`${colId} is not available`);
     const desc = buildDescription(tags, "");
+    const endWrite = beginWrite();
     await callService("todo", "add_item", {
       entity_id: colId,
       item: summary,
       ...dueFields(due),
       ...(desc ? { description: desc } : {}),
-    });
+    }).catch((err) => { endWrite(); throw err; });
     const temp = { uid: `${TEMP_UID_PREFIX}${++tempSeq}`, summary, description: desc, due: due || undefined, status: "needs_action", _entity: colId };
     setColumns((cur) => ({ ...cur, [colId]: [...cur[colId], temp] }));
     setAdding((cur) => (cur === colId ? null : cur));
-    setTimeout(refresh, 500);
+    endWrite(500);
   }
 
   function startDelete(colId, card) {
@@ -333,14 +249,16 @@ export function KanbanBoardCard({ index = 0 }) {
       focusColumn(entry.colId);
     }
     setPending((p) => ({ ...p, [key]: "sending" }));
+    const endWrite = beginWrite();
     try {
       await callService("todo", "remove_item", removePayload(entry));
       setColumns((cur) => Object.fromEntries(
         Object.entries(cur).map(([id, items]) => [id, items.filter((c) => cardKey(c) !== key)]),
       ));
-      setTimeout(refresh, 500);
+      endWrite(500);
     } catch {
       /* Nothing was deleted, so the card just comes back where it was. */
+      endWrite();
     } finally {
       pendingRef.current.delete(key);
       setPending((p) => omit(p, key));

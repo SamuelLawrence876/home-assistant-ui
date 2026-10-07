@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useConnectionStatus } from "../../ha/useEntity.js";
+import { useConnectionStatus, useEntityCounts, useSnapshotReady } from "../../ha/useEntity.js";
 import { getAllStates, onStatesChanged } from "../../ha/socket.js";
 import { Card } from "../../components/Card.jsx";
 
@@ -32,20 +32,29 @@ export function EntityHealthCard({ index = 0 }) {
     // depend on. `tick` is the invalidation signal.
   }, [tick, connStatus]);
 
-  const loading = connStatus !== "ready";
+  /* Right after a reconnect, before HA's first batch, the cache is the
+     pre-drop set; after it, entities HA hasn't re-sent yet are left out until
+     they arrive (or 5 minutes pass). Counting either as the registry made a
+     restart look like "All entities available" — and a device that was
+     unavailable before it simply dropped off the list. */
+  const snapshot = useSnapshotReady();
+  const { loading: waiting = 0 } = useEntityCounts();
+  const loading = connStatus !== "ready" || !snapshot;
+  const waitNote = `Waiting for ${waiting} more ${waiting === 1 ? "entity" : "entities"} from Home Assistant…`;
 
   return (
     <Card
       index={index}
-      eyebrow={`Entity registry · ${available} online · ${unavailable} unavailable`}
+      eyebrow={`Entity registry · ${available} online · ${unavailable} unavailable${waiting ? ` · ${waiting} loading` : ""}`}
       title="Unavailable groups"
     >
       {loading ? (
         <div className="entity-loading" />
       ) : unavailable === 0 ? (
-        <div className="health-all-good">All entities available</div>
+        <div className="health-all-good">{waiting ? waitNote : "All entities available"}</div>
       ) : (
         <div className="health-groups">
+          {waiting > 0 && <div className="health-all-good">{waitNote}</div>}
           {groups.map(([domain, entities]) => (
             <div key={domain} className="health-group">
               <button

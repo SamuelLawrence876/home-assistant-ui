@@ -112,6 +112,46 @@ export function itemRef(card) {
    reports success, so nothing may be added to, moved into or out of it. */
 export const isDeadList = (status) => status === "unavailable" || status === "not_found";
 
+/* What moves when a list changes in Home Assistant. local_todo's state is the
+   list's open-item count, so an add, complete or delete made anywhere else
+   moves it; last_updated moves with every state write, so a count that goes
+   2 → 3 → 2 inside one render still reads as a change. A rename, or a
+   completed item deleted, moves neither — the board's slow heartbeat read is
+   what catches those. "" for a list with no entity (yet). */
+export const listStamp = (entity) => (entity ? `${entity.state}@${entity.last_updated}` : "");
+
+/* True when a list the board had already seen has changed since: `prev` and
+   `next` are listStamp()s joined by ",", in the same list order. A list seen
+   for the first time is not a change (it arrives with the entity snapshot,
+   and the read that is already running covers it), nor is one going away —
+   a list that goes or comes back is isDeadList's business. */
+export function listsMoved(prev, next) {
+  const was = String(prev ?? "").split(",");
+  return String(next ?? "").split(",").some((s, i) => Boolean(was[i] && s && s !== was[i]));
+}
+
+/* The lists that have just turned "ready" — in `next` and not in `prev`, both
+   list ids joined by "," — and whose last read failed (`failed`, a Set). Such
+   a list was still loading in Home Assistant when the board read it; now it
+   can be read. */
+export function listsBack(prev, next, failed) {
+  const was = new Set(String(prev ?? "").split(","));
+  return String(next ?? "").split(",").filter((id) => id && !was.has(id) && failed.has(id));
+}
+
+/* `promise`, or a rejection once `ms` pass without it settling. For a read
+   only: abandoning one changes nothing in Home Assistant. */
+export function withTimeout(promise, ms) {
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer in ${Math.round(ms / 1000)} s`)), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+/* The Done column's id. The other columns are Home Assistant to-do lists. */
+export const DONE = "__done__";
+
 /* The board's honest states, after weekState() in WeeklyCalendarCard.jsx.
 
    `reads` is { [columnId]: "unread" | "ok" | "error" | "partial" } — whether
@@ -132,7 +172,14 @@ export const isDeadList = (status) => status === "unavailable" || status === "no
    `total` is null unless every column read cleanly; a sum with a hole in it is
    a plausible-looking wrong number. `retry` is true when reading the column
    again could help: its own read failed and the socket is up. Not for a dead
-   list — that recovers when Home Assistant has the list back, not by asking. */
+   list — that recovers when Home Assistant has the list back, not by asking.
+
+   Nor for a list HA is still loading: connected, but its status "loading" —
+   HA hasn't sent its set yet, or (after Restart HA) left this list out of it
+   for now. HA can't answer get_items for a list it hasn't loaded, so the read
+   fails and asking again fails the same way; the board reads it when it
+   arrives (listsBack). Its failed read, and Done's, are a wait, not a fault:
+   "Loading…", not "Couldn't refresh" with a Retry that can't work. */
 export function boardState({ connStatus, reads, counts, lists = {} }) {
   const connecting = connStatus === "connecting" || connStatus === "authenticating";
   const offline = connStatus !== "ready";
@@ -141,9 +188,18 @@ export function boardState({ connStatus, reads, counts, lists = {} }) {
      the connection is the explanation and the list status is just "loading". */
   const dead = (id) => !offline && isDeadList(lists[id]);
   const anyDeadList = Object.keys(lists).some(dead);
+  const failedRead = (id) => reads[id] === "error" || reads[id] === "partial";
+  /* A failed read that is really HA still loading a list: that list's own,
+     and Done's (it reads every list's completed items) — but Done's only when
+     every list that failed is one HA is loading. A real failure alongside a
+     loading list is still a failure, with its Retry. */
+  const failedLists = Object.keys(lists).filter((id) => !offline && failedRead(id));
+  const loadingFailed = failedLists.length > 0 && failedLists.every((id) => lists[id] === "loading");
+  const waiting = (id) => failedRead(id) && !offline && (id in lists ? lists[id] === "loading" : loadingFailed);
   const everRead = ids.some((id) => reads[id] !== "unread");
   const anyUnread = ids.some((id) => reads[id] === "unread");
-  const unreadable = (id) => reads[id] === "error" || reads[id] === "partial" || dead(id);
+  const anyWaiting = ids.some(waiting);
+  const unreadable = (id) => (failedRead(id) && !waiting(id)) || dead(id);
   const anyUnreadable = anyDeadList || ids.some(unreadable);
 
   const columns = {};
@@ -160,7 +216,14 @@ export function boardState({ connStatus, reads, counts, lists = {} }) {
       columns[id] = anyDeadList && !(id in lists)
         ? { count: n, note: "A list is unavailable · may be out of date", tone: "stale" }
         : { count: n, note: null, tone: null };
-    } else if (reads[id] === "partial" || reads[id] === "error") {
+    } else if (waiting(id)) {
+      /* Cards from before stay, with the caveat; a column never read whole
+         ("partial") has no count to give. */
+      const what = id in lists ? "Loading…" : "Waiting for a list to load";
+      columns[id] = n > 0 && reads[id] === "error"
+        ? { count: n, note: `${what} · may be out of date`, tone: "wait" }
+        : { count: "—", note: what, tone: "wait" };
+    } else if (failedRead(id)) {
       /* Done reads every list's completed items, so while a list is dead its
          read fails the same way every time: a Retry there could never work.
          It recovers by itself when the list comes back. */
@@ -187,8 +250,9 @@ export function boardState({ connStatus, reads, counts, lists = {} }) {
     meta = ids.some((id) => counts[id] > 0) ? "board couldn't be refreshed · may be out of date" : "board couldn't be read";
   }
   else if (anyUnreadable) meta = "some columns couldn't be read";
+  else if (anyWaiting) meta = "loading…";
   else meta = "drag cards between columns";
 
-  const total = anyUnread || anyUnreadable ? null : ids.reduce((n, id) => n + (counts[id] || 0), 0);
+  const total = anyUnread || anyUnreadable || anyWaiting ? null : ids.reduce((n, id) => n + (counts[id] || 0), 0);
   return { meta, total, columns };
 }

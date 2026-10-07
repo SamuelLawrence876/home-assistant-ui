@@ -117,7 +117,7 @@ describe("M8: a column whose read failed recovers by itself", () => {
     expect(retryIn("Next")).toBeNull();
   });
 
-  it("a list that keeps failing is retried twice on a backoff, then left alone — no loop", async () => {
+  it("a list that keeps failing is retried twice on a backoff, then left to the 5-minute heartbeat — no loop", async () => {
     ha.failAlways.add("todo.next");
     await mount();
     expect(ha.reads).toBe(ONE_READ);
@@ -128,9 +128,16 @@ describe("M8: a column whose read failed recovers by itself", () => {
     await advance(19_800);
     expect(ha.reads).toBe(2 * ONE_READ);        // not before 20 s more
     await advance(300);
-    expect(ha.reads).toBe(3 * ONE_READ);        // retry 2
-    await advance(10 * 60_000);
-    expect(ha.reads).toBe(3 * ONE_READ);        // and then it stops
+    expect(ha.reads).toBe(3 * ONE_READ);        // retry 2, at 28 s
+    /* Then the retries stop. What's left is the heartbeat every board gets
+       (round 4, kanbanRound4.test.jsx): one read 5 minutes after the last,
+       and a heartbeat that fails doesn't start the backoff again. */
+    await advance(5 * 60_000 - 1000);
+    expect(ha.reads).toBe(3 * ONE_READ);
+    await advance(1000);
+    expect(ha.reads).toBe(4 * ONE_READ);        // the heartbeat
+    await advance(60_000);
+    expect(ha.reads).toBe(4 * ONE_READ);        // no 8 s / 20 s retries after it
     expect(within(col("Next")).getByText("Couldn't read this column")).toBeInTheDocument();
   });
 

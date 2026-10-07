@@ -4,7 +4,7 @@
    "Printing" / live, because remaining_time holds its last value while paused,
    and a printer nobody could read used to read "Idle" with targets of "idle". */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 const P = "x1c_00m09d522400385";
 let states = {};
@@ -133,5 +133,52 @@ describe("PrinterCard status", () => {
     expect(r.title).toBe("—");
     expect(r.pill).toBe("—");
     expect(r.text).not.toMatch(/NaN|Invalid Date|Idle|offline/);
+  });
+});
+
+/* Round 4: ha-bambulab >= 2.1.24 suggests hours for remaining_time, and HA keeps
+   the unit an entity was first registered with — so the same sensor can read
+   "35" (min) on one install and "2.25" (h) on another. Read as minutes, 2h15m
+   left showed as "2m remaining". */
+describe("PrinterCard remaining time", () => {
+  function remaining(state, attributes = {}, extra = { [`sensor.${P}_print_status`]: "running" }) {
+    set({ ...printingBase, ...extra, [`sensor.${P}_remaining_time`]: s(state, attributes) });
+    const { container } = render(<PrinterCard />);
+    return {
+      rem: container.querySelector(".rem").textContent,
+      title: within(container).getByRole("heading", { level: 2 }).textContent,
+    };
+  }
+  const unit = (u) => ({ unit_of_measurement: u });
+
+  it("reads an hours sensor as hours: 2.25 h is 2h 15m, not 2m", () => {
+    expect(remaining("2.25", unit("h")).rem).toBe("2h 15m remaining");
+  });
+
+  it("still reads a minutes sensor as minutes", () => {
+    expect(remaining("35", unit("min")).rem).toBe("35m remaining");
+    expect(remaining("135", unit("min")).rem).toBe("2h 15m remaining");
+  });
+
+  it("converts a seconds sensor", () => {
+    expect(remaining("8100", unit("s")).rem).toBe("2h 15m remaining");
+  });
+
+  it("rounds the total, so a fractional hour never reads 1h 60m", () => {
+    // 1.997 h = 119.82 min. Rounding only the remainder gave "1h 60m".
+    expect(remaining("1.997", unit("h")).rem).toBe("2h remaining");
+    expect(remaining("0.999", unit("h")).rem).toBe("1h remaining");
+  });
+
+  it("says — for a unit it doesn't know rather than assuming minutes", () => {
+    expect(remaining("35", unit("fortnight")).rem).toBe("— remaining");
+    expect(remaining("35").rem).toBe("— remaining");
+  });
+
+  it("an unknown unit still counts as time left for the no-print_status fallback", () => {
+    // Whether any time is left doesn't depend on the unit.
+    const r = remaining("35", {}, { [`sensor.${P}_current_stage`]: "printing" });
+    expect(r.title).toBe("Printing");
+    expect(r.rem).toBe("— remaining");
   });
 });

@@ -227,6 +227,60 @@ describe("boardState", () => {
     expect(dead.columns.__done__.retry).toBe(false);
     expect(dead.columns["todo.next"].retry).toBeFalsy();
   });
+
+  /* D5 / D21: after Restart HA a list HA hasn't loaded yet is "loading" while
+     the socket is up, and HA can't answer get_items for it — so its read, and
+     Done's, fail every time until it arrives. That is a wait, not a fault. */
+  describe("a list HA is still loading", () => {
+    const lists = { "todo.backlog": "ready", "todo.next": "loading" };
+    const reads = { ...all("ok"), "todo.next": "error", __done__: "error" };
+
+    it("reads Loading…, keeps its cards with the caveat, and offers no Retry", () => {
+      const s = boardState({ connStatus: "ready", reads, counts: { ...none, "todo.next": 3, __done__: 3 }, lists });
+      expect(s.columns["todo.next"]).toEqual({ count: 3, note: "Loading… · may be out of date", tone: "wait" });
+      expect(s.columns.__done__).toEqual({ count: 3, note: "Waiting for a list to load · may be out of date", tone: "wait" });
+      expect(s.columns["todo.backlog"]).toMatchObject({ count: 0, note: null });
+      expect(s.meta).toBe("loading…");
+      expect(s.total).toBe(null);
+    });
+
+    it("has no count to give for a column with nothing on it, or never read whole", () => {
+      const empty = boardState({ connStatus: "ready", reads, counts: none, lists });
+      expect(empty.columns["todo.next"]).toEqual({ count: "—", note: "Loading…", tone: "wait" });
+      expect(empty.columns.__done__).toEqual({ count: "—", note: "Waiting for a list to load", tone: "wait" });
+      const partial = boardState({
+        connStatus: "ready", reads: { ...reads, "todo.next": "partial", __done__: "partial" },
+        counts: { ...none, "todo.next": 1, __done__: 1 }, lists,
+      });
+      expect(partial.columns["todo.next"]).toEqual({ count: "—", note: "Loading…", tone: "wait" });
+      expect(partial.columns.__done__).toEqual({ count: "—", note: "Waiting for a list to load", tone: "wait" });
+    });
+
+    it("still reports a real failure elsewhere on the board, with its Retry", () => {
+      const s = boardState({ connStatus: "ready", reads: { ...reads, "todo.backlog": "error" }, counts: none, lists });
+      expect(s.columns["todo.backlog"]).toMatchObject({ note: "Couldn't read this column", retry: true });
+      expect(s.columns["todo.next"].retry).toBeUndefined();
+      expect(s.meta).toBe("some columns couldn't be read");
+    });
+
+    it("says nothing about a list that is loading but read fine, or a Done that read fine", () => {
+      const s = boardState({ connStatus: "ready", reads: all("ok"), counts: { ...none, "todo.next": 2 }, lists });
+      expect(s.columns["todo.next"]).toEqual({ count: 2, note: null, tone: null });
+      expect(s.columns.__done__).toEqual({ count: 0, note: null, tone: null });
+      expect(s.meta).toBe("drag cards between columns");
+    });
+
+    it("doesn't excuse Done's failure when no loading list failed — then it is a real one", () => {
+      const s = boardState({ connStatus: "ready", reads: { ...all("ok"), __done__: "error" }, counts: none, lists });
+      expect(s.columns.__done__).toMatchObject({ note: "Couldn't read this column", retry: true });
+    });
+
+    it("offline, the connection is the explanation, as before", () => {
+      const s = boardState({ connStatus: "disconnected", reads, counts: { ...none, "todo.next": 3 }, lists });
+      expect(s.columns["todo.next"]).toMatchObject({ note: "Couldn't refresh · may be out of date", retry: false });
+      expect(s.meta).toBe("not connected · may be out of date");
+    });
+  });
 });
 
 describe("buildDescription", () => {

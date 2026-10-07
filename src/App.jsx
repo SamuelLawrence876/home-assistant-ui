@@ -34,7 +34,7 @@ import { useConnectionStatus, useEntityCounts, useEntity } from "./ha/useEntity.
 import { useCurrentUser } from "./ha/useCurrentUser.js";
 import { onServiceError } from "./ha/client.js";
 import { describeHaError } from "./ha/errors.js";
-import { isSessionExpired, onSessionExpiredChange, signIn } from "./ha/socket.js";
+import { isSessionExpired, isSigningOut, onSessionExpiredChange, signIn } from "./ha/socket.js";
 import { readURLParam } from "./lib/url.js";
 import { deriveRole, canSeeTab, ROLE_PENDING } from "./lib/roles.js";
 import { fmtTime } from "./lib/format.js";
@@ -119,27 +119,35 @@ function useSessionExpired() {
 
    signed_out: an expired session used to read "Pi offline" — telling the
    family the Pi was down when it was the login that had lapsed — and
-   nothing on screen led back to the login page. Now the chip does. */
+   nothing on screen led back to the login page. Now the chip does.
+
+   signing_out: Sign out closes the socket a few seconds before the reload,
+   and the Pi isn't offline meanwhile — this tab, or another one, ended the
+   session. */
 const CHIP_TEXT = {
   signed_out: ["Signed out · sign in", "Signed out of Home Assistant"],
+  signing_out: ["Signing out…", "Signing out of Home Assistant"],
   ready: [null, "Connected to Home Assistant"],
   disconnected: ["Pi offline", "Not connected to Home Assistant"],
   authenticating: ["Pi · authenticating…", "Connecting to Home Assistant"],
   connecting: ["Pi · connecting…", "Connecting to Home Assistant"],
 };
 
-function ConnectionChip() {
+export function ConnectionChip() {
   const status = useConnectionStatus();
   const signedOut = useSessionExpired();
-  const { available, total } = useEntityCounts();
+  // Entities HA may still be loading after a reconnect count toward the
+  // total and not as live: left out, the total fell by every slow
+  // integration for minutes after each Restart HA.
+  const { available, total, loading } = useEntityCounts();
   const live = status === "ready";
   const dotColor = live
     ? "var(--good)"
-    : status === "disconnected"
+    : status === "disconnected" && !isSigningOut()
       ? "var(--bad)"
       : "var(--accent-2)";
-  const [text, announcement] = CHIP_TEXT[signedOut ? "signed_out" : status] || CHIP_TEXT.connecting;
-  const label = text ?? `Pi · ${available}/${total} live`;
+  const [text, announcement] = CHIP_TEXT[signedOut ? "signed_out" : !live && isSigningOut() ? "signing_out" : status] || CHIP_TEXT.connecting;
+  const label = text ?? `Pi · ${available}/${total + loading} live`;
   const Tag = signedOut ? "button" : "span";
   return (
     <>
@@ -200,7 +208,13 @@ export default function App() {
   // RBAC (display layer — HA groups are the enforcement layer, see lib/roles.js)
   const connectionStatus = useConnectionStatus();
   const currentUser = useCurrentUser();
-  const role = deriveRole(currentUser, connectionStatus === "ready");
+  // Signing out closes the socket a few seconds before the reload, and "not
+  // connected" is the all-tabs fallback: a guest's nav opened every tab for
+  // that wait. The session's own role holds until the reload instead — the
+  // last user stays known (useCurrentUser) — and fails closed to pending
+  // when there wasn't one. isSigningOut() is true before the status change
+  // that re-renders this (socket.js#closeForSignOut).
+  const role = deriveRole(currentUser, connectionStatus === "ready" || isSigningOut());
   const rolePending = role === ROLE_PENDING;
   const visibleTabs = useMemo(() => TABS.filter((t) => canSeeTab(role, t.id)), [role]);
 

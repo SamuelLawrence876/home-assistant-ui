@@ -1,6 +1,8 @@
 /* Login-page round trips for socket.js: the once-a-minute redirect limit, the
-   event ErrorBoundary listens for to keep the open tab, and cleaning HA's OAuth
-   callback params out of the URL. No module state; nothing here talks to HA. */
+   event ErrorBoundary listens for to keep the open tab, cleaning HA's OAuth
+   callback params out of the URL — and the way out: the reload that starts a
+   page over, and Sign out's bounded revoke (the one request made here). No
+   module state. */
 
 /* ---- Login redirects, rate-limited ----------------------------------
    An invalid session sends the browser back to HA's login page, as HA's own
@@ -56,6 +58,33 @@ function dropLastParam(params, name) {
   if (all.length === 0) return;
   params.delete(name);
   all.slice(0, -1).forEach((v) => params.append(name, v));
+}
+
+/* Sign out, and a page Back restored mid-trip to the login page, both end in a
+   reload. Its own export so a test can see it: jsdom can't reload, and its
+   location.reload can't be spied on. */
+export function reloadPage() {
+  window.location.reload();
+}
+
+/* Sign out's revoke. Best effort and bounded: resolves when HA answers or
+   after REVOKE_WAIT_MS, whichever comes first, and never rejects — socket.js
+   has already cleared this device and reloads either way. keepalive lets the
+   request itself outlive that reload, so a slow HA still gets it. */
+export const REVOKE_WAIT_MS = 3000;
+
+export function revokeRefreshToken(hassUrl, refreshToken) {
+  if (!hassUrl || !refreshToken) return Promise.resolve();
+  let timer;
+  const gaveUp = new Promise((resolve) => {
+    timer = setTimeout(resolve, REVOKE_WAIT_MS);
+  });
+  const sent = (async () => {
+    const body = new FormData();
+    body.append("token", refreshToken);
+    await fetch(`${hassUrl}/auth/revoke`, { method: "POST", body, keepalive: true });
+  })().catch((e) => console.warn("[ha-ws] revoke failed (signed out locally anyway)", e));
+  return Promise.race([sent, gaveUp]).finally(() => clearTimeout(timer));
 }
 
 export const hasAuthCallback = () => new URLSearchParams(window.location.search).has("auth_callback");

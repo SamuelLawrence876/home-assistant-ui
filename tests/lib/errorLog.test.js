@@ -194,3 +194,52 @@ describe("formatEntries", () => {
     expect(() => formatEntries([{ ts: NaN, source: "x", message: "y" }])).not.toThrow();
   });
 });
+
+/* Round 4b C4. Sign out clears the log and reloads a few seconds later; an
+   error logged in between (a call the closing socket rejected) used to be
+   written straight back for the next person on the device. */
+describe("lockErrorLog (sign out)", () => {
+  it("records and writes nothing once locked, and the clear still works", async () => {
+    localStorage.removeItem(STORAGE_KEY);
+    const { logError, clearErrors, lockErrorLog, getEntries } = await freshLog();
+    logError({ source: "service", message: "before sign out" });
+    expect(getEntries()).toHaveLength(1);
+    lockErrorLog();
+    clearErrors();
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(() => logError({ source: "service", message: "light.turn_on failed", detail: "Connection lost" })).not.toThrow();
+    expect(getEntries()).toEqual([]);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+});
+
+/* Another tab's Sign out (or Clear) removes the stored log. This tab's copy in
+   memory is the same history, and its next entry used to write all of it
+   back — however late the tab heard of the Sign out (R2, round 4d). */
+describe("another tab removing the stored log", () => {
+  it("empties this tab's copy, so its next entry writes only itself", async () => {
+    localStorage.removeItem(STORAGE_KEY);
+    const { logError, getEntries } = await freshLog();
+    logError({ source: "service", message: "from the previous session" });
+    expect(getEntries()).toHaveLength(1);
+
+    localStorage.removeItem(STORAGE_KEY); // the other tab
+    window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY, oldValue: "[]", newValue: null }));
+    expect(getEntries()).toEqual([]);
+
+    logError({ source: "service", message: "after" });
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    expect(stored.map((e) => e.message)).toEqual(["after"]);
+  });
+
+  it("follows localStorage.clear() in another tab, and ignores other keys and writes", async () => {
+    localStorage.removeItem(STORAGE_KEY);
+    const { logError, getEntries } = await freshLog();
+    logError({ source: "service", message: "kept" });
+    window.dispatchEvent(new StorageEvent("storage", { key: "gh_spotify_token", newValue: null }));
+    window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY, newValue: "[]" }));
+    expect(getEntries()).toHaveLength(1);
+    window.dispatchEvent(new StorageEvent("storage", { key: null, newValue: null }));
+    expect(getEntries()).toEqual([]);
+  });
+});

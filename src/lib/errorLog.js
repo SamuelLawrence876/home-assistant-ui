@@ -136,6 +136,24 @@ const listeners = new Set();
    itself routed back here (a console hook, an error boundary catching a
    render triggered by our own notify), the second call is dropped. */
 let inLogError = false;
+/* Sign out's latch — see lockErrorLog(). */
+let locked = false;
+
+/* Another tab removed the stored log — its Sign out, or its Clear. This tab
+   holds the same history in memory, and its next entry used to write all of
+   it straight back. socket.js reloads a tab that hears of a Sign out, but a
+   background tab can hear of it too late to tell it from HA ending a session;
+   following the removal here doesn't depend on that. Must never throw. */
+try {
+  window.addEventListener("storage", (e) => {
+    try {
+      if ((e.key === STORAGE_KEY || e.key === null) && e.newValue == null && entries.length) {
+        entries = [];
+        notify();
+      }
+    } catch {}
+  });
+} catch {}
 
 function notify() {
   for (const cb of Array.from(listeners)) {
@@ -165,7 +183,7 @@ export function getEntryCount() {
 /* Record one problem. Never throws, never returns a value worth checking.
    `source` is a short label ("service", "connection", "render · lights"). */
 export function logError({ source, message, detail, stack } = {}) {
-  if (inLogError) return;
+  if (inLogError || locked) return;
   inLogError = true;
   try {
     const ts = Date.now();
@@ -201,6 +219,16 @@ export function clearErrors() {
     } catch {}
     notify();
   } catch {}
+}
+
+/* For ha/socket.js signOut() only, which clears the log and then reloads the
+   page a few seconds later. Something logged after the last clear, before the
+   page unloaded — a call the closing socket rejected — was written straight
+   back for the next person on the device. Locked, logError records nothing:
+   the session it would describe is over. No unlock: the reload starts a fresh
+   module. */
+export function lockErrorLog() {
+  locked = true;
 }
 
 /* Plain-text dump for the card's copy button. Already redacted, because the

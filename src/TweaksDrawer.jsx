@@ -38,6 +38,7 @@ export function TweaksDrawer({
 }) {
   const [open, setOpen] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const drawerRef = useRef(null);
   const fabRef = useRef(null);
   const wasOpen = useRef(false);
@@ -175,11 +176,25 @@ export function TweaksDrawer({
                 Auth is handled via the HA OAuth flow. Sign out below to clear your session on this browser.
               </span>
             </div>
+            {/* Signing out clears this browser at once, then gives HA up to a
+                few seconds to revoke the session before reloading. It used to
+                show nothing in that time and reset to "Sign out" as if nothing
+                had happened. aria-disabled, not disabled: a disabled button
+                drops keyboard focus to <body>. */}
             <button
               className="btn"
-              onClick={() => (confirmSignOut ? signOut() : setConfirmSignOut(true))}
+              aria-disabled={signingOut || undefined}
+              style={signingOut ? { cursor: "progress" } : undefined}
+              onClick={() => {
+                if (signingOut) return;
+                if (!confirmSignOut) return setConfirmSignOut(true);
+                setSigningOut(true);
+                signOut();
+              }}
             >
-              {confirmSignOut ? "Tap again to confirm sign out" : "Sign out of Home Assistant"}
+              {signingOut
+                ? "Signing out…"
+                : confirmSignOut ? "Tap again to confirm sign out" : "Sign out of Home Assistant"}
             </button>
           </div>
         </div>

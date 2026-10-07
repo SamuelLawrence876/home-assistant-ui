@@ -6,7 +6,7 @@
    (the toggle's state is the plug; the error log already has the failure).
    They also pin the order (plug, then session) and the power-only mode for
    when switch.sambox is unavailable. */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 
 const fixtures = { entities: {} };
@@ -30,6 +30,7 @@ vi.mock("../../src/ha/client.js", () => ({
 }));
 
 import { SamBoxStrip } from "../../src/cards/overview/SamBoxStrip.jsx";
+import { SETTLE_MS } from "../../src/hooks/useOptimistic.js";
 
 const plugEntity = (state) => ({ entity: { state, attributes: {} }, status: "ready" });
 const flush = () => act(() => Promise.resolve());
@@ -266,5 +267,69 @@ describe("SamBoxStrip with the game session unavailable", () => {
     render(<SamBoxStrip />);
     expect(screen.getByRole("switch", { name: "SamBox360 power and game session" })).toBeTruthy();
     expect(screen.queryByText(/Power only/)).toBeNull();
+  });
+});
+
+/* Round 4: a plug call that resolves is not proof the plug moved — HA skips a
+   target it can't act on and still reports success, and a cloud plug can drop
+   a command. Every other optimistic switch goes back to HA's state SETTLE_MS
+   after a resolve; this strip didn't, so a dropped "on" left the switch lit
+   beside an unpowered PC (and a dropped "off" read Off beside a running one)
+   until the plug next changed for some other reason. */
+describe("SamBoxStrip settle", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const advance = (ms) => act(() => { vi.advanceTimersByTime(ms); });
+
+  it("a turn-on that resolves but never moves the plug goes back to Off", async () => {
+    fixtures.entities = {
+      "switch.sambox360_plug": plugEntity("off"),
+      "switch.sambox": { entity: { state: "off", attributes: {} }, status: "ready" },
+    };
+    render(<SamBoxStrip />);
+    const sw = screen.getByRole("switch");
+    fireEvent.click(sw);
+    await flush();
+    expect(calls).toEqual(["switch.turn_on switch.sambox360_plug", "switch.turn_on switch.sambox"]);
+    advance(SETTLE_MS - 1);
+    expect(sw.getAttribute("aria-checked")).toBe("true"); // the plug still gets its chance
+    advance(1);
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByText("Off")).toBeTruthy();
+    expect(calls).toHaveLength(2); // settling sends nothing
+  });
+
+  it("a turn-off that resolves but never moves the plug goes back to On", async () => {
+    fixtures.entities = { "switch.sambox360_plug": plugEntity("on") };
+    render(<SamBoxStrip />);
+    const sw = screen.getByRole("switch");
+    fireEvent.click(sw);
+    await flush();
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    advance(SETTLE_MS);
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText("On")).toBeTruthy();
+  });
+
+  it("a plug that really moves keeps the switch on — the settle doesn't fight it", async () => {
+    fixtures.entities = { "switch.sambox360_plug": plugEntity("off") };
+    const { rerender } = render(<SamBoxStrip />);
+    fireEvent.click(screen.getByRole("switch"));
+    await flush();
+    fixtures.entities = { "switch.sambox360_plug": plugEntity("on") };
+    rerender(<SamBoxStrip />);
+    advance(SETTLE_MS * 2);
+    expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText("On")).toBeTruthy();
+  });
+
+  it("leaves no timer running after unmount", async () => {
+    fixtures.entities = { "switch.sambox360_plug": plugEntity("off") };
+    const { unmount } = render(<SamBoxStrip />);
+    fireEvent.click(screen.getByRole("switch"));
+    await flush();
+    expect(vi.getTimerCount()).toBeGreaterThan(0); // boot transient + settle
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

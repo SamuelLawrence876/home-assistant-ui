@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useEntity, useEntityStatus } from "../../ha/useEntity.js";
+import { durationToMinutes } from "../../lib/format.js";
 import { callService, imageUrl } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 import { EntityGuard } from "../../components/EntityGuard.jsx";
@@ -122,7 +123,12 @@ export function PrinterCard({ index = 0 }) {
   // so these are null (→ em dash) rather than NaN or a fake 0.
   const prog = numOr(liveProg?.state, null);
   const stage = txtOr(liveStage?.state);
-  const remaining = numOr(liveRemaining?.state, null);
+  /* Minutes, read in the sensor's own unit: ha-bambulab >= 2.1.24 suggests hours, and HA
+     keeps whichever unit the entity was first registered with, so "2.25" can mean 2h15m.
+     Unknown unit → null → em dash. Whether any time is left doesn't depend on the unit,
+     so the fallback heuristic below reads the raw number. */
+  const remainingRaw = numOr(liveRemaining?.state, null);
+  const remaining = durationToMinutes(liveRemaining?.state, liveRemaining?.attributes?.unit_of_measurement);
   const nozzle = numOr(liveNozzle?.state, null);
   const nozzleTarget = numOr(liveNozzleTarget?.state, null);
   const bed = numOr(liveBed?.state, null);
@@ -156,7 +162,7 @@ export function PrinterCard({ index = 0 }) {
      last value while a print is paused, so on its own it reads a print waiting on a
      filament swap as running. Nothing read → an em dash, never a guessed "Idle". */
   const paused = printStatus ? printStatus === "pause" : stage.startsWith("paused");
-  const printing = printStatus ? printStatus === "running" : !paused && remaining > 0 && stage !== "idle";
+  const printing = printStatus ? printStatus === "running" : !paused && remainingRaw > 0 && stage !== "idle";
   const title = printStatus
     ? STATUS_TITLE[printStatus] ?? printStatus.charAt(0).toUpperCase() + printStatus.slice(1)
     : printing ? "Printing" : paused ? "Paused" : knownOffline ? "Offline" : "—";
@@ -197,8 +203,11 @@ export function PrinterCard({ index = 0 }) {
 
   const formatRemaining = (m) => {
     if (!m && m !== 0) return "—";
-    if (m < 60) return `${Math.round(m)}m`;
-    const h = Math.floor(m / 60), mm = Math.round(m % 60);
+    // Round the total, not the parts: an hours sensor gives fractional minutes,
+    // and rounding only the remainder read 119.8 as "1h 60m".
+    const t = Math.round(m);
+    if (t < 60) return `${t}m`;
+    const h = Math.floor(t / 60), mm = t % 60;
     return mm ? `${h}h ${mm}m` : `${h}h`;
   };
 
