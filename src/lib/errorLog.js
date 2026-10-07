@@ -136,6 +136,8 @@ const listeners = new Set();
    itself routed back here (a console hook, an error boundary catching a
    render triggered by our own notify), the second call is dropped. */
 let inLogError = false;
+/* Sign out's latch — see lockErrorLog(). */
+let locked = false;
 
 function notify() {
   for (const cb of Array.from(listeners)) {
@@ -165,7 +167,7 @@ export function getEntryCount() {
 /* Record one problem. Never throws, never returns a value worth checking.
    `source` is a short label ("service", "connection", "render · lights"). */
 export function logError({ source, message, detail, stack } = {}) {
-  if (inLogError) return;
+  if (inLogError || locked) return;
   inLogError = true;
   try {
     const ts = Date.now();
@@ -201,6 +203,16 @@ export function clearErrors() {
     } catch {}
     notify();
   } catch {}
+}
+
+/* For ha/socket.js signOut() only, which clears the log and then reloads the
+   page a few seconds later. Something logged after the last clear, before the
+   page unloaded — a call the closing socket rejected — was written straight
+   back for the next person on the device. Locked, logError records nothing:
+   the session it would describe is over. No unlock: the reload starts a fresh
+   module. */
+export function lockErrorLog() {
+  locked = true;
 }
 
 /* Plain-text dump for the card's copy button. Already redacted, because the

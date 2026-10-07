@@ -22,10 +22,13 @@
      blip in that window reconnects to the same instance. No start time to
      compare says "couldn't confirm", never "done". A later start time clears
      even a "didn't restart".
-     "Sent again" is checked by object identity. The library merges a
-     reconnect's snapshot into its old store, so an entity a restarting HA
-     hasn't loaded yet keeps its pre-drop object — and its pre-drop start
-     time, which would read as "didn't restart".
+     "Sent again" is checked by object identity. From the drop until Home
+     Assistant's first batch on the new connection, socket.js still holds the
+     pre-drop sensor.uptime object, pre-drop start time and all — judged, that
+     would read as "didn't restart". That batch is HA's complete set: after it
+     sensor.uptime is either an object HA has just sent, or gone (socket.js
+     drops whatever the batch left out — a restarting HA that hasn't loaded
+     the uptime integration yet). Neither is the object held at "ready".
    - "report" — the Supervisor install, which restarts only the Supervisor
      and leaves the dashboard connected, so there is no drop to wait for. The
      notice lasts until Home Assistant reports the update entity again
@@ -188,7 +191,8 @@ function refresh(change = (n) => n) {
 
 /* On "ready" the cache still holds what HA sent before the drop (the library
    re-subscribes, and the answer comes later), so the sensor.uptime object it
-   holds then is the stale one. */
+   holds then is the stale one. Kept even if it is gone after the answer:
+   undefined is not that object, and "gone" is judged as no start time. */
 function onStatus(s) {
   refresh((n, now) => {
     if (s !== "ready") {

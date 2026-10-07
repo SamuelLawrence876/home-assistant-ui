@@ -11,12 +11,16 @@
      getEntity(id) / getAllStates()
      onConnectionChange(cb)          -> unsubscribe
      getConnectionStatus()
-     reconnect()
+     hasSnapshot() / onSnapshotReady(cb) -> has HA sent its full set on THIS connection
+     hasSnapshot(id)                 -> ...and isn't HA maybe still loading this one (heldBack.js)
+     getLoadingIds()                 -> every id HA may still be loading, for domain/set readers
 
    New exports for the OAuth refactor:
      getFreshAccessToken()           -> Promise<string | null>  (refreshes if expired)
      getHaUrl()                      -> string
-     signOut()                       -> revokes tokens + reloads
+     signOut()                       -> clears this device, revokes (bounded), reloads;
+                                        other open tabs follow (see onStorage)
+     isSigningOut()                  -> from either until the reload
 
    Session state, kept apart from the connection status on purpose (the
    status strings are what useEntity.js maps, and "signed out" is not a kind
@@ -38,27 +42,35 @@ import {
   clearLoginRedirectStamp,
   hasAuthCallback,
   mayRedirectToLogin,
+  reloadPage,
+  revokeRefreshToken,
   stripAuthCallback,
 } from "./loginRedirect.js";
-import { logError, clearErrors } from "../lib/errorLog.js";
+import { logError } from "../lib/errorLog.js";
+import { createHeldBack } from "./heldBack.js";
+import { TOKENS_KEY, checkSession, clearAfterSignOutElsewhere, clearDevice, lockDevice, sessionRemovedElsewhere } from "./session.js";
 
 const HA_URL = import.meta.env.VITE_HA_URL || "";
 // getAuth strips one trailing slash before comparing stored tokens' hassUrl.
 const HA_BASE = HA_URL.endsWith("/") ? HA_URL.slice(0, -1) : HA_URL;
-const TOKENS_KEY = "ha_tokens";
 
 /* Module-level state */
 const states = new Map();              // entity_id -> state object
 const subscribers = new Map();         // entity_id -> Set<callback>
 const connectionListeners = new Set(); // callbacks for connection status
 const statesListeners = new Set();     // callbacks for "states set changed" (size/keys)
-const snapshotListeners = new Set();   // one-shot callbacks for first entity snapshot
+const snapshotListeners = new Set();   // one-shot callbacks for the next entity snapshot
 const sessionListeners = new Set();    // callbacks for "signed out" on/off
 let connection = null;
 let auth = null;
 let connectionStatus = "disconnected"; // "disconnected" | "connecting" | "authenticating" | "ready"
+/* True once HA has sent its complete set on the CURRENT connection. A drop
+   sets it false again — before the status change that announces the drop, so
+   a status listener reading hasSnapshot() already sees it — and the first
+   batch on the next connection sets it back. */
 let snapshotReceived = false;
 let sessionExpired = false;
+let signingOut = false;
 
 function setStatus(next) {
   if (connectionStatus === next) return;
@@ -79,22 +91,31 @@ function notify(entityId) {
   subs.forEach((cb) => cb(state));
 }
 
+/* After a drop the library still hands over its pre-drop copy of an entity
+   HA hasn't sent again — one it no longer has, or hasn't loaded yet. That
+   copy is held back as absent (heldBack.js has the whole story), and while
+   HA may still be loading it, hasSnapshot(id) says so. */
+const heldBack = createHeldBack(() => statesListeners.forEach((cb) => cb()));
+
 function applyEntities(entities) {
+  const first = !snapshotReceived;
   for (const [id, state] of Object.entries(entities)) {
+    if (heldBack.holds(id, state, first)) continue;
     states.set(id, state);
     notify(id);
   }
-  /* The library hands over its whole store every time, so an id it no longer
-     has was removed in HA — deleted, renamed, or an update.* whose add-on was
-     uninstalled. Left in the map it kept its last state as live for the life
-     of the page, and useEntityStatus said "ready" instead of "not_found". */
+  heldBack.handedOver(entities);
+  /* Anything else we hold that HA doesn't have — deleted, renamed, an update.*
+     whose add-on was uninstalled, or held back above — goes, and its
+     subscribers hear it is gone, so useEntityStatus stops calling the last
+     state live: "not_found", or "loading" while it is held back. */
   for (const id of [...states.keys()]) {
-    if (!Object.hasOwn(entities, id)) {
+    if (!Object.hasOwn(entities, id) || heldBack.has(id)) {
       states.delete(id);
       notify(id);
     }
   }
-  if (!snapshotReceived) {
+  if (first) {
     snapshotReceived = true;
     snapshotListeners.forEach((cb) => cb());
     snapshotListeners.clear();
@@ -103,6 +124,8 @@ function applyEntities(entities) {
 }
 
 const saveTokens = (data) => {
+  // Signing out: a refresh still in flight must not write the session back.
+  if (data && signingOut) return;
   try {
     if (data) localStorage.setItem(TOKENS_KEY, JSON.stringify(data));
     else localStorage.removeItem(TOKENS_KEY);
@@ -133,8 +156,16 @@ const loadTokensOrGate = async () => {
   if (data && data.hassUrl === HA_BASE) return data;
   if (!mayRedirectToLogin()) throw SIGNED_OUT;
   announceLoginRedirect();
+  leftForLogin = true;
   return data;
 };
+
+/* getAuth is about to navigate to HA's login, and the promise it returns
+   never settles — so setupRunning stays true for good. Fine while the page is
+   leaving; not when Back brings it out of the back/forward cache, which used
+   to sit on "connecting" with nothing able to try again (even "Sign in" waits
+   on setupRunning). The pageshow handler at the bottom starts it over. */
+let leftForLogin = false;
 
 /* getAuth, with the callback handled so it can only ever be tried once.
    getAuth exchanges ?code= *before* it looks at stored tokens, and an HA
@@ -209,41 +240,15 @@ function connectFailed(message, err) {
 }
 
 /* The session is dead: forget its tokens so the next getAuth goes to the
-   login page (or, rate-limited, to "Signed out"). */
+   login page (or, rate-limited, to "Signed out"). And the Spotify token with
+   them, as Sign out does: HA ending the session — a refresh token revoked in
+   HA's profile page, or one that lapsed — is how a lost or handed-on device
+   gets signed out, and it used to stay a working remote for Sam's Spotify. */
 function dropSession() {
   saveTokens(null);
   auth = null;
   stripAuthCallback();
-}
-
-/* ERR_INVALID_AUTH from createConnection only means the socket refused the
-   access token it was handed — not that the session is dead. When that token
-   has expired, the library starts a refresh before the socket opens and, if
-   the refresh fails for any reason at all (a Funnel 502, a timeout), swallows
-   the failure and sends the stale token anyway. Dropping the tokens on that
-   put a wall tablet back on HA's password page after a refresh blip
-   (LESSONS.md pattern 5). Only /auth/token answering 400/403 — which the
-   library, and only the library, turns into ERR_INVALID_AUTH — says the
-   refresh token itself is gone. So ask it, once, before forgetting anything. */
-const REFRESH_TIMEOUT_MS = 15_000;
-
-async function checkSession(a) {
-  /* Bounded: unlike createConnection — which HA ends by closing a socket that
-     never authenticates — this fetch has nothing to stop it, and setupRunning
-     would hold every retry off until a reload. A timeout is "couldn't tell". */
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("Token refresh timed out")), REFRESH_TIMEOUT_MS);
-  });
-  try {
-    await Promise.race([a.refreshAccessToken(), timeout]);
-    return { alive: true };
-  } catch (err) {
-    // Stored tokens with no refresh token can never be renewed, whatever HA says.
-    return { dead: err === ERR_INVALID_AUTH || !a.data?.refresh_token, err };
-  } finally {
-    clearTimeout(timer);
-  }
+  try { clearSpotifyToken(); } catch {}
 }
 
 /* createConnection, with an invalid-auth refusal checked before it is
@@ -307,16 +312,18 @@ async function connectOnce() {
      dropped eleven times at 3am. errorLog dedupes a burst of identical
      entries, so a reconnect storm can't flush the buffer. */
   conn.addEventListener("disconnected", () => {
+    snapshotReceived = false; // see applyEntities
     logError({ source: "connection", message: "Home Assistant WebSocket disconnected" });
     setStatus("disconnected");
   });
   /* The library fires this for ERR_INVALID_AUTH only, and then stops
      reconnecting for good — the chip used to read "Pi offline" forever for
      what was really an expired or revoked session. It is no more proof of a
-     dead session than the same error on first connect (see checkSession), so
+     dead session than the same error on first connect (session.js#checkSession), so
      start over and let openConnection ask /auth/token before anything is
      forgotten; it logs whichever way that goes. */
   conn.addEventListener("reconnect-error", (_conn, err) => {
+    snapshotReceived = false;
     setStatus("disconnected");
     try { conn.close(); } catch {}
     if (connection === conn) connection = null;
@@ -343,7 +350,7 @@ async function setup({ afterRelogin = false } = {}) {
     setStatus("disconnected");
     return;
   }
-  if (setupRunning || connection || sessionExpired) return;
+  if (setupRunning || connection || sessionExpired || signingOut) return;
   setupRunning = true;
   clearTimeout(retryTimer);
   retryTimer = null;
@@ -401,7 +408,8 @@ export function onConnectionChange(callback) {
 
 /* Fires once per applyEntities batch — listeners use this to recompute
    aggregates (e.g. the topbar's available/total count) without subscribing
-   to every entity individually. */
+   to every entity individually — and once more when a held-back entity's
+   wait runs out (heldBack.js), with no entity changed. */
 export function onStatesChanged(callback) {
   statesListeners.add(callback);
   return () => statesListeners.delete(callback);
@@ -411,10 +419,24 @@ export function getConnectionStatus() {
   return connectionStatus;
 }
 
-export function hasSnapshot() {
-  return snapshotReceived;
+/* Whether HA has sent its complete set on the current connection — false
+   from a drop until the first batch after the reconnect. Given an entity id,
+   also false while that entity is held back and still waiting: that set left
+   it out, but this page had it before the drop, and HA may still be loading
+   it (heldBack.js — for up to HELD_BACK_WAIT_MS). */
+export function hasSnapshot(entityId) {
+  return snapshotReceived && !heldBack.isWaiting(entityId);
 }
 
+/* Every id hasSnapshot(id) is false for on that account: held back and still
+   waiting. getAllStates() leaves them out, so a reader of a whole domain or
+   set would otherwise just see them gone — "No calendars", "✓ current",
+   "offline" after every Restart HA. useEntity.js has the hooks over it. */
+export function getLoadingIds() {
+  return heldBack.waiting();
+}
+
+/* Calls back once, when the next snapshot lands (at once if one is in). */
 export function onSnapshotReady(callback) {
   if (snapshotReceived) {
     callback();
@@ -422,19 +444,6 @@ export function onSnapshotReady(callback) {
   }
   snapshotListeners.add(callback);
   return () => snapshotListeners.delete(callback);
-}
-
-export function reconnect() {
-  if (connection) {
-    try { connection.close(); } catch {}
-    connection = null;
-  }
-  clearTimeout(retryTimer);
-  retryTimer = null;
-  retryAttempt = 0;
-  states.clear();
-  snapshotReceived = false;
-  setup();
 }
 
 /* "Signed out" — the session is gone and the automatic trip to the login
@@ -482,32 +491,82 @@ export function getHaUrl() {
   return HA_URL;
 }
 
-export async function signOut() {
-  try {
-    if (auth) await auth.revoke();
-  } catch (e) {
-    console.warn("[ha-ws] revoke failed (logging out locally anyway)", e);
-  }
-  try { localStorage.removeItem(TOKENS_KEY); } catch {}
-  // Clear every credential this app owns, not just HA's — on a shared tablet the
-  // next person used to inherit a working Spotify refresh token.
-  clearSpotifyToken();
-  // Same reasoning for the error log. No credential can reach it (errorLog
-  // redacts on the way in and again on the way out), but it holds entity ids,
-  // HA's own error text and full stack traces from the previous session, and
-  // the card promises "kept in this browser" — which reads as a session
-  // guarantee. Signing out is where that promise has to be kept.
-  clearErrors();
+/* Sign out clears this device first, synchronously, and only then asks HA to
+   revoke the refresh token. It used to wait for /auth/revoke before touching
+   anything, with no timeout: on a stalled request (HA mid-restart, a Pi that
+   black-holes the Funnel, a dead spot) nothing local was cleared and the
+   button quietly reset. Close the tab then, and the next person on a shared
+   tablet opened Glasshouse signed in as Sam, Spotify and all. */
+let signOutDone = null;
+
+/* Nothing in this tab writes a credential or the error log again before the
+   reload: saveTokens and setup() stand down here, and session.js#lockDevice
+   stands Spotify's token writes and logError down (LESSONS.md pattern 5). */
+function latchSignOut() {
+  signingOut = true;
+  lockDevice();
+}
+
+/* Closing it ourselves, the library fires no "disconnected": the status read
+   "ready" and the snapshot stayed in for the whole revoke wait, so every card
+   showed live controls over a closed socket. Marked the way a drop is —
+   snapshot first, see applyEntities — until the reload. */
+function closeForSignOut() {
   clearTimeout(retryTimer);
   retryTimer = null;
   if (connection) {
     try { connection.close(); } catch {}
+    connection = null;
   }
+  snapshotReceived = false;
+  setStatus("disconnected");
+}
+
+/* True from Sign out (here or in another tab) until the reload — for the
+   chip, which would otherwise read "Pi offline" over the closed socket. It
+   changes only with the status ("disconnected", above), so read it then. */
+export const isSigningOut = () => signingOut;
+
+/* Resolves once the reload has been asked for; never rejects. */
+export function signOut() {
+  if (signOutDone) return signOutDone;
+  latchSignOut();
+  const session = auth?.data; // the refresh token outlives the clear, in memory only
+  auth = null;
+  clearDevice();
+  closeForSignOut();
   // Asked for, so the reload goes straight to HA's login, not "Signed out".
   // And never reload onto a spent ?code= — see authenticate().
   clearLoginRedirectStamp();
   stripAuthCallback();
-  window.location.reload();
+  // Bounded (loginRedirect.js): the reload goes ahead whatever HA says.
+  signOutDone = revokeRefreshToken(session?.hassUrl, session?.refresh_token).then(() => {
+    // Again, belt and braces: with the locks above nothing should have
+    // written since, but this is the last chance to make sure.
+    clearDevice();
+    reloadPage();
+  });
+  return signOutDone;
+}
+
+/* Sign out in another Glasshouse tab or PWA window on this browser used to
+   leave this one signed in: its socket, its tokens in memory — a refresh
+   wrote ha_tokens straight back if the revoke hadn't landed — its error log,
+   written back on its next entry, and its own Spotify refresh. The other tab
+   removing ha_tokens is the signal (storage events fire in every tab but the
+   one that made the change), and this tab does what Sign out does here, bar
+   the revoke, which that tab has sent: latch, clear, reload. Only a tab that
+   holds a session acts; the clear spares a newer session than this tab's
+   (session.js#clearAfterSignOutElsewhere). */
+function onStorage(e) {
+  if (!sessionRemovedElsewhere(e) || !auth || signingOut) return;
+  const mine = auth.data?.refresh_token;
+  latchSignOut();
+  auth = null;
+  clearAfterSignOutElsewhere(mine);
+  closeForSignOut();
+  stripAuthCallback();
+  reloadPage();
 }
 
 /* Rejections come back as something with a readable `.message` — see
@@ -555,5 +614,12 @@ if (typeof window !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") retryNow();
   });
+  /* Back from HA's login page can restore this page from the back/forward
+     cache, still waiting on a trip it never finished (see leftForLogin). A
+     reload re-reads the tokens: connected, a fresh login, or "Signed out". */
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted && leftForLogin) reloadPage();
+  });
+  window.addEventListener("storage", onStorage);
   setup();
 }

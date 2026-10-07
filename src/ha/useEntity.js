@@ -2,19 +2,29 @@
 
    useEntity("light.bedroom")        -> current state object, re-renders on changes
    useEntities(["light.a", "light.b"]) -> Record<entityId, state>
-   useEntitiesByDomain("update")     -> array of state objects whose entity_id starts with "update."
+   useEntitiesByDomain("update")     -> array of state objects whose entity_id starts with "update.",
+                                        plus `.loadingIds`: the domain's ids HA may still be loading
+   useLoadingIds(["light.a", …])     -> the ones of those HA may still be loading
+   useSnapshotReady(id?)             -> HA has sent its set on this connection (and isn't maybe
+                                        still loading `id`)
    useConnectionStatus()             -> "connecting" | "authenticating" | "ready" | "disconnected"
-   useEntityCounts()                 -> { available, unavailable, total }
-   useStatistics(ids, hours)         -> { data, loading } — hourly mean from recorder */
+   useEntityCounts()                 -> { available, unavailable, total, loading }
+   useStatistics(ids, hours)         -> { data, loading } — hourly mean from recorder
+
+   "May still be loading": after a reconnect, an entity this page had that
+   HA's new set left out, for up to HELD_BACK_WAIT_MS (heldBack.js). It is
+   absent from every list here, but it is not known to be gone — useEntityStatus
+   says "loading" for it, and a reader of a whole domain or set says the same
+   by checking these rather than claiming "none", "all current" or "offline". */
 
 import { useEffect, useState, useMemo, useCallback } from "react";
 import {
   subscribe,
   onConnectionChange,
   onStatesChanged,
-  onSnapshotReady,
   hasSnapshot,
   getAllStates,
+  getLoadingIds,
   getEntity,
   getConnectionStatus,
   sendWsMessage,
@@ -50,16 +60,47 @@ export function useEntities(entityIds) {
   return snapshot;
 }
 
-export function useEntitiesByDomain(domain) {
-  const prefix = `${domain}.`;
+/* Re-renders once per states batch (and when a held-back wait runs out). */
+function useStatesTick() {
   const [tick, setTick] = useState(0);
   useEffect(() => onStatesChanged(() => setTick((t) => t + 1)), []);
+  return tick;
+}
+
+/* `.loadingIds` rides on the array, rather than the hook returning a new
+   shape, so every caller and test stand-in that only knows the array keeps
+   working; one without it reads as nothing loading. */
+export function useEntitiesByDomain(domain) {
+  const prefix = `${domain}.`;
+  const tick = useStatesTick();
   // `tick` is an invalidation token, not an input: getAllStates() reads a
   // module-level Map that React can't see change, so the counter is the only
   // thing that tells this memo the answer may have moved.
   return useMemo(() => {
-    return getAllStates().filter((s) => s.entity_id.startsWith(prefix));
+    const list = getAllStates().filter((s) => s.entity_id.startsWith(prefix));
+    list.loadingIds = getLoadingIds().filter((id) => id.startsWith(prefix)).sort();
+    return list;
   }, [prefix, tick]);
+}
+
+/* The ids among `entityIds` HA may still be loading — see the top of the
+   file. The same array until its contents change, keyed on the joined ids
+   like useEntities, so a caller can't be handed a new one every batch. Held
+   as a string so an unchanged answer re-renders nothing: every Scenes tile
+   asks, and HA sends several batches a second. */
+export function useLoadingIds(entityIds) {
+  const key = entityIds.join(",");
+  const read = useCallback(() => {
+    const wanted = new Set(key ? key.split(",") : []);
+    return getLoadingIds().filter((id) => wanted.has(id)).sort().join(",");
+  }, [key]);
+  const [joined, setJoined] = useState(read);
+  useEffect(() => {
+    const sync = () => setJoined(read());
+    sync(); // catches a change since render, and a new key
+    return onStatesChanged(sync);
+  }, [read]);
+  return useMemo(() => (joined ? joined.split(",") : []), [joined]);
 }
 
 export function useConnectionStatus() {
@@ -68,12 +109,14 @@ export function useConnectionStatus() {
   return status;
 }
 
+/* `loading`: entities HA may still be loading, which `total` (HA's set as
+   it stands) leaves out — add them back for a count that doesn't drop by
+   every slow integration after each restart. */
 export function useEntityCounts() {
   const status = useConnectionStatus();
   // Re-tick whenever the entity set changes so the count actually updates
   // after the WS delivers the initial 290-entity snapshot.
-  const [tick, setTick] = useState(0);
-  useEffect(() => onStatesChanged(() => setTick((t) => t + 1)), []);
+  const tick = useStatesTick();
   // As above: `status` and `tick` are invalidation tokens for a Map React
   // cannot observe, not values the count is computed from.
   return useMemo(() => {
@@ -84,20 +127,52 @@ export function useEntityCounts() {
       if (s.state === "unavailable" || s.state === "unknown") unavailable++;
       else available++;
     }
-    return { available, unavailable, total: all.length };
+    return { available, unavailable, total: all.length, loading: getLoadingIds().length };
   }, [status, tick]);
 }
 
-/* status: "loading" | "not_found" | "unavailable" | "ready" */
+/* Whether HA has sent its complete set on the current connection, and isn't
+   maybe still loading this entity (held back — see below). It used to
+   latch true at the first snapshot, so after a drop every cached pre-drop
+   state read "ready" again the moment the socket was back, before HA had
+   re-sent anything. socket.js shuts it just before announcing a drop and
+   opens it just before the first states batch after the reconnect, and fires
+   the states listeners again when a held-back wait runs out, so those are
+   the ones to re-read it on. Plain state rather than useSyncExternalStore on
+   purpose: this way it lands in the same render as the entity updates from
+   that batch, never one render ahead of them. With no id it is the whole
+   set's answer, for a card that speaks for many entities at once. */
+export function useSnapshotReady(entityId) {
+  const [ready, setReady] = useState(() => hasSnapshot(entityId));
+  useEffect(() => {
+    const sync = () => setReady(hasSnapshot(entityId));
+    const offStatus = onConnectionChange(sync); // answers at once: catches a flip since render
+    const offStates = onStatesChanged(sync);
+    return () => {
+      offStatus();
+      offStates();
+    };
+  }, [entityId]);
+  return ready;
+}
+
+/* status: "loading" | "not_found" | "unavailable" | "ready".
+   - "ready": HA sent this state on the current connection.
+   - "loading": not connected yet, HA hasn't answered the (re)subscribe yet,
+     or the entity is held back — the page had it before a drop and HA's
+     answer on the new connection left it out, less than HELD_BACK_WAIT_MS
+     (5 min, ha/heldBack.js) ago. After Restart HA a Pi takes minutes to
+     load slow integrations, and "not found" was a stronger claim than HA
+     could back for entities about to come back. `entity` is undefined
+     meanwhile: the pre-drop state isn't live.
+   - "not_found": HA's set doesn't have it — this page never saw it, HA
+     removed it, or it has been held back past that bound (deleted while the
+     page was away).
+   - "unavailable": HA has it, as "unavailable" or "unknown". */
 export function useEntityStatus(entityId) {
   const entity = useEntity(entityId);
   const connStatus = useConnectionStatus();
-  const [snapshotReady, setSnapshotReady] = useState(() => hasSnapshot());
-
-  useEffect(() => {
-    if (snapshotReady) return;
-    return onSnapshotReady(() => setSnapshotReady(true));
-  }, [snapshotReady]);
+  const snapshotReady = useSnapshotReady(entityId);
 
   let status;
   if (connStatus !== "ready" || !snapshotReady) {

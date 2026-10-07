@@ -60,6 +60,14 @@ export function report(...entities) {
   act(() => [...ha.statesListeners].forEach((cb) => cb()));
 }
 
+/* The first batch on a new connection, as the real socket.js keeps it: HA's
+   complete set, so an entity it didn't send this time is gone, not left over
+   from before the drop. */
+export function snapshot(...entities) {
+  ha.entities = Object.fromEntries(entities.map((e) => [e.entity_id, e]));
+  act(() => [...ha.statesListeners].forEach((cb) => cb()));
+}
+
 /* What callService resolves with when HA drops the socket mid-call: the
    library has already announced the drop (client.js#sentBeforeDrop). Use as
    callService.mockImplementationOnce(async () => dropMidCall()). */

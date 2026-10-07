@@ -12,7 +12,7 @@ import { renderHook, act } from "@testing-library/react";
 
 vi.mock("../../src/ha/socket.js", async () => (await import("./fakeHa.js")).socketMock);
 
-import { ha, setStatus, report, uptime, resetHa } from "./fakeHa.js";
+import { ha, setStatus, report, snapshot, uptime, resetHa } from "./fakeHa.js";
 import {
   prepareNotice,
   useReconnectNotice,
@@ -150,20 +150,43 @@ describe("a restart is judged by Home Assistant's start time", () => {
     expect(result.current.message).toBe(RESTART.failText);
   });
 
-  /* The library merges a reconnect's snapshot into its old store: an entity a
-     restarting HA hasn't loaded yet keeps its pre-drop object, start time and
-     all. Judging that would say "didn't restart" about a restart. */
-  it("a snapshot that hasn't re-sent sensor.uptime yet is not judged", () => {
+  /* A restarting HA accepts the connection before every integration has
+     loaded, so its first batch can leave sensor.uptime out. socket.js drops
+     what that batch left out (it used to keep the pre-drop object, start time
+     and all). Either way, nothing to compare is not "didn't restart". */
+  it("a first batch without sensor.uptime is not judged, and a later start time clears it", () => {
     const { result } = notice();
     setStatus("disconnected");
     begin(RESTART, { connectionLost: true });
     setStatus("ready");
-    report({ entity_id: "light.desk", state: "on", attributes: {} }); // HA's first batch, uptime not loaded
+    snapshot({ entity_id: "light.desk", state: "on", attributes: {} }); // uptime not loaded yet
+    expect(ha.entities["sensor.uptime"]).toBeUndefined();
     advance(RESTART_GRACE_MS + 60_000);
     expect(result.current.message).toBe(RESTART.checkText);
     expect(getEntries()).toEqual([]);
     report(uptime(T1)); // the uptime integration loads
     expect(result.current).toBeNull();
+  });
+
+  it("…and if sensor.uptime never comes back: 'couldn't confirm', not logged", () => {
+    const { result } = notice();
+    setStatus("disconnected");
+    begin(RESTART, { connectionLost: true });
+    setStatus("ready");
+    snapshot({ entity_id: "light.desk", state: "on", attributes: {} });
+    advance(VERIFY_WAIT_MS);
+    expect(result.current.message).toBe(RESTART.unsureText);
+    expect(getEntries()).toEqual([]);
+  });
+
+  it("a first batch that re-sends the same start time is judged: it didn't restart", () => {
+    const { result } = notice();
+    setStatus("disconnected");
+    begin(RESTART, { connectionLost: true });
+    setStatus("ready");
+    snapshot(uptime(T0)); // a fresh object, the old value
+    advance(RESTART_GRACE_MS);
+    expect(result.current.message).toBe(RESTART.failText);
   });
 
   it("a start time that moves later clears a 'didn't restart' too", () => {

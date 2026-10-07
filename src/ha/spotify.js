@@ -24,6 +24,9 @@ const PENDING_KEY = "gh_spotify_pending"; // authorization code captured, not ye
 
 const SPOTIFY_KEYS = [TOKEN_KEY, VERIFIER_KEY, STATE_KEY, PENDING_KEY];
 
+/* Sign out's latch — see lockSpotify(). */
+let locked = false;
+
 /* localStorage can throw (Safari private mode, quota, blocked storage) —
    every access goes through these so a storage failure never breaks a render. */
 function readKey(key) {
@@ -31,6 +34,7 @@ function readKey(key) {
 }
 
 function writeKey(key, value) {
+  if (locked) return;
   try { localStorage.setItem(key, value); } catch (e) { console.warn("[spotify] storage write failed", key, e); }
 }
 
@@ -67,6 +71,17 @@ export function clearSpotifyToken() {
   clearListeners.forEach((fn) => {
     try { fn(); } catch (e) { console.warn("[spotify] token-cleared listener failed", e); }
   });
+}
+
+/* For socket.js signOut() only, which clears this device and then reloads it
+   a few seconds later. A refresh (or a code exchange) still in flight that
+   answered after the last clear, before the page unloaded, wrote
+   gh_spotify_token straight back for the next person on the device to
+   inherit (LESSONS.md pattern 5). Locked,
+   nothing here writes to storage again and a refresh hands nobody its token.
+   There is no unlock: the page is going, and the reload starts unlocked. */
+export function lockSpotify() {
+  locked = true;
 }
 
 export function isSpotifyConfigured() {
@@ -267,6 +282,7 @@ async function doRefresh() {
     return null;
   }
   const data = await res.json();
+  if (locked) return null; // signed out while it was in flight
   const next = {
     access_token: data.access_token,
     refresh_token: data.refresh_token || t.refresh_token,
@@ -314,6 +330,18 @@ async function spotifyPut(path, body) {
   if (!res.ok && res.status !== 204) throw new Error(`Spotify ${res.status}`);
 }
 
+/* A playlist's item count, or null when Spotify didn't send one. Spotify's
+   February 2026 migration renamed the playlist `tracks` object to `items` for
+   Development Mode apps (this one), and leaves `items` out entirely for
+   playlists the user doesn't own or collaborate on — so `tracks.total || 0`
+   printed "0 tracks" on every row. Unknown is null, never 0. */
+function playlistCount(p) {
+  for (const n of [p?.items?.total, p?.tracks?.total]) {
+    if (typeof n === "number" && Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
 export async function getPlaylists(limit = 20) {
   const data = await spotifyApi(`/me/playlists?limit=${limit}`);
   return (data?.items || []).map((p) => ({
@@ -321,7 +349,7 @@ export async function getPlaylists(limit = 20) {
     name: p.name,
     uri: p.uri,
     image: p.images?.[0]?.url || null,
-    tracks: p.tracks?.total || 0,
+    tracks: playlistCount(p),
     owner: p.owner?.display_name || "",
   }));
 }
@@ -342,10 +370,16 @@ export async function playUri(uri, deviceId) {
   await spotifyPut(`/me/player/play${qs}`, body);
 }
 
-export async function searchTracks(query, limit = 15) {
+/* Spotify caps /search at limit=10 for Development Mode apps since March 2026
+   (it was 50) and answers anything higher with 400 "Invalid limit" — which
+   made every search here fail. Page with `offset` if more rows are wanted. */
+const SEARCH_LIMIT_MAX = 10;
+
+export async function searchTracks(query, limit = SEARCH_LIMIT_MAX) {
   if (!query.trim()) return [];
   const q = encodeURIComponent(query.trim());
-  const data = await spotifyApi(`/search?q=${q}&type=track&limit=${limit}`);
+  const n = Math.min(Math.max(1, Math.floor(Number(limit)) || SEARCH_LIMIT_MAX), SEARCH_LIMIT_MAX);
+  const data = await spotifyApi(`/search?q=${q}&type=track&limit=${n}`);
   return (data?.tracks?.items || []).map((t) => ({
     name: t.name,
     artist: t.artists?.map((a) => a.name).join(", ") || "",

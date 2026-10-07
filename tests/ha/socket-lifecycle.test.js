@@ -28,7 +28,7 @@ vi.mock("home-assistant-js-websocket", async (importOriginal) => {
 });
 // spotify.js runs its own OAuth callback at module load, and these tests put
 // a ?code= in the URL.
-vi.mock("../../src/ha/spotify.js", () => ({ clearSpotifyToken: () => {} }));
+vi.mock("../../src/ha/spotify.js", () => ({ clearSpotifyToken: () => {}, lockSpotify: () => {} }));
 
 const ERR_CANNOT_CONNECT = 1;
 const ERR_INVALID_AUTH = 2;
