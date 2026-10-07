@@ -5,8 +5,14 @@ import { toLocalISOWithOffset, ymd } from "../../cards/schedule/dateUtils.js";
 const FOCUSABLE = 'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 /* Mounted on demand by the parent — initial values are read once on mount,
-   so opening the dialog from a clicked time slot pre-fills date + time. */
-export function NewEventDialog({ onClose, calendars, defaultCalendarId, initial, onCreated }) {
+   so opening the dialog from a clicked time slot pre-fills date + time.
+   `calendars` is [{ entity_id, label, dead?, creatable? }]: `dead` when the
+   entity is unavailable/unknown, `creatable` true/false/null from its
+   supported_features. `dead`, or `creatable === false`, rules a calendar out;
+   null (the attribute wasn't there) is left for HA to judge. `loadingIds`:
+   calendars HA may still be loading after a reconnect (useEntity.js) — not in
+   `calendars`, but not known to be gone either. */
+export function NewEventDialog({ onClose, calendars, loadingIds = [], defaultCalendarId, initial, onCreated }) {
   const today = useMemo(() => new Date(), []);
   /* Next whole hour, capped at 23:00, with the end always after the start.
      Clamping both ends to 23:00 (as a naive min did) pre-filled an
@@ -33,6 +39,20 @@ export function NewEventDialog({ onClose, calendars, defaultCalendarId, initial,
   useEffect(() => {
     if (!calendarId && defaultCalendarId) setCalendarId(defaultCalendarId);
   }, [defaultCalendarId, calendarId]);
+
+  /* The chosen calendar can leave `calendars` while the dialog is open — HA
+     removed it, or it hasn't loaded yet after an HA restart. A controlled
+     select whose value has no option shows the first enabled one instead, so
+     the dialog showed Personal while submit refused the gone iCloud, and
+     picking the Personal it showed fired no change. So the chosen one stays,
+     as a disabled option: the select shows what submit would send, any live
+     calendar is a real change, and the choice is still there if the calendar
+     comes back. "(loading…)" while HA may still be loading it, "(not found)"
+     once it isn't. Labels are remembered so it keeps its name. */
+  const labels = useRef({});
+  useEffect(() => { for (const c of calendars) labels.current[c.entity_id] = c.label; }, [calendars]);
+  const missing = Boolean(calendarId) && !calendars.some((c) => c.entity_id === calendarId);
+  const nameOf = (id) => labels.current[id] || id.replace(/^calendar\./, "");
 
   /* Hand focus back to whatever opened the dialog when it unmounts, so the
      "+ Add event" button (or the clicked column) keeps the keyboard. */
@@ -72,9 +92,28 @@ export function NewEventDialog({ onClose, calendars, defaultCalendarId, initial,
 
   const canSubmit = title.trim() && calendarId && !submitting;
 
+  /* Why a create into this calendar can't work, or null if it can. HA drops
+     a service call aimed at an unavailable entity and still answers success,
+     so without this the dialog closed as if the event existed. The chosen
+     calendar can die while the dialog is open, so this is asked at submit
+     time — Create stays enabled (and focused) and says why instead. */
+  function refusal(id) {
+    const c = calendars.find((x) => x.entity_id === id);
+    if (!c && loadingIds.includes(id)) return `${nameOf(id)} hasn't loaded yet. Try again in a moment, or pick another calendar.`;
+    if (!c) return "That calendar is no longer in Home Assistant. Pick another one.";
+    if (c.dead) return `${c.label} is unavailable in Home Assistant right now, so nothing can be added to it. Pick another calendar or try again later.`;
+    if (c.creatable === false) return `${c.label} doesn't take new events. Pick another calendar.`;
+    return null;
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!canSubmit) return;
+    const refused = refusal(calendarId);
+    if (refused) {
+      setError(refused);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     /* A cleared date or time field parses to an Invalid Date, and every
@@ -152,8 +191,23 @@ export function NewEventDialog({ onClose, calendars, defaultCalendarId, initial,
         <div className="modal-row">
           <span className="lbl">Calendar</span>
           <select aria-label="Calendar" value={calendarId} onChange={(e) => setCalendarId(e.target.value)} required>
+            {/* Only reachable when every calendar is dead or read-only: say
+                so, rather than let the select show one it can't use — unless
+                HA may still be loading one, which the default then picks up. */}
+            {!calendarId && (
+              <option value="" disabled>
+                {loadingIds.length ? "Still loading calendars…" : "No calendar can take new events"}
+              </option>
+            )}
+            {missing && (
+              <option value={calendarId} disabled>
+                {`${nameOf(calendarId)} (${loadingIds.includes(calendarId) ? "loading…" : "not found"})`}
+              </option>
+            )}
             {calendars.map((c) => (
-              <option key={c.entity_id} value={c.entity_id}>{c.label}</option>
+              <option key={c.entity_id} value={c.entity_id} disabled={Boolean(c.dead) || c.creatable === false}>
+                {`${c.label}${c.dead ? " (unavailable)" : c.creatable === false ? " (read-only)" : ""}`}
+              </option>
             ))}
           </select>
         </div>

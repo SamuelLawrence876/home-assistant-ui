@@ -29,24 +29,28 @@ const nextDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
    scheduled" — and when the socket isn't ready it returns early, so `loading`
    is false and `events` is [] with no error at all. Printing "Nothing scheduled
    this week" in either case states a fact we don't have, next to a topbar chip
-   already reading PI OFFLINE. Mirrors weekState() in WeeklyCalendarCard. */
-function nextState({ connStatus, dashReady, liveMode, loading, error, count }) {
+   already reading PI OFFLINE. Mirrors weekState() in WeeklyCalendarCard,
+   `waiting` included: a calendar HA may still be loading after a reconnect. */
+function nextState({ connStatus, dashReady, liveMode, loading, error, count, waiting = false }) {
   const connecting =
     connStatus === "connecting" ||
     connStatus === "authenticating" ||
     (connStatus === "ready" && !dashReady);
   const offline = connStatus !== "ready";
+  const loadingEvents = { meta: "loading", body: "Loading events…" };
 
   if (count > 0) {
     if (offline) return { meta: `${plural(count)} · not connected`, body: null };
     if (error) return { meta: `${plural(count)} · may be out of date`, body: null };
+    if (waiting) return { meta: `${plural(count)} · some calendars loading`, body: null };
     return { meta: plural(count), body: null };
   }
   if (connecting) return { meta: "connecting…", body: "Connecting to Home Assistant…" };
   if (offline) return { meta: "not connected", body: "Calendar unavailable — not connected to Home Assistant." };
-  if (!liveMode) return { meta: "no calendars", body: "No calendars are exposed to this dashboard." };
-  if (loading) return { meta: "loading", body: "Loading events…" };
+  if (!liveMode && !waiting) return { meta: "no calendars", body: "No calendars are exposed to this dashboard." };
+  if (loading) return loadingEvents;
   if (error) return { meta: "unavailable", body: "Calendar unavailable — Home Assistant didn't answer." };
+  if (waiting) return loadingEvents;
   return { meta: null, body: "Nothing scheduled this week" };
 }
 
@@ -132,6 +136,7 @@ export function NextEventCard({ index = 0 }) {
     loading,
     error,
     count: total,
+    waiting: Boolean(calendarEntities.loadingIds?.length),
   });
 
   return (

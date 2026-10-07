@@ -1,5 +1,11 @@
 import { useState, useRef } from "react";
-import { useEntities, useEntityStatus, useConnectionStatus } from "../../ha/useEntity.js";
+import {
+  useEntities,
+  useEntityStatus,
+  useConnectionStatus,
+  useLoadingIds,
+  useSnapshotReady,
+} from "../../ha/useEntity.js";
 import { callService } from "../../ha/client.js";
 import { Card } from "../../components/Card.jsx";
 
@@ -113,19 +119,25 @@ const ALL_DEPS = [...new Set(SCENES.flatMap((s) => s.deps))];
 
 const isDown = (e) => !e || e.state === "unavailable" || e.state === "unknown";
 
+/* The deps that are down — not ones HA may still be loading after a
+   reconnect (useEntity.js): absent, but not known to be offline, and after
+   every Restart HA they read as "3/6 offline" for minutes. */
+const downAmong = (ids, states, loading) => ids.filter((id) => !loading.includes(id) && isDown(states[id]));
+
 function SceneTile({ s, firing, busyWord, onFire }) {
   // Moments read their script entity ("on" while running); modes read their
   // bookkeeping boolean. Either way "on" means the tile is lit.
   const stateId = s.kind === "mode" ? s.mode : `script.${s.script}`;
   const { entity: live, status } = useEntityStatus(stateId);
   const depStates = useEntities(s.deps);
+  const depsLoading = useLoadingIds(s.deps);
 
   // Unknown (see the header) is neither lit nor unlit: no state, no taps.
   const known = status === "ready";
   const active = known && live.state === "on";
   // Before the WS snapshot lands every entity looks missing — don't accuse
   // the house of being offline while we're still connecting.
-  const offline = known ? s.deps.filter((id) => isDown(depStates[id])) : [];
+  const offline = known ? downAmong(s.deps, depStates, depsLoading) : [];
   const degraded = offline.length > 0 && !active;
 
   // A busy tile drops taps (see fire()), so it says what it is doing instead
@@ -181,9 +193,14 @@ export function ScenesCard({ index = 0 }) {
   // seconds while silently dropping exactly that tap.
   const [busyWords, setBusyWords] = useState({});
   const allStates = useEntities(ALL_DEPS);
-  const { status } = useEntityStatus(ALL_DEPS[0]);
+  const allLoading = useLoadingIds(ALL_DEPS);
+  // The whole set's answer, not one entity's: this used to read the bedroom
+  // bulb's status as a stand-in, and since that went per-entity a held-back
+  // bulb blanked the header while the tiles said what was offline.
+  const snapshotReady = useSnapshotReady();
   const conn = useConnectionStatus();
-  const downCount = status === "loading" ? 0 : ALL_DEPS.filter((id) => isDown(allStates[id])).length;
+  const unknown = conn !== "ready" || !snapshotReady;
+  const downCount = unknown ? 0 : downAmong(ALL_DEPS, allStates, allLoading).length;
 
   // `active` is what the tile showed when it was tapped, so the call matches
   // the words on it: "Running · tap to stop" stops, anything else starts.
@@ -224,9 +241,9 @@ export function ScenesCard({ index = 0 }) {
     );
   }
 
-  // "loading" is connecting, signed out or dropped: no tile knows its state,
-  // so the card doesn't claim "Idle" either.
-  const meta = status === "loading" ? (conn === "ready" ? "—" : "Not connected")
+  // Unknown is connecting, signed out or dropped, or HA's set not in yet:
+  // no tile knows its state, so the card doesn't claim "Idle" either.
+  const meta = unknown ? (conn === "ready" ? "—" : "Not connected")
     : firing ? "Running" : downCount ? `${downCount} devices offline` : "Idle";
 
   return (

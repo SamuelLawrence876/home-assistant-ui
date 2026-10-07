@@ -34,6 +34,10 @@ vi.mock("../../src/ha/useEntity.js", () => ({
   },
   useEntities: (ids) => Object.fromEntries(ids.map((id) => [id, states[id]])),
   useConnectionStatus: () => conn.current,
+  // Nothing held back here: tests/ha/round4c-loading.test.jsx runs the card
+  // over the real socket for that.
+  useLoadingIds: () => [],
+  useSnapshotReady: () => status.current !== "loading",
 }));
 vi.mock("../../src/ha/client.js", () => ({
   callService: (domain, service, data) => {

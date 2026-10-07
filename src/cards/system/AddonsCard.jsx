@@ -86,10 +86,10 @@ const NOTE_STYLE = {
 
 const OFFLINE = "Not connected to Home Assistant";
 
-function headline(pending, unreadable, total) {
+function headline(pending, unreadable, total, loading) {
   if (pending) return `${pending} update${pending > 1 ? "s" : ""} available`;
   if (unreadable) return `${unreadable} can't be checked`;
-  return total ? "All up to date" : "Can't tell yet";
+  return total && !loading ? "All up to date" : "Can't tell yet";
 }
 
 /* ----------------------------------------------------------------
@@ -101,9 +101,12 @@ export function AddonsCard({ index = 0 }) {
   const unreadable = updates.filter((u) => !readable(u));
   const current = updates.length - pending.length - unreadable.length;
   // "✓ current" only when every tracked component said so — never for none,
-  // and never from the states cached before the socket dropped.
+  // never from the states cached before the socket dropped, and never while
+  // HA may still be loading one after a reconnect: a pending update.* left
+  // out of a partial set read "✓ current" after every Restart HA.
   const live = useConnectionStatus() === "ready";
-  const allCurrent = live && updates.length > 0 && current === updates.length;
+  const loadingCount = live ? updates.loadingIds?.length || 0 : 0;
+  const allCurrent = live && updates.length > 0 && current === updates.length && !loadingCount;
   // Socket down: everything below is what HA said before it went, so it is
   // worded as that and nothing in it can be installed — the heading already
   // says it can't tell, and the body used to say "are at the latest version".
@@ -157,7 +160,7 @@ export function AddonsCard({ index = 0 }) {
     <Card
       index={index}
       eyebrow={`Updates · ${updates.length} tracked`}
-      title={live ? headline(pending.length, unreadable.length, updates.length) : "Can't tell yet"}
+      title={live ? headline(pending.length, unreadable.length, updates.length, loadingCount) : "Can't tell yet"}
       meta={pending.length ? "supervisor" : allCurrent ? "✓ current" : undefined}
       headRight={
         bulk.length > 1 && (
@@ -244,8 +247,13 @@ export function AddonsCard({ index = 0 }) {
             ? "Waiting for update entities…"
             : unreadable.length
               ? `The other ${current} ${current === 1 ? (lastKnown ? "was" : "is") : lastKnown ? "were" : "are"} at the latest version.`
-              : `All ${updates.length} tracked components ${lastKnown ? "were" : "are"} at the latest version.`}
+              : loadingCount // not "All": HA hasn't sent every one yet (the note below)
+                ? `${current} tracked component${current === 1 ? " is" : "s are"} at the latest version.`
+                : `All ${updates.length} tracked components ${lastKnown ? "were" : "are"} at the latest version.`}
         </div>
+      )}
+      {loadingCount > 0 && updates.length > 0 && (
+        <div style={NOTE_STYLE}>{`Waiting for ${loadingCount} more from Home Assistant…`}</div>
       )}
       {/* The row's sentence, announced: always in the DOM, because a live
           region that appears together with its text is often not read. */}
